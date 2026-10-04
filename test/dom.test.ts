@@ -73,3 +73,12 @@ test('kept before attachDom, listened to after: the mirror sees the real documen
   mounted.mirror.windowKey({ eventType: 'keyDown', key: 'up' } as never)
   expect(keys).toEqual(['ArrowUp'])
 })
+
+test('the element classes FoldKit checks with instanceof are globals', () => {
+  const window = installDom()
+  windows.push(window)
+  // @foldkit/ui's Dialog opens with `element instanceof HTMLDialogElement`;
+  // FoldKit's Canvas checks HTMLCanvasElement.
+  expect(kept.createElement('dialog')).toBeInstanceOf(globalThis.HTMLDialogElement)
+  expect(kept.createElement('canvas')).toBeInstanceOf(globalThis.HTMLCanvasElement)
+})

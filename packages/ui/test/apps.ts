@@ -126,6 +126,21 @@ export const Chooser = (() => {
   return { Model, Message, init, update, view, items }
 })()
 
+// BUTTONS: two of the theme's, for focus rings.
+export const Buttons = (() => {
+  const Model = Schema.Struct({ pressed: Schema.Array(Schema.String) })
+  const Message = defineMessageUnion({ Pressed: { label: Schema.String } })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const init: Model = { pressed: [] }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> => ({ model: { pressed: [...model.pressed, message.label] } })
+  const view = (_: Model, h: HtmlBuilder<Message>) => root(h, [
+    h.div([h.Style({ display: 'flex', 'flex-direction': 'row', gap: '16px' })], ['First', 'Second'].map(label =>
+      button({ label, onClick: Message.Pressed({ label }), attributes: [h.Id(label.toLowerCase())] }, h))),
+  ])
+  return { Model, Message, init, update, view }
+})()
+
 // DIALOG
 export const Confirm = (() => {
   const Model = Schema.Struct({ open: Schema.Boolean, confirmed: Schema.Number })

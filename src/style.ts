@@ -121,8 +121,13 @@ const gradient = (value: string): StyleDesc['background'] | undefined => {
 /** The first visible shadow in a list. Tailwind stacks ring, inset and drop
  *  shadows, with `0 0 #0000` for the unused ones; gpuix draws one shadow. */
 const boxShadow = (value: string): StyleDesc['boxShadow'] | undefined => {
-  for (const shadow of splitTopLevel(value)) {
-    if (/\binset\b/.test(shadow)) continue
+  for (const listed of splitTopLevel(value)) {
+    if (/\binset\b/.test(listed)) continue
+    // A ring's spread is `calc(2px + var(--tw-ring-offset-width))`.
+    const shadow = listed.replace(/calc\((?:[^()]|\([^()]*\))*\)/g, calc => {
+      const length = px(calc)
+      return length === undefined ? calc : `${length}px`
+    })
     const match = /^(-?[\d.]+)(?:px)?\s+(-?[\d.]+)(?:px)?(?:\s+(-?[\d.]+)(?:px)?)?(?:\s+(-?[\d.]+)(?:px)?)?\s+(.+)$/.exec(shadow)
     if (match === null) continue
     const color = match[5]!.trim()

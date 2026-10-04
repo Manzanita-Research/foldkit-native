@@ -114,6 +114,9 @@ describe('box', () => {
     expect(box.background).toEqual({ type: 'linear-gradient', angle: 135, stops: [{ color: '#dbeafe', position: 0 }, { color: '#90c5ff', position: 1 }] })
     const { text: plain } = await styleOf('font-size: 16px; line-height: 1.5;')
     expect(plain.lineHeight).toBe(24)
+    // focus:ring-2, its variables substituted: the spread is a calc().
+    const { box: ring } = await styleOf('box-shadow: 0 0 rgba(0, 0, 0, 0), 0 0 0 calc(2px + 0px) #3080ff;')
+    expect(ring.boxShadow).toEqual({ offsetX: 0, offsetY: 0, blurRadius: 0, spreadRadius: 2, color: '#3080ff' })
   })
 
   test('overflow: auto scrolls, as GPUI spells it (scroll)', async () => {

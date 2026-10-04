@@ -68,6 +68,16 @@ describe('box', () => {
     })
   })
 
+  test("a border with no colour of its own is the text colour, as Tailwind 4's `border` is", async () => {
+    // Tailwind's preflight, then `border` (a width only).
+    const black = await styleOf('border: 0 solid; border-width: 1px;')
+    expect(black.box).toMatchObject({ borderTopWidth: 1, borderColor: '#000000' })
+    const coloured = await styleOf('border: 0 solid; border-top-width: 1px; color: #112233;')
+    expect(coloured.box).toMatchObject({ borderTopWidth: 1, borderColor: '#112233' })
+    const none = await styleOf('border: 0 solid; color: #112233;')
+    expect(none.box['borderColor']).toBeUndefined()
+  })
+
   test("Tailwind's shapes: unitless line height, stacked shadows, keyword gradients", async () => {
     const { box, text } = await styleOf(`font-size: 36px; line-height: calc(2.5 / 2.25);
       box-shadow: 0 0 #0000, 0 0 rgba(0, 0, 0, 0), 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -4px rgba(0, 0, 0, .1);
@@ -107,6 +117,20 @@ describe('text', () => {
     expect(mounted.nativeOf(input).style).toMatchObject({
       backgroundColor: '#111318', color: '#eceef4', fontSize: 15, fontWeight: 600,
     })
+  })
+})
+
+describe('the page', () => {
+  test('scrolls like a browser viewport: the root fills the window and scrolls what overflows', async () => {
+    mounted = mountFake()
+    await mounted.settle()
+    expect(mounted.nativeOf(mounted.document.body).style).toMatchObject({ height: '100%', overflowY: 'scroll' })
+  })
+
+  test("the app's CSS can turn it off", async () => {
+    mounted = mountFake({ css: 'body { overflow-y: visible; }' })
+    await mounted.settle()
+    expect(mounted.nativeOf(mounted.document.body).style['overflowY']).toBeUndefined()
   })
 })
 

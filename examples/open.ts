@@ -19,7 +19,13 @@ const example = await loadExample(id)
 const renderer = process.env['FOLDKIT_NATIVE_RENDERER'] ?? example.meta.renderer
 if (renderer === 'gpuix') {
   const { mountGpuix } = await import('foldkit-gpuix')
-  const native = mountGpuix({ title: example.meta.title, width: example.meta.width, height: example.meta.height, css: example.css })
+  // localStorage is a file in the app's data folder; FOLDKIT_NATIVE_DATA_DIR
+  // puts it somewhere else (the tests use a scratch folder).
+  const dataDir = process.env['FOLDKIT_NATIVE_DATA_DIR']
+  const native = mountGpuix({
+    title: example.meta.title, width: example.meta.width, height: example.meta.height, css: example.css,
+    appId: `dev.foldkit-native.${id}`, ...(dataDir === undefined ? {} : { dataDir }),
+  })
   example.start(native.container)
 } else {
   const native = mountNative({

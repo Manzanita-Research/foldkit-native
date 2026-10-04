@@ -45,6 +45,7 @@ import {
   NativeKeyboardEvent,
   NativeMouseEvent,
   type NativeNode,
+  NativePointerEvent,
   NativeText,
   isDisabled,
   isNaturallyFocusable,
@@ -55,7 +56,11 @@ import { type Declared, INHERITED, type Sheet, type State, type Viewport, declar
 /** DOM event → the gpuix events that produce it (as the mirror had it). */
 const DOM_TO_NATIVE: Readonly<Record<string, ReadonlyArray<string>>> = {
   click: ['click'], contextmenu: ['click'], dblclick: ['click'], auxclick: ['auxClick'],
-  mousedown: ['mouseDown'], mouseup: ['mouseUp'], pointerdown: ['mouseDown'], pointerup: ['mouseUp'],
+  mouseup: ['mouseUp'], pointerup: ['mouseUp'],
+  // GPUI sends a press's moves and release only to the pressed element (as
+  // pointer capture does): whatever hears a press hears the whole gesture,
+  // and listeners on document get it from there (PRESSES below).
+  mousedown: ['mouseDown', 'mouseMove', 'mouseUp'], pointerdown: ['mouseDown', 'mouseMove', 'mouseUp'],
   mouseenter: ['mouseEnter'], mouseleave: ['mouseLeave'], mouseover: ['mouseEnter'], mouseout: ['mouseLeave'],
   pointerenter: ['mouseEnter'], pointerleave: ['mouseLeave'],
   mousemove: ['mouseMove'], pointermove: ['mouseMove'], scroll: ['scroll'],
@@ -234,6 +239,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       values.set('display', 'flex')
       values.set('flex-direction', 'column')
     }
+    // ASPECT RATIO: gpuix has none, so a box with one and no height of its
+    // own gets the height its laid-out width calls for (fitAspects), a frame
+    // after GPUI lays it out: `w-full aspect-square` stays square.
+    const ratio = aspectOf(values.get('aspect-ratio'))
+    if (ratio === undefined || values.has('height')) aspects.delete(element)
+    else {
+      aspects.set(element, ratio)
+      const height = aspectHeights.get(element)
+      if (height !== undefined) values.set('height', `${height}px`)
+    }
     if (values.get('margin-left') === 'auto' && values.get('margin-right') === 'auto') {
       values.delete('margin-left')
       values.delete('margin-right')
@@ -290,6 +305,27 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   // GPUI (taffy) positions it against its parent. So such a box is drawn
   // under its containing block in GPUI's tree, last (on top, as positioned
   // boxes paint), while the DOM, styles and events stay where they are.
+  const aspects = new Map<NativeElement, number>()
+  const aspectHeights = new WeakMap<NativeElement, number>()
+  /** After a frame, while the layout settles: each box with an aspect ratio
+   *  whose width changed gets the height that width calls for. */
+  const fitAspects = () => {
+    if (aspects.size === 0 || !layout.settling) return
+    for (const [element, ratio] of aspects) {
+      if (!element.isConnected || element.nativeId === 0) {
+        aspects.delete(element)
+        continue
+      }
+      const box = boundsOf(element)
+      if (box === null || box.width === 0) continue
+      const height = Math.round((box.width / ratio) * 100) / 100
+      if (aspectHeights.get(element) === height) continue
+      aspectHeights.set(element, height)
+      dirty.add(element)
+      schedule()
+    }
+  }
+
   /** Elements drawn somewhere other than under their DOM parent. */
   const homes = new Map<NativeElement, NativeElement>()
   const positioned = (element: NativeElement) => {
@@ -321,11 +357,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 
   /** The style last sent per element, for its border box (boundsOf). */
   const sentStyles = new WeakMap<NativeElement, StyleDesc>()
+  /** What decides whether a hit test lands on an element, as last styled
+   *  (hittable: kept, as a drag hit-tests every move). */
+  const hitStyles = new WeakMap<NativeElement, { display?: string | undefined; visibility?: string | undefined; pointer?: string | undefined }>()
   const restyleTree = (element: NativeElement) => {
     if (element.nativeId === 0) return
     restyled++
     const style = styleOf(element)
     sentStyles.set(element, style)
+    const base = info(element).declared.base
+    hitStyles.set(element, { display: base.get('display'), visibility: base.get('visibility'), pointer: base.get('pointer-events') })
     mutations.setStyle(element.nativeId, style)
     rehome(element, (style as { position?: string }).position)
     syncProps(element)
@@ -532,6 +573,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const drawn = () => {
     layout.drew()
     watchSize()
+    fitAspects()
     if (drawTimer !== undefined) clearTimeout(drawTimer)
     drawTimer = undefined
     const waiting = drawWaiters
@@ -607,6 +649,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   }
   const syncListener = (node: NativeNode, native: string, on: boolean) => {
     const id = node.nativeId
+    // Removing an element drops its listeners (snabbdom does it before it
+    // takes the element out); the pressed one keeps hearing the gesture until
+    // the release (PRESSES).
+    if (!on && pressed?.id === id && GESTURE.includes(native)) return
     if (on) registerEventHandler(eventHandlers, id, native, event => {
       const target = nodes.get(event.elementId)
       if (target !== undefined) fromNative(target, event)
@@ -852,18 +898,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         }
         return
       }
-      case 'mouseDown': case 'mouseUp': case 'mouseMove': {
-        const type = { mouseDown: 'mousedown', mouseUp: 'mouseup', mouseMove: 'mousemove' }[event.eventType]!
-        if (!listens(node, type) && !listens(node, type.replace('mouse', 'pointer'))) return
-        const detail = type === 'mousemove' ? 0 : event.clickCount ?? 1
-        element.dispatchEvent(new NativeMouseEvent(type, { ...init, button: event.button ?? 0, detail }))
-        if (listens(node, type.replace('mouse', 'pointer'))) {
-          element.dispatchEvent(new NativeMouseEvent(type.replace('mouse', 'pointer'), { ...init, pointerType: 'mouse', button: event.button ?? 0 }))
-        }
-        return
-      }
+      case 'mouseDown': case 'mouseUp': case 'mouseMove':
+        return pointer(element, event, init)
       case 'mouseEnter': case 'mouseLeave': {
         const enter = event.eventType === 'mouseEnter'
+        // While a button's held the host says where the pointer is; after,
+        // GPUI's own late copies of what it already said are dropped.
+        if (pressed !== undefined) return
+        const said = told.get(element)
+        told.delete(element)
+        if (said === (enter ? 'enter' : 'leave')) return
         element.dispatchEvent(new NativeMouseEvent(enter ? 'mouseenter' : 'mouseleave', { ...init, bubbles: false }))
         element.dispatchEvent(new NativeMouseEvent(enter ? 'mouseover' : 'mouseout', init))
         element.dispatchEvent(new NativeMouseEvent(enter ? 'pointerenter' : 'pointerleave', { ...init, bubbles: false, pointerType: 'mouse' }))
@@ -915,6 +959,132 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         element.dispatchEvent(new NativeEvent(event.eventType, init))
     }
   }
+  // PRESSES: GPUI sends a press's moves and its release only to the element
+  // it pressed, and nothing else hears them: no enter or leave for what the
+  // pointer crosses. A browser's drag code listens on document (@foldkit/ui's
+  // DragAndDrop, Pixel Art's mouseup) and hovers on (Pixel Art paints each
+  // cell a drag enters). So:
+  // - a press, its moves and its release are dispatched, pointer event then
+  //   mouse event as a browser fires them, on the pressed element whether or
+  //   not it listens for them itself, and bubble to whoever does;
+  // - if the app takes the pressed element out of the document mid-gesture
+  //   (a drag lifts the card out of its list), GPUI's element is held,
+  //   unseen and out of the layout, until the release, or GPUI would have
+  //   nowhere to send the rest; what it hears is dispatched on the body;
+  // - each move with the button held is hit-tested against the layout
+  //   (elementsFromPoint), and mouseout, mouseleave, mouseover and
+  //   mouseenter fire as the element under the pointer changes.
+  let pressed: { id: number; node: NativeElement; held: boolean } | undefined
+  /** The element under the pointer while a button's held, as the host has it. */
+  let hovered: NativeElement | undefined
+  /** What the host said about hover during a press, so GPUI's late copies
+   *  (it never saw the pointer leave the pressed element) are dropped. */
+  const told = new Map<NativeElement, 'enter' | 'leave'>()
+  /** GPUI sends one press to every listening element under the pointer,
+   *  innermost first; the innermost one's dispatch already bubbled. */
+  let lastPointer: { node: NativeElement; type: string; sameTask: boolean } | undefined
+  /** What GPUI sends the pressed element after the press. */
+  const GESTURE: ReadonlyArray<string> = ['mouseMove', 'mouseUp']
+  const POINTER_AND_MOUSE: Readonly<Record<string, readonly [string, string]>> = {
+    mouseDown: ['pointerdown', 'mousedown'], mouseMove: ['pointermove', 'mousemove'], mouseUp: ['pointerup', 'mouseup'],
+  }
+  type Init = { bubbles: boolean; cancelable: boolean; clientX: number; clientY: number; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean }
+  const pointer = (node: NativeElement, event: EventPayload, init: Init) => {
+    const type = event.eventType
+    if (lastPointer?.sameTask === true && lastPointer.type === type && node !== lastPointer.node && node.contains(lastPointer.node)) return
+    // A press whose release GPUI never sent (let go outside the window): a
+    // move with no button held, or a new press, ends it first, with the
+    // release a browser would have sent.
+    if (pressed !== undefined && ((type === 'mouseMove' && event.pressedButton == null) || type === 'mouseDown')) {
+      const lost = pressed
+      pointer(lost.node, { ...event, elementId: lost.id, eventType: 'mouseUp', button: 0, clickCount: 1 }, init)
+      if (pressed === lost) release()
+    }
+    const last = { node, type, sameTask: true }
+    lastPointer = last
+    queueMicrotask(() => {
+      last.sameTask = false
+    })
+    if (type === 'mouseDown') {
+      pressed = { id: event.elementId, node, held: false }
+      told.clear()
+      // GPUI has told the DOM the pointer is over what it pressed.
+      hovered = elementsAt(init.clientX, init.clientY)[0] ?? node
+    }
+    const capturing = pressed !== undefined && pressed.id === event.elementId
+    if (type === 'mouseMove' && capturing && event.pressedButton != null) hoverTo(elementsAt(init.clientX, init.clientY)[0], init)
+    // Out of the document (held): what's above it hears it, as in a browser.
+    const at = node.isConnected ? node : body
+    const mouse = {
+      ...init, screenX: init.clientX, screenY: init.clientY, button: event.button ?? 0,
+      buttons: type === 'mouseUp' ? 0 : 1, detail: type === 'mouseMove' ? 0 : event.clickCount ?? 1,
+    }
+    const [pointerType, mouseType] = POINTER_AND_MOUSE[type]!
+    at.dispatchEvent(new NativePointerEvent(pointerType, { ...mouse, pointerId: 1, pointerType: 'mouse', isPrimary: true }))
+    at.dispatchEvent(new NativeMouseEvent(mouseType, mouse))
+    if (type === 'mouseUp' && capturing) release()
+  }
+  /** The press is over: a held element goes, and listeners dropped during
+   *  the gesture stop now. */
+  const release = () => {
+    const done = pressed
+    pressed = undefined
+    hovered = undefined
+    if (done === undefined) return
+    if (!done.held) {
+      for (const native of GESTURE) if ((nativeCounts.get(done.node)?.get(native) ?? 0) === 0 && done.node.nativeId === done.id) syncListener(done.node, native, false)
+      return
+    }
+    queueMicrotask(() => {
+      unregisterEventHandlers(eventHandlers, done.id)
+      if (nodes.get(done.id) === done.node) nodes.delete(done.id)
+      mutations.destroyElement(done.id)
+      schedule()
+    })
+  }
+  /** The pressed element (or what holds it) leaves the document mid-gesture:
+   *  GPUI's element stays, unseen, out of the layout and never hit (under
+   *  the root, if what held it goes too), and hears the rest of the gesture. */
+  const HELD = { position: 'absolute', opacity: 0, pointerEvents: 'none' } as StyleDesc
+  const hold = (press: NonNullable<typeof pressed>, outOf: NativeNode) => {
+    press.held = true
+    nodes.set(press.id, press.node)
+    for (const native of GESTURE) {
+      registerEventHandler(eventHandlers, press.id, native, event => fromNative(press.node, event))
+    }
+    if (outOf !== press.node) mutations.appendChild(body.nativeId, press.id)
+    mutations.setStyle(press.id, HELD)
+  }
+  /** The browser's out, leave, over and enter, as the pointer moves from the
+   *  hovered element to `next`. */
+  const hoverTo = (next: NativeElement | undefined, init: Init) => {
+    const previous = hovered
+    if (next === previous) return
+    hovered = next
+    const chain = (element: NativeElement | undefined) => {
+      const out: Array<NativeElement> = []
+      for (let at = element ?? null; at !== null && at !== document.documentElement; at = at.parentElement) out.push(at)
+      return out
+    }
+    const was = chain(previous)
+    const now = chain(next)
+    const mouse = { ...init, screenX: init.clientX, screenY: init.clientY }
+    previous?.dispatchEvent(new NativeMouseEvent('mouseout', { ...mouse, relatedTarget: next ?? null }))
+    for (const element of was) {
+      if (now.includes(element)) continue
+      element.dispatchEvent(new NativeMouseEvent('mouseleave', { ...mouse, bubbles: false, relatedTarget: next ?? null }))
+      element.dispatchEvent(new NativePointerEvent('pointerleave', { ...mouse, bubbles: false, relatedTarget: next ?? null }))
+      told.set(element, 'leave')
+    }
+    next?.dispatchEvent(new NativeMouseEvent('mouseover', { ...mouse, relatedTarget: previous ?? null }))
+    for (const element of now.slice().reverse()) {
+      if (was.includes(element)) continue
+      element.dispatchEvent(new NativeMouseEvent('mouseenter', { ...mouse, bubbles: false, relatedTarget: previous ?? null }))
+      element.dispatchEvent(new NativePointerEvent('pointerenter', { ...mouse, bubbles: false, relatedTarget: previous ?? null }))
+      told.set(element, 'enter')
+    }
+  }
+
   /** Text GPUI's editor took: the DOM's value, then `input`. */
   const typed = (element: NativeElement, value: string) => {
     // Typed while a nudge was pending: the editor has the nudge's space in
@@ -971,7 +1141,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const px = (key: string) => (typeof style[key] === 'number' ? style[key] as number : 0)
     const left = px('borderLeftWidth') + px('paddingLeft')
     const top = px('borderTopWidth') + (nativeType(element) === 'input' ? (px('paddingTop') - px('paddingBottom')) / 2 : px('paddingTop'))
-    const [scrollX, scrollY] = scrollable(element) ? offsetOf(element) : [0, 0]
+    const scrolls = style['overflowX'] === 'scroll' || style['overflowY'] === 'scroll'
+    const [scrollX, scrollY] = scrolls ? offsetOf(element) : [0, 0]
     return {
       x: box.x - left - scrollX,
       y: box.y - top - scrollY,
@@ -986,11 +1157,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     // NativeRenderer's type leaves it out.
     tree: treeOf(renderer),
     borderBox,
+    // From the style GPUI was sent: the layout's walk asks for every element,
+    // and matching the sheet again for each would cost more than the read.
     clips: id => {
       const element = nodes.get(id)
-      if (!(element instanceof NativeElement)) return false
-      const values = info(element).declared.base
-      return ['overflow', 'overflow-x', 'overflow-y'].some(name => /^(hidden|scroll|auto|clip)$/.test(values.get(name) ?? ''))
+      const style = (element instanceof NativeElement ? sentStyles.get(element) ?? {} : {}) as Record<string, unknown>
+      return [style['overflowX'], style['overflowY']].some(value => value !== undefined && value !== 'visible')
     },
   })
   /** The border box where GPUI last painted `element`, as
@@ -1002,10 +1174,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     let visibility: string | undefined
     let pointer: string | undefined
     for (let at: NativeElement | null = element; at !== null; at = at.parentElement) {
-      const values = info(at).declared.base
-      if (values.get('display') === 'none') return false
-      if (visibility === undefined || visibility === 'inherit') visibility = values.get('visibility')
-      if (pointer === undefined || pointer === 'inherit') pointer = values.get('pointer-events')
+      const values = hitStyles.get(at) ?? {}
+      if (values.display === 'none') return false
+      if (visibility === undefined || visibility === 'inherit') visibility = values.visibility
+      if (pointer === undefined || pointer === 'inherit') pointer = values.pointer
     }
     return visibility !== 'hidden' && visibility !== 'collapse' && pointer !== 'none'
   }
@@ -1075,9 +1247,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       const away = homedWithin(node).map(element => element.nativeId)
       if (node instanceof NativeElement) homes.delete(node)
       for (const element of homes.keys()) if (node.contains(element)) homes.delete(element)
+      // The pressed element, going mid-gesture: GPUI still sends it the rest.
+      const keep = pressed !== undefined && !pressed.held && node.contains(pressed.node) ? pressed : undefined
       unmount(node)
+      if (keep !== undefined) hold(keep, node)
       for (const homed of away) mutations.destroyElement(homed)
-      mutations.destroyElement(id)
+      if (keep?.node !== node) mutations.destroyElement(id)
       if (parent instanceof NativeElement) dirty.add(parent)
       schedule()
     },
@@ -1249,6 +1424,14 @@ const opaque = (colour: string) => {
   if (alpha === undefined) return true
   const amount = alpha.trim()
   return amount.endsWith('%') ? Number(amount.slice(0, -1)) >= 100 : Number(amount) >= 1
+}
+
+/** `aspect-ratio: 16 / 9` (or `1.5`) → width over height; `auto` → none. */
+const aspectOf = (value: string | undefined): number | undefined => {
+  const match = value === undefined ? null : /^\s*([\d.]+)\s*(?:\/\s*([\d.]+))?\s*$/.exec(value)
+  if (match === null) return undefined
+  const ratio = Number(match[1]) / Number(match[2] ?? 1)
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined
 }
 
 const treeOf = (renderer: NativeRenderer) => {

@@ -1,7 +1,7 @@
 // The walk-through for `bun run record big-list`: scroll the long list with
 // the wheel, filter it as you type, pick a track with the keys, open it, and
 // switch theme.
-import type { Demo } from '../../scripts/record.ts'
+import { type Demo, nth } from '../../scripts/record.ts'
 
 export const ready = '10,000 of 10,000'
 
@@ -30,6 +30,7 @@ export const demo: Demo = async (app, pause) => {
     await pause(300)
   }
   await key('enter'); await pause(1400)
-  await app.getByText('Dark').click(); await pause(1500)
-  await app.getByText('Light').click(); await pause(800)
+  // The theme switch's label (the text also shows in the switch's own parts).
+  await app.mouse.click(await nth(app, 'Dark')); await pause(1500)
+  await app.mouse.click(await nth(app, 'Light')); await pause(800)
 }

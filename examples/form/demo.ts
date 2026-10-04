@@ -6,11 +6,13 @@ import type { Demo } from '../../scripts/record.ts'
 export const ready = 'Join Our Waitlist'
 
 export const demo: Demo = async (app, pause) => {
-  const [name, email] = await app.getByType('input').all()
-  const [message] = await app.getByType('textarea').all()
+  // Fields move as error messages come and go, so find them fresh each time.
+  const name = async () => (await app.getByType('input').all())[0]!
+  const email = async () => (await app.getByType('input').all())[1]!
+  const message = async () => (await app.getByType('textarea').all())[0]!
   /** Clicks into a field and types into it, one key at a time. */
-  const typeInto = async (field: typeof name, keys: ReadonlyArray<string>) => {
-    const box = field!.bounds!
+  const typeInto = async (field: () => Promise<{ bounds?: { x: number; y: number; width: number; height: number } }>, keys: ReadonlyArray<string>) => {
+    const box = (await field()).bounds!
     await app.mouse.click({ x: box.x + box.width / 2, y: box.y + box.height / 2 })
     await pause(300)
     for (const key of keys) {
@@ -32,11 +34,18 @@ export const demo: Demo = async (app, pause) => {
   await typeInto(message, chars('Looking forward to it!'))
   await pause(600)
   await app.getByText('Join Waitlist').hover(); await pause(400)
-  await app.getByText('Join Waitlist').click()
-  for (let i = 0; i < 50; i++) {
-    const { text } = await app.call('getPaintedText', {})
-    if (text.some(line => line.startsWith('Welcome') || line.startsWith('Sorry'))) break
-    await pause(100)
+  // FoldKit's example fakes its server with a coin flip, so a submit fails
+  // half the time. Try again until it goes through: the clip shows both.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await app.getByText('Join Waitlist').click()
+    let outcome = ''
+    for (let i = 0; i < 50 && outcome === ''; i++) {
+      const { text } = await app.call('getPaintedText', {})
+      outcome = text.find(line => line.startsWith('Welcome') || line.startsWith('Sorry')) ?? ''
+      if (outcome === '') await pause(100)
+    }
+    if (!outcome.startsWith('Sorry')) break
+    await pause(1500)
   }
   await pause(2500)
 }

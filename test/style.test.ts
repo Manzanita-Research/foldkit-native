@@ -76,8 +76,8 @@ describe('box', () => {
 
   test('overflow, the shorthand (happy-dom leaves its longhands empty): sr-only clips', async () => {
     expect((await styleOf('overflow: hidden;')).box).toMatchObject({ overflowX: 'hidden', overflowY: 'hidden' })
-    expect((await styleOf('overflow: hidden auto;')).box).toMatchObject({ overflowX: 'hidden', overflowY: 'auto' })
-    expect((await styleOf('overflow-y: auto;')).box).toMatchObject({ overflowY: 'auto' })
+    expect((await styleOf('overflow: hidden auto;')).box).toMatchObject({ overflowX: 'hidden', overflowY: 'scroll' })
+    expect((await styleOf('overflow-y: auto;')).box).toMatchObject({ overflowY: 'scroll' })
     expect((await styleOf('overflow: visible;')).box.overflowX).toBeUndefined()
   })
 
@@ -114,6 +114,12 @@ describe('box', () => {
     expect(box.background).toEqual({ type: 'linear-gradient', angle: 135, stops: [{ color: '#dbeafe', position: 0 }, { color: '#90c5ff', position: 1 }] })
     const { text: plain } = await styleOf('font-size: 16px; line-height: 1.5;')
     expect(plain.lineHeight).toBe(24)
+  })
+
+  test('overflow: auto scrolls, as GPUI spells it (scroll)', async () => {
+    expect((await styleOf('overflow-y: auto;')).box).toMatchObject({ overflowY: 'scroll' })
+    expect((await styleOf('overflow: auto;')).box).toMatchObject({ overflowX: 'scroll', overflowY: 'scroll' })
+    expect((await styleOf('overflow-x: hidden; overflow-y: auto;')).box).toMatchObject({ overflowX: 'hidden', overflowY: 'scroll' })
   })
 
   test('a two-stop linear gradient and a box shadow', async () => {

@@ -212,8 +212,15 @@ export const boxStyle = (computed: Computed): Style => {
   if (linear !== undefined) style.background = linear
   else if (isColor(get('background-color'))) style.backgroundColor = get('background-color')
   for (const side of ['top', 'right', 'bottom', 'left']) {
-    const color = get(`border-${side}-color`)
-    if (isColor(color) && (px(get(`border-${side}-width`)) ?? 0) > 0) style.borderColor = color
+    if ((px(get(`border-${side}-width`)) ?? 0) === 0) continue
+    // A border with no colour of its own (Tailwind 4's `border`: preflight's
+    // `border: 0 solid`) has the initial one, currentcolor: the text colour,
+    // black by default. happy-dom reports it as `initial`.
+    const own = get(`border-${side}-color`)
+    const color = own === '' || own === 'initial' || own.toLowerCase() === 'currentcolor'
+      ? isColor(get('color')) ? get('color') : '#000000'
+      : own
+    if (isColor(color)) style.borderColor = color
   }
   const opacity = get('opacity')
   if (opacity !== '' && opacity !== '1') style.opacity = Number(opacity)

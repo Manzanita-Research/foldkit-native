@@ -1,7 +1,7 @@
 // FoldKit on gpuix, headless: unmodified FoldKit apps render straight into a
 // gpuix tree (the repo's fake GPUI, with GPUI's focus order added), and
 // GPUI's input comes back as DOM events. No happy-dom anywhere in these.
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { Option, Schema } from 'effect'
 import { defineMessageUnion } from 'foldkit/message'
 
@@ -169,6 +169,25 @@ describe('fixes from the first real-GPUI run', () => {
     expect(field()['readOnly']).toBe(true)
     expect(app.gpui.node(app.document.getElementById('stop')!.nativeId).props['tabIndex']).toBe(null)
     expect(app.gpui.ops().length - before).toBeLessThan(40)
+  })
+
+  test('a password field is refused: drawn empty and read-only, the secret never sent', async () => {
+    const quiet = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { app } = await run({}, {
+        Model: Counter.Model, init: { count: 0 }, update: c => c,
+        view: (_, h) => h.div([], [h.input([h.Id('secret'), h.Type('password'), h.Value('hunter2')]), h.input([h.Id('plain')])]),
+      })
+      const field = app.gpui.node(app.document.getElementById('secret')!.nativeId)
+      expect(field.type).toBe('input')
+      expect(field.props).toMatchObject({ value: '', readOnly: true, tabIndex: -1 })
+      expect(String(field.props['placeholder'])).toContain('Password fields')
+      expect(JSON.stringify(app.gpui.batches)).not.toContain('hunter2')
+      expect(app.fake.tabOrder()).toEqual([app.document.getElementById('plain')!.nativeId])
+      expect(quiet).toHaveBeenCalledTimes(1)
+    } finally {
+      quiet.mockRestore()
+    }
   })
 
   test('disabling the focused element moves focus off it', async () => {

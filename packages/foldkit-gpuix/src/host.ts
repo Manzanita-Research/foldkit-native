@@ -65,9 +65,21 @@ const KEY_NAMES: Readonly<Record<string, string>> = {
 }
 
 const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number'])
+/** gpuix has no masked editor, so a password field would show the secret.
+ *  It's drawn as an empty, read-only field that says so, and never takes
+ *  focus or text (an upstream ask for gpuix). */
+const isPassword = (element: NativeElement) =>
+  element.localName === 'input' && (element.getAttribute('type') ?? '').toLowerCase() === 'password'
+const PASSWORD_REFUSED = 'Password fields aren’t supported here yet'
+let warnedPassword = false
 
-/** Which gpuix element draws a DOM element. */
+/** Which gpuix element draws a DOM element. `data-fn-anchored` makes an
+ *  `anchored` one: GPUI places its content beside its parent (a popover's
+ *  trigger), flips it to fit the window, and paints it over everything. Its
+ *  value is gpuix's options as JSON (`{"side":"bottom","align":"start",
+ *  "gap":4}`); decided when the element is created. */
 const nativeType = (element: NativeElement): string => {
+  if (element.hasAttribute('data-fn-anchored')) return 'anchored'
   switch (element.localName) {
     case 'input': return TEXT_INPUT_TYPES.has((element.getAttribute('type') ?? '').toLowerCase()) ? 'input' : 'div'
     case 'textarea': return 'textarea'
@@ -179,6 +191,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     return Object.keys(out).length === 0 ? undefined : out as StyleDesc
   }
   const styleOf = (element: NativeElement): StyleDesc => {
+    // GPUI places an anchored element; its content carries the style.
+    if (nativeType(element) === 'anchored') return {}
     const { declared: own, inherited } = info(element)
     const field = element.localName === 'input' || element.localName === 'textarea'
     const states: Array<State> = ['base']
@@ -257,7 +271,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   }
   const rehome = (element: NativeElement, position: string | undefined) => {
     const parent = element.parentElement
-    if (parent === null || element === body) return
+    if (parent === null || element === body || nativeType(element) === 'anchored') return
     const block = containingBlock(element, position)
     const home = block === null || block === parent ? null : block
     if (home === (homes.get(element) ?? null)) return
@@ -293,7 +307,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 
   // PROPS: accessibility, focus order, field values, images.
   const isFocusable = (element: NativeElement) => {
-    if (element.hasAttribute('disabled') || element.closest('[inert]') !== null) return false
+    if (element.hasAttribute('disabled') || element.closest('[inert]') !== null || isPassword(element)) return false
     const own = element.getAttribute('tabindex')
     return own !== null ? !Number.isNaN(Number(own)) : isNaturallyFocusable(element)
   }
@@ -334,11 +348,20 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (level !== null) props.set('aria-level', Number(level))
     const testId = element.getAttribute('data-testid') ?? element.getAttribute('id')
     if (testId !== null) props.set('testId', testId)
-    if (isFocusable(element)) props.set('tabIndex', element.tabIndex)
+    if (isFocusable(element) && !isPassword(element)) props.set('tabIndex', element.tabIndex)
     // GPUI's editors are tab stops unless told not to be (a disabled field
     // took focus by Tab on Metal).
     else if (isField(element)) props.set('tabIndex', -1)
     if (element.hasAttribute('autofocus')) props.set('autoFocus', true)
+    if (nativeType(element) === 'anchored') {
+      const options = { side: 'bottom', align: 'start', gap: 4, fit: 'switch', deferred: true }
+      try {
+        Object.assign(options, JSON.parse(element.getAttribute('data-fn-anchored') || '{}'))
+      } catch {
+        // Not JSON: the defaults, as CSS ignores an invalid value.
+      }
+      for (const [key, value] of Object.entries(options)) props.set(key, value)
+    }
     const motion = element.getAttribute('data-fn-motion')
     if (motion !== null) {
       try {
@@ -352,7 +375,15 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       const alt = element.getAttribute('alt')
       if (alt !== null) props.set('alt', alt)
     }
-    if (isField(element)) {
+    if (isPassword(element)) {
+      if (!warnedPassword) {
+        warnedPassword = true
+        console.error('[foldkit-gpuix] <input type="password"> is not supported: gpuix has no masked input, so it is drawn empty and read-only')
+      }
+      props.set('value', '')
+      props.set('placeholder', PASSWORD_REFUSED)
+      props.set('readOnly', true)
+    } else if (isField(element)) {
       props.set('value', element.value)
       const placeholder = element.getAttribute('placeholder')
       if (placeholder !== null) props.set('placeholder', placeholder)
@@ -449,6 +480,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   }
 
   // TREE
+  const holdsChildren = (element: NativeElement) => nativeType(element) === 'div' || nativeType(element) === 'anchored'
   const mount = (node: NativeNode) => {
     if (node.nativeId !== 0 || node instanceof NativeComment || node instanceof NativeDocumentFragment) return
     const id = nextId++
@@ -465,7 +497,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (element.hasAttribute('autofocus')) autofocus.push(element)
     for (const [native, count] of nativeCounts.get(element) ?? []) if (count > 0) syncListener(element, native, true)
     dirty.add(element)
-    if (type !== 'div') return
+    if (!holdsChildren(element)) return
     for (const child of element.childNodes) {
       mount(child)
       if (child.nativeId !== 0) mutations.appendChild(id, child.nativeId)
@@ -482,7 +514,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   /** Puts `node`'s native element where the DOM has it among its siblings. */
   const place = (parent: NativeNode, node: NativeNode) => {
     if (parent.nativeId === 0 || node.nativeId === 0) return
-    if (!(parent instanceof NativeElement) || nativeType(parent) !== 'div') return
+    if (!(parent instanceof NativeElement) || !holdsChildren(parent)) return
     const siblings = parent.childNodes
     let before: NativeNode | undefined
     for (let i = siblings.indexOf(node) + 1; i < siblings.length && before === undefined; i++) {
@@ -561,7 +593,15 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     }
     if (next !== null) {
       valueAtFocus = next.value
-      if (!fromGpui && next.nativeId !== 0) renderer.focusElement?.(next.nativeId)
+      if (!fromGpui && next.nativeId !== 0) {
+        renderer.focusElement?.(next.nativeId)
+        // gpuix makes an element's focus handle when it draws it, so focusing
+        // one drawn in this same render does nothing yet: ask again after
+        // GPUI's next frame, if the document still wants it.
+        afterDraw(() => {
+          if (focused === next && next.nativeId !== 0 && renderer.getFocusedElementId?.() !== next.nativeId) renderer.focusElement?.(next.nativeId)
+        })
+      }
       if (visible) reveal(next)
       next.dispatchEvent(new NativeFocusEvent('focus', { relatedTarget: previous }))
       next.dispatchEvent(new NativeFocusEvent('focusin', { bubbles: true, relatedTarget: previous }))

@@ -157,6 +157,24 @@ ${ui('listbox', 'option')}[data-selected] { font-weight: ${t('font.weight.strong
 ${ui('listbox', 'swatch')} { width: 12px; height: 12px; border-radius: ${t('radius.full')}; }
 ${ui('listbox', 'check')} { width: 16px; color: ${t('color.accent')}; }
 
+${ui('select')} { position: relative; display: flex; flex-direction: column; }
+${ui('select', 'trigger')} {
+  display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: ${t('space.2')};
+  height: 36px; padding: 0 ${t('space.3')}; cursor: pointer; color: ${t('color.text')}; font-size: ${t('font.size.md')};
+  background-color: ${t('color.surface')}; border: 1px solid ${t('color.border')}; border-radius: ${t('radius.control')};
+}
+${ui('select', 'trigger')}:hover { border-color: ${t('color.border-strong')}; }
+${ui('select', 'trigger')}[data-open] { border-color: ${t('color.focus')}; }
+${ui('select', 'trigger')}:focus-visible { border-color: ${t('color.focus')}; box-shadow: 0 0 0 1px ${t('color.focus')}; }
+${ui('select', 'value')}[data-placeholder] { color: ${t('color.text-muted')}; }
+${ui('select', 'icon')} { color: ${t('color.text-muted')}; }
+${ui('select', 'backdrop')} { position: fixed; top: 0; right: 0; bottom: 0; left: 0; }
+${ui('select', 'anchor')} { position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20; }
+${ui('select', 'popup')} {
+  display: flex; flex-direction: column; min-width: 220px; border-radius: ${t('radius.control')};
+  background-color: ${t('color.surface-raised')}; box-shadow: ${t('elevation.overlay')};
+}
+
 ${ui('dialog', 'layer')} {
   position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   display: flex; align-items: center; justify-content: center;

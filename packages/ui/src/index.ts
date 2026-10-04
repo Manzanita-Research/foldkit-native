@@ -9,6 +9,7 @@
 export * as Dialog from './dialog.ts'
 export * as Listbox from './listbox.ts'
 export * as ScrollArea from './scroll-area.ts'
+export * as Select from './select.ts'
 export * as Switch from './switch.ts'
 export * as TextField from './text-field.ts'
 export { type Theme, type TokenName, defineTheme, dusk, paper, themeStyle, themeTokens, token, uiCss } from './theme.ts'

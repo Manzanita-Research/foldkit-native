@@ -152,8 +152,20 @@ Also fixed after Astra's source review:
 - Disabling the focused element moves focus off it.
 - The sheet has specificity and `!important`.
 
-Screenshots come from the Metal tests; the macOS CI job uploads them as
-the `example-screenshots` artifact on PR #14 (`gpuix-*` and `ui-*` files).
+### Screenshots (real GPUI, Metal, PR #14's run at `54ef7ff`)
+
+Copied to thread storage: `thr_nftnu8ukkz/evidence/run-54ef7ff/`. The macOS
+job also uploads them as the `example-screenshots` artifact.
+
+| File | Shows |
+|---|---|
+| `gpuix-native-ui-native-ui-start.png` | The spike app as GPUI draws it: fields, switch, accent listbox with its highlight |
+| `ui-text-field-typed.png` | Typed text in GPUI's editors, and the `:focus` ring on the focused field |
+| `ui-switch-off.png`, `ui-switch-on.png` | The switch, toggled by a click and by Space |
+| `ui-scroll-area-scrolled.png` | The scroll area after a wheel scroll |
+| `ui-dialog-open.png` | The dialog open over its backdrop. **Bug:** the panel sits top-left instead of centred (the absolutely positioned layer doesn't fill the window in gpuix) |
+| `gpuix-big-list-big-list-dark.png`, `-light.png` | Unmodified Big List on the adapter, before and after its theme switch. **Gap, visible:** the selected row's artist, album and time stay grey on blue, because they're styled from the row's state (`.row[data-selected] .cell-artist`), one of the 6 parent-state selectors the flat sheet rejects |
+| `gpuix-form-form-empty.png` | Unmodified Form on the adapter. **Gaps, visible:** the card isn't centred and the page doesn't fill the window. Tailwind's `mx-auto` (auto margins) and `min-h-screen` (`100vh`) aren't translated (no viewport units, no auto margins; the mirror got `vh` from happy-dom) |
 
 ## What I learned
 
@@ -190,6 +202,10 @@ These are scoped in FKN-15's M0 (owned by this thread):
 - **Anchored Select.** Not built. Listbox is the composite here.
 - **Missing features.** Drag and drop (the mirror has it), IME and
   selection details, `virtual-list`, pointer capture.
+- **Layout values.** No viewport units (`vh`, `vw`) and no auto margins, so
+  centring and full-height pages from Tailwind break (Form's screenshot).
+  Absolutely positioned overlays with `inset: 0` don't fill their parent
+  (the dialog's screenshot).
 - **Password fields.** gpuix has no masked input, so a password field shows
   its text. It should be rejected until gpuix has one.
 - **Geometry on a live window.** `getBoundingClientRect` calls GPUI's

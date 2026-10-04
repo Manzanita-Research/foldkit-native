@@ -55,6 +55,15 @@ PR #14's macOS job by commit:
    `scrollIntoView` directly scrolled the page too, which broke the bounds
    assertion. The list itself scrolled correctly (`scrollTop` 208).
 
+4. **Seen in the Metal screenshots** (`thr_nftnu8ukkz/evidence/run-54ef7ff/`,
+   listed in COMPONENTS.md):
+   - The dialog panel isn't centred: the `inset: 0` layer doesn't fill the
+     window in gpuix. Try explicit `width`/`height: 100%`.
+   - The unmodified Form doesn't centre or fill the window: no `vh` and no
+     `margin: auto` yet.
+   - Big List's selected-row cells stay grey: the 6 parent-state selectors,
+     as reported.
+
 Retracted: gpuix's `scrollIntoView` is not broken on plain scrolling divs.
 Called directly on Metal it scrolled (`[0,-173]`). The adapter's `reveal()`
 uses bounds + `scrollTo`, with the native call as fallback. Both need layout

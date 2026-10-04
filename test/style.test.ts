@@ -120,6 +120,20 @@ describe('text', () => {
   })
 })
 
+describe('the page', () => {
+  test('scrolls like a browser viewport: the root fills the window and scrolls what overflows', async () => {
+    mounted = mountFake()
+    await mounted.settle()
+    expect(mounted.nativeOf(mounted.document.body).style).toMatchObject({ height: '100%', overflowY: 'scroll' })
+  })
+
+  test("the app's CSS can turn it off", async () => {
+    mounted = mountFake({ css: 'body { overflow-y: visible; }' })
+    await mounted.settle()
+    expect(mounted.nativeOf(mounted.document.body).style['overflowY']).toBeUndefined()
+  })
+})
+
 describe('text selection', () => {
   test('like a native app, UI text is not selectable: the root opts out and everything inherits it', async () => {
     const { box, text } = await styleOf('padding: 4px;')

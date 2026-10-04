@@ -411,6 +411,15 @@ describe('drag and drop, rebuilt from mouse events', () => {
     expect(names(atCard)).toEqual(['dragstart', 'dragend'])
   })
 
+  test('a release only the body hears (outside the source) still ends the drag', async () => {
+    const { card, atCard, atZone } = await board()
+    mounted.send(card, { eventType: 'mouseDown', x: 10, y: 10, button: 0 })
+    mounted.send(card, { eventType: 'mouseMove', x: 150, y: 50, pressedButton: 0 })
+    mounted.send(mounted.document.body as unknown as Node, { eventType: 'mouseUp', x: 150, y: 50, button: 0 })
+    expect(names(atZone)).toEqual(['dragenter', 'dragover', 'drop'])
+    expect(names(atCard)).toEqual(['dragstart', 'dragend'])
+  })
+
   test('a press without movement is a click, not a drag', async () => {
     const { card, atCard } = await board()
     mounted.send(card, { eventType: 'mouseDown', x: 10, y: 10, button: 0 })
@@ -472,5 +481,70 @@ describe('scroll position, both ways', () => {
     // One write (100 → 88), its one scroll event, then quiet: 88 snaps to 88.
     expect(gpui.scrollCalls).toEqual([{ id, x: 0, y: -88 }])
     expect(list.scrollTop).toBe(88)
+  })
+})
+
+describe('pointer events, and listeners on document', () => {
+  test('a press is pointerdown then mousedown, with the pointer, button and screen position', async () => {
+    const { container } = await setup()
+    const card = el('div', 'card')
+    container.appendChild(card)
+    const seen = record(card, ['pointerdown', 'mousedown', 'pointerup', 'mouseup'])
+    await mounted.settle()
+    mounted.send(card, { eventType: 'mouseDown', x: 30, y: 40, button: 0, clickCount: 1 })
+    mounted.send(card, { eventType: 'mouseUp', x: 30, y: 40, button: 0, clickCount: 1 })
+    expect(names(seen)).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup'])
+    const down = seen[0] as PointerEvent
+    expect([down.pointerType, down.button, down.screenX, down.screenY, down.clientX]).toEqual(['mouse', 0, 30, 40, 30])
+  })
+
+  test('only pointerdown: GPUI listens for the press, and the DOM gets it', async () => {
+    const { container } = await setup()
+    const card = el('div', 'card')
+    container.appendChild(card)
+    const seen = record(card, ['pointerdown'])
+    await mounted.settle()
+    expect(mounted.nativeOf(card).listeners.has('mouseDown')).toBe(true)
+    mounted.send(card, { eventType: 'mouseDown', x: 1, y: 1, button: 0 })
+    expect(names(seen)).toEqual(['pointerdown'])
+  })
+
+  test('pointer listeners on document make the body listen, and hear moves and releases', async () => {
+    const { document } = await setup()
+    const body = document.body as unknown as Node
+    expect(mounted.nativeOf(body).listeners.has('mouseMove')).toBe(false)
+    const seen = record(document, ['pointermove', 'pointerup'])
+    document.body.setAttribute('data-x', '1')
+    await mounted.settle()
+    expect(mounted.nativeOf(body).listeners.has('mouseMove')).toBe(true)
+    mounted.send(body, { eventType: 'mouseMove', x: 5, y: 6, pressedButton: 0 })
+    mounted.send(body, { eventType: 'mouseUp', x: 5, y: 6, button: 0 })
+    expect(names(seen)).toEqual(['pointermove', 'pointerup'])
+    expect((seen[0] as PointerEvent).clientY).toBe(6)
+  })
+
+  test('removing them stops the body listening for moves, but it still hears releases', async () => {
+    const { document } = await setup()
+    const body = document.body as unknown as Node
+    const onMove = () => {}
+    document.addEventListener('pointermove', onMove)
+    document.removeEventListener('pointermove', onMove)
+    document.body.setAttribute('data-x', '1')
+    await mounted.settle()
+    expect(mounted.nativeOf(body).listeners.has('mouseMove')).toBe(false)
+    expect(mounted.nativeOf(body).listeners.has('mouseUp')).toBe(true)
+  })
+
+  test("an event that bubbled up from an element isn't dispatched again at the body", async () => {
+    const { container, document } = await setup()
+    const card = el('div', 'card')
+    container.appendChild(card)
+    card.addEventListener('pointermove', () => {})
+    const seen = record(document, ['pointermove'])
+    await mounted.settle()
+    // GPUI sends the move to every listening element under the pointer: the card, then the body.
+    mounted.send(card, { eventType: 'mouseMove', x: 5, y: 5, pressedButton: 0 })
+    mounted.send(document.body as unknown as Node, { eventType: 'mouseMove', x: 5, y: 5, pressedButton: 0 })
+    expect(names(seen)).toEqual(['pointermove'])
   })
 })

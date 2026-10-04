@@ -15,7 +15,6 @@ import {
   type NativeRenderer,
   createMutationQueue,
   createRendererState,
-  registerEventHandler,
   unregisterEventHandlers,
 } from '@gpuix/native/host'
 import { createNativeRenderer, startFrameLoop } from '@gpuix/native/runtime'
@@ -88,12 +87,6 @@ export const attachDom = (renderer: NativeRenderer, options: AttachOptions = {})
     ...(onSynced === undefined ? {} : { onSynced }),
   })
   mirror.refreshStyles()
-
-  // Releasing the mouse anywhere ends a drag that missed every drop zone.
-  const bodyId = mirror.idFor(document.body as unknown as Node)!
-  registerEventHandler(eventHandlers, bodyId, 'mouseUp', event => mirror.releaseAnywhere(event))
-  mutations.setEventListener(bodyId, 'mouseUp', true)
-  mutations.flushMutations()
 
   const binding = state.attach({
     eventHandlers,

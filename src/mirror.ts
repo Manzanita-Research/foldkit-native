@@ -40,6 +40,16 @@ const DOM_TO_NATIVE: Readonly<Record<string, ReadonlyArray<string>>> = {
   dragleave: ['mouseLeave'], drop: ['mouseMove', 'mouseLeave', 'mouseUp'],
 }
 
+/** Pointer and mouse listeners above the body (on `document`, `window` or
+ *  `<html>`) have no native element of their own. The body, the native root,
+ *  listens for them instead and dispatches there, so the event bubbles up. */
+const ROOT_TYPES = new Set(['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup'])
+
+/** A GPUI mouse event → the DOM pointer and mouse events a browser fires for it, in order. */
+const POINTER_AND_MOUSE: Readonly<Record<string, readonly [string, string]>> = {
+  mouseDown: ['pointerdown', 'mousedown'], mouseMove: ['pointermove', 'mousemove'], mouseUp: ['pointerup', 'mouseup'],
+}
+
 /** gpuix key names → DOM `KeyboardEvent.key`. */
 const KEY_NAMES: Readonly<Record<string, string>> = {
   enter: 'Enter', escape: 'Escape', tab: 'Tab', space: ' ', backspace: 'Backspace',
@@ -140,6 +150,10 @@ export const createMirror = (options: {
   const listened = new WeakMap<Node, Map<string, number>>()
   const domListened = new WeakMap<Node, Map<string, number>>()
   const listens = (node: Node, domType: string) => (domListened.get(node)?.get(domType) ?? 0) > 0
+  /** Listeners above the body, by DOM event type (see ROOT_TYPES). */
+  const above = new Map<string, number>()
+  const isAbove = (target: EventTarget) =>
+    target === (window as unknown) || target === document || target === document.documentElement
   let nextId = 1_000_000 // Clear of gpuix's own counter for window/key events.
   let stateRules: ReadonlyArray<StateRule> = []
   let created = 0
@@ -148,20 +162,31 @@ export const createMirror = (options: {
   // snabbdom attaches listeners with addEventListener; watch that.
   // The unpatched pair, for the mirror's own listeners (see watchListeners).
   const { add, remove } = watchListeners(document.body as unknown as Node)
-  const track = (target: EventTarget, type: string, delta: number) => {
-    const natives = DOM_TO_NATIVE[type]
-    if (natives === undefined || !(target as Node).nodeType) return
-    const dom = domListened.get(target as Node) ?? new Map<string, number>()
-    domListened.set(target as Node, dom)
-    dom.set(type, Math.max(0, (dom.get(type) ?? 0) + delta))
-    const counts = listened.get(target as Node) ?? new Map<string, number>()
-    listened.set(target as Node, counts)
+  /** Counts the native events a node needs, listening or not as they reach 0. */
+  const countNatives = (node: Node, natives: ReadonlyArray<string>, delta: number) => {
+    const counts = listened.get(node) ?? new Map<string, number>()
+    listened.set(node, counts)
     for (const native of natives) {
       const before = counts.get(native) ?? 0
       counts.set(native, Math.max(0, before + delta))
-      const id = ids.get(target as Node)
+      const id = ids.get(node)
       if (id !== undefined && (before === 0) !== (counts.get(native) === 0)) syncListener(id, native, before === 0)
     }
+  }
+  const track = (target: EventTarget, type: string, delta: number) => {
+    const natives = DOM_TO_NATIVE[type]
+    if (natives === undefined) return
+    if (isAbove(target)) {
+      if (!ROOT_TYPES.has(type)) return
+      above.set(type, Math.max(0, (above.get(type) ?? 0) + delta))
+      countNatives(document.body as unknown as Node, natives, delta)
+      return
+    }
+    if (!(target as Node).nodeType) return
+    const dom = domListened.get(target as Node) ?? new Map<string, number>()
+    domListened.set(target as Node, dom)
+    dom.set(type, Math.max(0, (dom.get(type) ?? 0) + delta))
+    countNatives(target as Node, natives, delta)
   }
   trackers.set(document, track)
 
@@ -228,6 +253,10 @@ export const createMirror = (options: {
   }
   // When the last drag ended: never, so a click right after startup counts.
   let dragEndedAt = -Infinity
+  // GPUI sends a mouse event to every listening element under the pointer,
+  // innermost first, the body last. One dispatched lower down has already
+  // bubbled past the body, so the body's copy isn't dispatched again.
+  let bubbled: { types: Set<string>; at: number; sameTask: boolean } | undefined
   const toDom = (node: Node, event: EventPayload) => {
     // GPUI's modifiers ride on every key and mouse event (cmd is the platform
     // key: ⌘ on macOS, so `metaKey`, as a browser has it).
@@ -300,11 +329,32 @@ export const createMirror = (options: {
         return
       }
       case 'mouseDown': case 'mouseUp': case 'mouseMove': {
-        const type = { mouseDown: 'mousedown', mouseUp: 'mouseup', mouseMove: 'mousemove' }[event.eventType]!
-        if (!listens(node, type)) return
-        // A press and its release carry the click count, as `detail` does in a browser.
-        const detail = type === 'mousemove' ? 0 : event.clickCount ?? 1
-        node.dispatchEvent(new W['MouseEvent']!(type, { ...init, button: event.button ?? 0, detail }))
+        const root = node === body
+        const now = performance.now()
+        const recent = bubbled !== undefined && (bubbled.sameTask || now - bubbled.at < 4) ? bubbled.types : undefined
+        // A press and its release carry the click count, as `detail` does in a
+        // browser. The window is the screen: screen coordinates are window ones.
+        const mouse = {
+          ...init, screenX: init.clientX, screenY: init.clientY, button: event.button ?? 0,
+          detail: event.eventType === 'mouseMove' ? 0 : event.clickCount ?? 1,
+        }
+        for (const type of POINTER_AND_MOUSE[event.eventType]!) {
+          if (!(listens(node, type) || (root && (above.get(type) ?? 0) > 0))) continue
+          if (root && recent?.has(type)) continue
+          if (!root) {
+            if (recent === undefined) {
+              const next = { types: new Set<string>(), at: now, sameTask: true }
+              bubbled = next
+              queueMicrotask(() => {
+                next.sameTask = false
+              })
+            }
+            bubbled!.types.add(type)
+          }
+          node.dispatchEvent(type.startsWith('pointer')
+            ? new W['PointerEvent']!(type, { ...mouse, pointerId: 1, pointerType: 'mouse', isPrimary: true })
+            : new W['MouseEvent']!(type, mouse))
+        }
         return
       }
       case 'mouseEnter': case 'mouseLeave': {
@@ -582,6 +632,9 @@ export const createMirror = (options: {
 
   // The body is the native root; FoldKit's view replaces its container inside it.
   const body = document.body as unknown as Node
+  // The body always hears a release: one anywhere ends a drag that missed
+  // every drop zone (its source may not hear it).
+  countNatives(body, ['mouseUp'], 1)
   const rootId = create(body)!
   mutations.setRoot(rootId)
   mutations.flushMutations()
@@ -639,9 +692,6 @@ export const createMirror = (options: {
     refreshStyles: () => restyleAll(),
     nodeFor: (id: number) => nodes.get(id),
     idFor: (node: Node) => ids.get(node),
-    /** A mouse release anywhere ends a drag that didn't land on a drop zone. */
-    releaseAnywhere: (event: EventPayload) =>
-      setTimeout(() => endDrag(undefined, { clientX: event.x ?? 0, clientY: event.y ?? 0 }), 0),
     /** Window-level keys go to the focused element, like a browser. */
     windowKey: (event: EventPayload) => toDom((document.activeElement as Node | null) ?? body, event),
     stop: () => {

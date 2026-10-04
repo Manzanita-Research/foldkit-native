@@ -197,7 +197,8 @@ describe('pointer', () => {
     container.appendChild(node)
     await mounted.settle()
     mounted.send(node, { eventType: 'mouseDown', x: 1, y: 1, button: 0 })
-    mounted.send(node, { eventType: 'mouseMove', x: 2, y: 2 })
+    // A move during a press carries the held button, as GPUI sends it.
+    mounted.send(node, { eventType: 'mouseMove', x: 2, y: 2, pressedButton: 0 })
     mounted.send(node, { eventType: 'mouseUp', x: 2, y: 2, button: 0 })
     expect(names(seen)).toEqual(['mousedown', 'mouseup'])
   })
@@ -558,7 +559,7 @@ describe('pointer events, and listeners on document', () => {
     card.removeEventListener('pointerdown', onDown)
     card.remove()
     await mounted.settle()
-    expect(gpui.node(id).style).toEqual({ position: 'absolute', opacity: 0 })
+    expect(gpui.node(id).style).toEqual({ position: 'absolute', opacity: 0, pointerEvents: 'none' })
     expect(gpui.node(id).listeners.has('mouseMove')).toBe(true)
     expect(mounted.inSync()).toBe(false) // the held twin, until the release
     mounted.send(id, { eventType: 'mouseMove', x: 300, y: 40, pressedButton: 0 })
@@ -568,6 +569,67 @@ describe('pointer events, and listeners on document', () => {
     await mounted.settle()
     expect(() => gpui.node(id)).toThrow()
     expect(mounted.inSync()).toBe(true)
+  })
+
+  /** A card listening for pointerdown, a drag tracked on document, and the
+   *  card lifted out of the DOM once the press starts, as FoldKit's kanban does. */
+  const liftedCard = async () => {
+    const { container, document, gpui } = await setup()
+    const card = el('div', 'card')
+    const onDown = () => {}
+    card.addEventListener('pointerdown', onDown)
+    container.appendChild(card)
+    await mounted.settle()
+    const id = mounted.idOf(card)
+    const seen = record(document, ['pointerup'])
+    mounted.send(card, { eventType: 'mouseDown', x: 10, y: 10, button: 0 })
+    card.removeEventListener('pointerdown', onDown)
+    card.remove()
+    await mounted.settle()
+    expect(gpui.node(id).style).toMatchObject({ opacity: 0 }) // held, still under its parent
+    expect(mounted.inSync()).toBe(false)
+    return { id, seen, gpui, document, container }
+  }
+
+  test("a release GPUI never sent (let go outside the window): the next move without a button ends the press", async () => {
+    const { id, seen, gpui, container } = await liftedCard()
+    // Back in the window, the pointer moves over another card (cards hear moves).
+    const other = el('div', 'other')
+    other.addEventListener('pointerdown', () => {})
+    container.appendChild(other)
+    await mounted.settle()
+    mounted.send(other, { eventType: 'mouseMove', x: 50, y: 50 })
+    expect(names(seen)).toEqual(['pointerup'])
+    await mounted.settle()
+    expect(() => gpui.node(id)).toThrow()
+    expect(gpui.retainedCount()).toBe(gpui.reachableCount())
+    expect(mounted.inSync()).toBe(true)
+  })
+
+  test('…or the next press elsewhere ends it first', async () => {
+    const { id, seen, gpui, container } = await liftedCard()
+    const other = el('button', 'other')
+    const atOther = record(other, ['pointerdown'])
+    container.appendChild(other)
+    await mounted.settle()
+    mounted.send(other, { eventType: 'mouseDown', x: 50, y: 50, button: 0 })
+    expect(names(seen)).toEqual(['pointerup'])
+    expect(names(atOther)).toEqual(['pointerdown'])
+    await mounted.settle()
+    expect(() => gpui.node(id)).toThrow()
+    expect(gpui.retainedCount()).toBe(gpui.reachableCount())
+  })
+
+  test('a plain click on a pointerdown element: one press, one release, one click, no moves', async () => {
+    const { container } = await setup()
+    const card = el('div', 'card')
+    container.appendChild(card)
+    const seen = record(card, ['pointerdown', 'pointermove', 'pointerup', 'click'])
+    await mounted.settle()
+    mounted.send(card, { eventType: 'mouseDown', x: 5, y: 5, button: 0, clickCount: 1 })
+    mounted.send(card, { eventType: 'mouseUp', x: 5, y: 5, button: 0, clickCount: 1 })
+    mounted.send(card, { eventType: 'click', x: 5, y: 5, button: 0, clickCount: 1 })
+    expect(names(seen)).toEqual(['pointerdown', 'pointerup', 'click'])
   })
 
   test('a pressed element that stays keeps its listeners until the release, then drops them', async () => {

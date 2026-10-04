@@ -56,6 +56,9 @@ const POINTER_AND_MOUSE: Readonly<Record<string, readonly [string, string]>> = {
   mouseDown: ['pointerdown', 'mousedown'], mouseMove: ['pointermove', 'mousemove'], mouseUp: ['pointerup', 'mouseup'],
 }
 
+/** A held press element: unseen, out of the layout, never under the pointer. */
+const HELD = { position: 'absolute', opacity: 0, pointerEvents: 'none' } as const
+
 /** What GPUI sends the pressed element after the press. */
 const GESTURE: ReadonlyArray<string> = ['mouseMove', 'mouseUp']
 
@@ -299,9 +302,15 @@ export const createMirror = (options: {
     if (event.eventType === 'click' || event.eventType === 'mouseUp' || event.eventType === 'keyDown') {
       inputAt = performance.now()
     }
-    if (event.eventType === 'mouseDown' && (pressed === undefined || !pressed.node.contains(node))) {
+    // A press whose release GPUI never sent (let go outside the window): a
+    // move with no button held, or a new press elsewhere, ends it first, with
+    // the release a browser would have sent.
+    if (pressed !== undefined && ((event.eventType === 'mouseMove' && event.pressedButton == null) ||
+      (event.eventType === 'mouseDown' && !pressed.node.contains(node)))) {
+      toDom(pressed.node, { ...event, eventType: 'mouseUp', button: 0, clickCount: 1 })
+    }
+    if (event.eventType === 'mouseDown' && pressed === undefined) {
       // The innermost element GPUI hit is the one it captures the gesture for.
-      if (pressed?.held === true) releasePressed()
       const id = ids.get(node)
       if (id !== undefined) pressed = { id, node, held: false }
     }
@@ -694,7 +703,7 @@ export const createMirror = (options: {
       if (pressed?.id === id && node !== undefined && node.parentNode === null) {
         pressed.held = true
         if (debug) process.stderr.write(`foldkit-native: hold ${id}\n`)
-        mutations.setStyle(id, { position: 'absolute', opacity: 0 })
+        mutations.setStyle(id, HELD)
         continue
       }
       if (node !== undefined && node.parentNode === null) forget(node)

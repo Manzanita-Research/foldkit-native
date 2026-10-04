@@ -19,7 +19,7 @@ const paper: Tokens = {
 }
 
 const css = `
-  body { margin: 0; height: 100%; background-color: var(--fn-color-canvas); }
+  body { margin: 0; height: 100%; background-color: var(--fn-color-canvas); font-family: system-ui, sans-serif; }
   [data-part="app"] { height: 100%; padding: var(--fn-space-5); background-color: var(--fn-color-canvas); }
   [data-part="title"] { margin: 0; font-size: var(--fn-type-size-title); color: var(--fn-color-text); }
   [data-part="card"] { padding: var(--fn-space-3); border-radius: var(--fn-radius-3); border: 1px solid var(--fn-color-hairline);

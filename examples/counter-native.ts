@@ -2,7 +2,7 @@
 import { mountNative } from '../src/index.ts'
 
 const css = `
-  body { margin: 0; height: 100%; background-color: #1d1d21; }
+  body { margin: 0; height: 100%; background-color: #1d1d21; font-family: system-ui, sans-serif; }
   .app { display: flex; flex-direction: column; gap: 16px; padding: 40px; height: 100%; }
   .title { margin: 0; font-size: 40px; color: #f2f2f2; }
   .count { margin: 0; font-size: 22px; color: #c9c9d1; }

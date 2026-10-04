@@ -9,8 +9,8 @@ ordinary FoldKit app (its `Runtime`, `h` views, Commands, Subscriptions, CSS
 and `@foldkit/ui` components) runs unchanged and appears in a native window or
 a Wayland layer surface. FoldKit itself is not modified or forked.
 
-> **Status:** an early spike, private. Linux (Wayland) tested; gpuix also ships
-> macOS and Windows binaries, untested here.
+> **Status:** an early spike, private. Runs on Linux (Wayland) and macOS
+> (Apple silicon, Metal). gpuix also ships a Windows binary, untested here.
 
 ## How it works
 
@@ -56,16 +56,24 @@ app as a Wayland layer surface (bar, dock, overlay) instead of a window.
 
 ## Run the examples
 
-Needs [Bun](https://bun.sh) and, on Linux, Wayland, EGL/Vulkan and libxkbcommon
-on the library path (NixOS: put them on `LD_LIBRARY_PATH`).
+Needs [Bun](https://bun.sh) and Node's `npm` (for the exact lockfile). On
+Linux, also Wayland, EGL/Vulkan and libxkbcommon on the library path (NixOS:
+put them on `LD_LIBRARY_PATH`). On macOS nothing else: gpuix's Apple silicon
+binary draws with Metal. Run it from a terminal in the logged-in desktop
+session (Terminal.app, at the machine or over Screen Sharing) so the window
+appears on that screen.
 
 ```sh
-npm ci                        # exact pins (see package.json)
-bun examples/counter.ts       # a FoldKit counter; only the setup import is native-specific
-bun examples/themes.ts        # primitives + two token sets, switched at runtime
+npm ci                        # exact pins; installs only your platform's gpuix binary
+bun run demo                  # examples/themes.ts: primitives + two token sets, switched at runtime
+bun run counter               # examples/counter.ts: a FoldKit counter; only the setup import is native-specific
 bun test                      # headless: DOM → native mutations, clicks → FoldKit, tokens → restyle
 bun run typecheck
+bun run record demo.mp4       # macOS: drives the demo and records its own frames (needs ffmpeg)
 ```
+
+In the demo, click a row to select it and **switch theme** to swap the whole
+token set live; `THEME=paper bun run demo` starts on the light set.
 
 `bun build --compile app.ts` makes one executable. Ship gpuix's `.node` file
 next to it and set `NAPI_RS_NATIVE_LIBRARY_PATH` to it: gpuix's loader picks its

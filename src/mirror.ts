@@ -323,6 +323,23 @@ export const createMirror = (options: {
     }
     return ''
   }
+  const displayOf = (element: Element) => window.getComputedStyle(element as never).getPropertyValue('display')
+  /** happy-dom reports '' for elements that are inline by default (span, label). */
+  const blockLevel = (display: string) => display !== '' && display !== 'none' && display !== 'contents' && !display.startsWith('inline')
+  /** Whether an element's children include inline content (text, or inline
+   *  or inline-block elements) beside its elements. */
+  const inlineRow = (element: Element) => {
+    let row = inlineRows.get(element)
+    if (row === undefined) {
+      row = element.children.length > 0 && Array.from(element.childNodes).some(
+        child => child.nodeType === 3 || (child.nodeType === 1 && displayOf(child as Element).startsWith('inline')))
+      inlineRows.set(element, row)
+    }
+    return row
+  }
+  // Every child asks about its parent, so remember the answer for one sync.
+  let inlineRows = new WeakMap<Element, boolean>()
+
   const styleOf = (node: Node): StyleDesc => {
     if (node.nodeType === 3) {
       const parent = node.parentElement
@@ -335,12 +352,18 @@ export const createMirror = (options: {
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') Object.assign(style, textStyle(computed))
     // Inline runs (spans, links, text beside elements) become a wrapping row:
     // GPUI has blocks and flex, not inline formatting.
-    const inlineChildren = Array.from(element.childNodes).some(
-      child => child.nodeType === 3 || (child.nodeType === 1 &&
-        window.getComputedStyle(child as never).getPropertyValue('display').startsWith('inline')),
-    )
-    if (inlineChildren && style['display'] === undefined && element.children.length > 0) {
+    if (style['display'] === undefined && inlineRow(element)) {
       Object.assign(style, { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline' })
+      // text-align places the inline content on each line.
+      const align = { center: 'center', right: 'flex-end', end: 'flex-end' }[String(style['textAlign'])]
+      if (align !== undefined) style['justifyContent'] = align
+    }
+    // In that row a block child still takes a whole line, as in a browser,
+    // rather than shrinking to fit its content.
+    const parent = element.parentElement
+    if (style['width'] === undefined && blockLevel(displayOf(element)) && parent !== null &&
+      !['flex', 'inline-flex', 'grid', 'none'].includes(displayOf(parent)) && inlineRow(parent)) {
+      style['width'] = '100%'
     }
     Object.assign(style, stateStyles(element, stateRules, customProperty(element)))
     return style as StyleDesc
@@ -476,6 +499,8 @@ export const createMirror = (options: {
   const syncChildren = (parent: Node) => {
     const parentId = ids.get(parent)
     if (parentId === undefined) return
+    // A textarea's text is its value (FoldKit writes it that way), not a child.
+    if (nativeType(parent) !== 'div') return syncProps(parentId, parent)
     const current = nativeChildren.get(parentId) ?? []
     const desired: Array<number> = []
     for (const child of Array.from(parent.childNodes)) {
@@ -520,6 +545,7 @@ export const createMirror = (options: {
 
   const observer = new (window as unknown as { MutationObserver: typeof MutationObserver }).MutationObserver(records => {
     const started = performance.now()
+    inlineRows = new WeakMap()
     created = 0
     const parents = new Set<Node>()
     const styled = new Set<Node>()
@@ -530,6 +556,7 @@ export const createMirror = (options: {
       } else if (record.type === 'characterData') {
         const id = ids.get(record.target)
         if (id !== undefined) mutations.setText(id, textOf(record.target))
+        else if (record.target.parentNode !== null) parents.add(record.target.parentNode)
       } else if (record.type === 'attributes') {
         if (record.target.nodeName === 'STYLE') continue
         if (debug) process.stderr.write(`foldkit-native: attr ${(record.target as Element).className} ${record.attributeName}\n`)
@@ -553,6 +580,7 @@ export const createMirror = (options: {
 
   // A changed stylesheet or root token (a theme switch) can change any element.
   const restyleAll = () => {
+    inlineRows = new WeakMap()
     stateRules = collectStateRules(document)
     restyle(body)
     mutations.flushMutations()

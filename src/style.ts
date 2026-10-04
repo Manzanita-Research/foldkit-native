@@ -169,11 +169,13 @@ const userSelect = (value: string): 'none' | 'text' | undefined =>
  *  CSS so it can override any of it. UI text isn't selectable: a double click
  *  on a button or a list row shouldn't highlight its label. Text that should be
  *  selectable opts in with `user-select: text`, as in a native toolkit. Inputs
- *  keep their own editing and selection. And the page scrolls, as a browser's
+ *  keep their own editing and selection. A button centres its label, as a
+ *  browser's own stylesheet does. And the page scrolls, as a browser's
  *  viewport does: the body, GPUI's root, fills the window and scrolls what
  *  doesn't fit (`scroll`, which GPUI scrolls; a page that fits doesn't move). */
 export const nativeDefaultsCss = `
 body { user-select: none; height: 100%; overflow-y: scroll; }
+button { text-align: center; }
 `
 
 /** Layout and box properties of an element. */

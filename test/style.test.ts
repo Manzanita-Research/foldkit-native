@@ -27,6 +27,14 @@ describe('values', () => {
       .toEqual([12, 24, 32, -4, 7, undefined, undefined])
   })
 
+  test("margin: auto isn't sent: gpuix's margins are numbers, and a string fails the whole style", async () => {
+    // Tailwind's mx-auto. gpuix rejects "auto": `invalid type: string "auto", expected f64`.
+    const { box } = await styleOf('margin: 8px auto;')
+    expect(box).toMatchObject({ marginTop: 8, marginBottom: 8 })
+    expect(box).not.toHaveProperty('marginLeft')
+    expect(box).not.toHaveProperty('marginRight')
+  })
+
   test('calc(), as Tailwind writes it once happy-dom substitutes the variables', () => {
     expect([px('calc(.25rem * 4)'), px('calc(0.25rem * -2)'), px('calc(10px + 2 * 3px)'), px('calc((4px + 2px) / 2)'), px('calc(1px * auto)')])
       .toEqual([16, -8, 16, 3, undefined])
@@ -117,6 +125,19 @@ describe('text', () => {
     expect(mounted.nativeOf(input).style).toMatchObject({
       backgroundColor: '#111318', color: '#eceef4', fontSize: 15, fontWeight: 600,
     })
+  })
+
+  test("a button centres its label, as a browser's own stylesheet does; the app's CSS can override it", async () => {
+    mounted = mountFake({ css: '.left { text-align: left; }' })
+    const centred = mounted.document.createElement('button')
+    centred.textContent = 'Join Waitlist'
+    const left = mounted.document.createElement('button')
+    left.className = 'left'
+    left.textContent = 'Menu'
+    mounted.container.append(centred, left)
+    await mounted.settle()
+    expect(mounted.nativeOf(centred).style).toMatchObject({ textAlign: 'center' })
+    expect(mounted.nativeOf(left).style).toMatchObject({ textAlign: 'left' })
   })
 })
 

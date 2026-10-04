@@ -13,8 +13,9 @@
 // scrolling, overlay placement). Every visual value (colour, type, spacing,
 // radius, borders, elevation, materials, motion) comes from the app's or a UI
 // library's stylesheet, normally through semantic tokens (see theme.ts).
-// Hover, press and focus-visible styles are ordinary :hover, :active and
-// :focus-visible rules; GPUI applies them natively.
+// Hover and press styles are ordinary :hover and :active rules; GPUI applies
+// them natively. (:focus-visible rules don't reach the screen yet: gpuix has
+// no focus state.)
 //
 // Like FoldKit's own view helpers, each takes the `h` builder last.
 

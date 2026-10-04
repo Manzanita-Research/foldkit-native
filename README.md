@@ -32,7 +32,8 @@ FoldKit ◀─listeners── DOM ◀────dispatchEvent──── mirro
   happy-dom understands (`bun run css`, `scripts/css.ts`). happy-dom resolves
   stylesheets, classes, inline styles and custom properties; `src/style.ts` copies what GPUI can draw (flexbox, grid,
   sizes, spacing, colours, borders, radius, gradients, shadows, fonts,
-  `:hover`/`:active`/`:focus-visible`, cursor, `user-select`). GPUI does layout.
+  `:hover`/`:active`, cursor, `user-select`; not yet `:focus` or `:focus-visible`,
+  which gpuix has no state for). GPUI does layout.
   Like a native app, UI text isn't selectable unless its CSS says
   `user-select: text`, so double-clicking a button never highlights its label.
 - **Primitives** (`src/primitives.ts`): look-free building blocks for views

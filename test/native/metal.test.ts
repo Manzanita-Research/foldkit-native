@@ -114,6 +114,82 @@ describe.skipIf(!metal)('Metal, offscreen', () => {
     expect(dragAcross('.note')).toContain('Selectable')
   })
 
+  /** An input and a tabindex div with :focus-visible colours, focused through
+   *  GPUI (a click, then focusElement): whether GPUI moved focus, and how many
+   *  red (focus-visible) and grey (resting) pixels it painted each time. */
+  const focusVisible = async () => {
+    const renderer = await testRenderer(400, 240)
+    const css = `body { margin: 0; height: 100%; background-color: #ffffff; }
+      .app { display: flex; flex-direction: column; gap: 20px; padding: 20px; }
+      .field { width: 200px; height: 40px; border: 6px solid #808080; background-color: #ffffff; }
+      .field:focus-visible { border-color: #ff0000; }
+      .tile { width: 100px; height: 60px; background-color: #808080; }
+      .tile:focus-visible { background-color: #ff0000; }`
+    const dom = attachDom(renderer, { css })
+    cleanups.push(async () => {
+      dom.detach()
+      await dom.window.happyDOM.abort()
+      dom.window.close()
+    })
+    const document = dom.window.document
+    document.body.querySelector('#app')!.outerHTML = '<div class="app"><input class="field"><div class="tile" tabindex="0"></div></div>'
+    // GPUI gives an element a focus handle when something listens for keys.
+    document.querySelector('.tile')!.addEventListener('keydown', () => {})
+    for (let i = 0; i < 3; i++) {
+      await dom.window.happyDOM.waitUntilComplete()
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+    renderer.flush()
+    const idOf = (selector: string) => dom.mirror.idFor(document.querySelector(selector) as unknown as Node)!
+    const field = idOf('.field')
+    const tile = idOf('.tile')
+
+    /** How many pixels of the frame GPUI drew are each colour. Positions
+     *  aren't used: getElementBounds doesn't match where GPUI paints. */
+    const count = (name: string) => {
+      const path = join(out, `focus-${name}.png`)
+      renderer.captureScreenshot(path)
+      const image = readPng(path)
+      let red = 0, gray = 0
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          const pixel = image.pixel(x, y)
+          if (near(pixel, rgb('#ff0000'), 8)) red++
+          else if (near(pixel, rgb('#808080'), 8)) gray++
+        }
+      }
+      return { red, gray }
+    }
+    const before = count('before')
+    expect(before.red).toBe(0)
+    expect(before.gray).toBeGreaterThan(0)
+
+    const fieldBox = renderer.getElementBounds(field)!
+    renderer.nativeSimulateClick(fieldBox.x + fieldBox.width / 2, fieldBox.y + fieldBox.height / 2)
+    renderer.flush()
+    const fieldFocused = { focused: renderer.getFocusedElementId() === field, ...count('field') }
+    renderer.focusElement(tile)
+    renderer.flush()
+    const tileFocused = { focused: renderer.getFocusedElementId() === tile, ...count('tile') }
+    console.log(':focus-visible on Metal:', JSON.stringify({ before, fieldFocused, tileFocused }))
+    return { fieldFocused, tileFocused }
+  }
+
+  test('GPUI moves focus to an input by a click, and to a tabindex element by focusElement', async () => {
+    const { fieldFocused, tileFocused } = await focusVisible()
+    expect(fieldFocused.focused).toBe(true)
+    expect(tileFocused.focused).toBe(true)
+  })
+
+  // Not yet: gpuix's style has hover and active states only, so the
+  // focusVisible state the mirror sends is dropped, and nothing changes on
+  // screen when an element takes focus. Drop `.failing` when it's painted.
+  test.failing(':focus-visible styles are painted when GPUI focuses an element', async () => {
+    const { fieldFocused, tileFocused } = await focusVisible()
+    expect(fieldFocused.red).toBeGreaterThan(0)
+    expect(tileFocused.red).toBeGreaterThan(0)
+  })
+
   test('the fake GPUI tree agrees with the real one', async () => {
     // Record what the mirror sends for a run of edits, replay it into GPUI's
     // real retained tree, and compare: the unit tests' fake must not drift.

@@ -261,6 +261,23 @@ describe('text and attributes', () => {
     expect(mounted.nativeOf(container.children[1]!).props).toMatchObject({ src: 'data:image/png;base64,AA==', alt: 'dot', objectFit: 'cover' })
   })
 
+  test("a textarea's text is its value, not a native child", async () => {
+    // FoldKit writes a textarea's value as its text, as HTML does.
+    const { container } = await setup()
+    const textarea = el('textarea') as HTMLTextAreaElement
+    container.append(textarea)
+    await mounted.settle()
+    textarea.textContent = 'Hello'
+    await mounted.settle()
+    expect(mounted.nativeOf(textarea).children).toEqual([])
+    expect(mounted.nativeOf(textarea).props['value']).toBe('Hello')
+    textarea.firstChild!.textContent = 'Hello there'
+    await mounted.settle()
+    expect(mounted.nativeOf(textarea).props['value']).toBe('Hello there')
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+  })
+
   test('mixed inline content becomes a wrapping row', async () => {
     const { container } = await setup()
     const p = el('p')
@@ -268,5 +285,34 @@ describe('text and attributes', () => {
     container.appendChild(p)
     await mounted.settle()
     expect(mounted.nativeOf(p).style).toMatchObject({ display: 'flex', flexDirection: 'row', flexWrap: 'wrap' })
+  })
+
+  test('in that row, a block child still takes a whole line', async () => {
+    // A form of block fields with an inline-block button last, as FoldKit's
+    // Form example has: the fields must not shrink to fit their labels.
+    const { container } = await setup('.narrow { width: 50px; }')
+    const form = el('form')
+    form.append(el('div', 'Name'), el('div', 'Fixed', { class: 'narrow' }), el('span', 'inline'), el('button', 'Join'))
+    container.appendChild(form)
+    await mounted.settle()
+    const [field, narrow, span, button] = Array.from(form.children).map(child => mounted.nativeOf(child).style)
+    expect(mounted.nativeOf(form).style).toMatchObject({ display: 'flex', flexWrap: 'wrap' })
+    expect(field).toMatchObject({ width: '100%' })
+    expect(narrow).toMatchObject({ width: 50 })
+    expect(span!['width']).toBeUndefined()
+    expect(button!['width']).toBeUndefined()
+  })
+
+  test("the row's text-align places its inline content", async () => {
+    // Shopping Cart's confirmation: a centred block whose button is inline-block.
+    const { container } = await setup('.centred { text-align: center; } .right { text-align: right; }')
+    const centred = el('div', undefined, { class: 'centred' })
+    centred.append(el('h1', 'Done'), el('button', 'Continue'))
+    const right = el('div', undefined, { class: 'right' })
+    right.append('a ', el('b', 'b'))
+    container.append(centred, right)
+    await mounted.settle()
+    expect(mounted.nativeOf(centred).style).toMatchObject({ display: 'flex', justifyContent: 'center' })
+    expect(mounted.nativeOf(right).style).toMatchObject({ display: 'flex', justifyContent: 'flex-end' })
   })
 })

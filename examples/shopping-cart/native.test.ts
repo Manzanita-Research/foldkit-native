@@ -172,6 +172,14 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
 
     await app.click('Place Order')
     expect(app.painted()).toContain('Order placed successfully!')
+    // The button is an inline-block after a block: on its own line, below the
+    // box, centred by text-center, and only as tall as its text.
+    const box = app.bounds('You will receive a confirmation email shortly.')
+    const button = app.bounds('Continue Shopping')
+    console.log('shopping-cart confirmation layout (Metal):', JSON.stringify({ box, button }))
+    expect(button.y).toBeGreaterThan(box.y + box.height)
+    expect(button.height).toBeLessThan(60)
+    expect(Math.abs(button.x + button.width / 2 - 380)).toBeLessThan(40)
     app.screenshot('order-placed')
   })
 

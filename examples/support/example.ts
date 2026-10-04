@@ -6,6 +6,10 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+// FoldKit Native's `document` global, before any app.ts loads: an app may name
+// it at module scope, as on the web (see src/dom.ts).
+import '../../src/dom.ts'
+
 export type ExampleMeta = Readonly<{
   title: string
   /** One line: what the app is. */

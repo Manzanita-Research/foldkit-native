@@ -206,6 +206,10 @@ export const boxStyle = (computed: Computed): Style => {
       ;(style as Record<string, unknown>)[key] = value
     }
   }
+  // happy-dom computes the `overflow` shorthand without its longhands.
+  const [overflowX, overflowY = overflowX] = get('overflow').split(/\s+/)
+  if (style.overflowX === undefined && overflowX !== undefined && overflowX !== '' && overflowX !== 'visible') style.overflowX = overflowX
+  if (style.overflowY === undefined && overflowY !== undefined && overflowY !== '' && overflowY !== 'visible') style.overflowY = overflowY
   for (const [css, key] of LENGTHS) {
     const value = px(get(css))
     if (value !== undefined && value !== 0) (style as Record<string, unknown>)[key] = value

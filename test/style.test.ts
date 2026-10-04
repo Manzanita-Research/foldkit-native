@@ -74,6 +74,13 @@ describe('box', () => {
     expect(translation('translateX(1rem)')).toEqual({ x: 16, y: 0 })
   })
 
+  test('overflow, the shorthand (happy-dom leaves its longhands empty): sr-only clips', async () => {
+    expect((await styleOf('overflow: hidden;')).box).toMatchObject({ overflowX: 'hidden', overflowY: 'hidden' })
+    expect((await styleOf('overflow: hidden auto;')).box).toMatchObject({ overflowX: 'hidden', overflowY: 'auto' })
+    expect((await styleOf('overflow-y: auto;')).box).toMatchObject({ overflowY: 'auto' })
+    expect((await styleOf('overflow: visible;')).box.overflowX).toBeUndefined()
+  })
+
   test('grid columns become a track count', async () => {
     expect((await styleOf('display: grid; grid-template-columns: repeat(3, 1fr);')).box.gridTemplateColumns).toBe(3)
     expect((await styleOf('display: grid; grid-template-columns: 1fr 1fr;')).box.gridTemplateColumns).toBe(2)

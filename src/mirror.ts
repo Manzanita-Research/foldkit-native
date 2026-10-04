@@ -66,6 +66,11 @@ export const createMirror = (options: {
   onSynced?: (timings: MirrorTimings) => void
   /** Where GPUI last painted an element, in window coordinates. */
   boundsOf?: (id: number) => { x: number; y: number; width: number; height: number } | null
+  /** GPUI's scroll offset for a scroller, gpuix's way: `[x, y]`, negative
+   *  when scrolled down or right. */
+  scrollOffsetOf?: (id: number) => ReadonlyArray<number> | null
+  /** Scrolls a GPUI scroller, with gpuix's negative offsets. */
+  scrollTo?: (id: number, x: number, y: number) => void
 }) => {
   const { window, mutations, eventHandlers } = options
   const document = window.document as unknown as Document
@@ -111,6 +116,45 @@ export const createMirror = (options: {
   proto.removeEventListener = function (type: string, listener: unknown, opts?: unknown) {
     track(this, type, -1)
     return remove.call(this, type, listener as EventListener, opts as EventListenerOptions)
+  }
+
+  // SCROLL POSITION, both ways. GPUI owns scrolling; the DOM's scrollTop and
+  // scrollLeft follow it, so an app reading them (FoldKit's OnScroll) sees
+  // where GPUI is. An app setting them (or calling scrollTo) scrolls GPUI, and
+  // hears `scroll` back, as in a browser. Copying GPUI's offset into the DOM
+  // never writes back, so a scroll can't echo between the two.
+  let readingScroll = false
+  let scrollProto = Object.getPrototypeOf(document.body) as object
+  while (!Object.prototype.hasOwnProperty.call(scrollProto, 'scrollTop')) scrollProto = Object.getPrototypeOf(scrollProto)
+  for (const axis of ['scrollTop', 'scrollLeft'] as const) {
+    const descriptor = Object.getOwnPropertyDescriptor(scrollProto, axis)!
+    Object.defineProperty(scrollProto, axis, {
+      ...descriptor,
+      set(this: Element, value: number) {
+        const before = descriptor.get!.call(this) as number
+        descriptor.set!.call(this, value)
+        const id = ids.get(this as unknown as Node)
+        if (readingScroll || id === undefined || options.scrollTo === undefined) return
+        if (descriptor.get!.call(this) === before) return
+        options.scrollTo(id, -this.scrollLeft || 0, -this.scrollTop || 0)
+        setTimeout(() => {
+          if (ids.has(this as unknown as Node)) this.dispatchEvent(new W['Event']!('scroll', { bubbles: false }))
+        }, 0)
+      },
+    })
+  }
+  /** Copies GPUI's scroll offset for `node` into the DOM. */
+  const readScroll = (node: Node) => {
+    const id = ids.get(node)
+    const offset = id === undefined ? null : options.scrollOffsetOf?.(id)
+    if (offset === null || offset === undefined) return
+    readingScroll = true
+    try {
+      ;(node as Element).scrollLeft = -(offset[0] ?? 0)
+      ;(node as Element).scrollTop = -(offset[1] ?? 0)
+    } finally {
+      readingScroll = false
+    }
   }
 
   // GPUI EVENTS → DOM EVENTS
@@ -242,6 +286,12 @@ export const createMirror = (options: {
         if (form !== null && form !== undefined) form.requestSubmit()
         return
       }
+      case 'scroll':
+        // A wheel or trackpad scrolled the element in GPUI: the DOM learns
+        // where it is now, then hears `scroll` (which doesn't bubble).
+        readScroll(node)
+        node.dispatchEvent(new W['Event']!('scroll', { bubbles: false }))
+        return
       case 'focus': case 'blur':
         node.dispatchEvent(new W['FocusEvent']!(event.eventType, { bubbles: false }))
         node.dispatchEvent(new W['FocusEvent']!(event.eventType === 'focus' ? 'focusin' : 'focusout', { bubbles: true }))
@@ -263,6 +313,15 @@ export const createMirror = (options: {
   }
 
   // STYLE
+  /** An element's custom property, inherited ones included: happy-dom's
+   *  computed style lists only the element's own, so walk up to find it. */
+  const customProperty = (element: Element) => (name: string): string => {
+    for (let at: Element | null = element; at !== null; at = at.parentElement) {
+      const value = window.getComputedStyle(at as never).getPropertyValue(name).trim()
+      if (value !== '') return value
+    }
+    return ''
+  }
   const styleOf = (node: Node): StyleDesc => {
     if (node.nodeType === 3) {
       const parent = node.parentElement
@@ -271,6 +330,8 @@ export const createMirror = (options: {
     const element = node as Element
     const computed = window.getComputedStyle(element as never)
     const style: Record<string, unknown> = { ...boxStyle(computed) }
+    // A text field draws its own text: it needs the text style a text node gets.
+    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') Object.assign(style, textStyle(computed))
     // Inline runs (spans, links, text beside elements) become a wrapping row:
     // GPUI has blocks and flex, not inline formatting.
     const inlineChildren = Array.from(element.childNodes).some(
@@ -280,7 +341,7 @@ export const createMirror = (options: {
     if (inlineChildren && style['display'] === undefined && element.children.length > 0) {
       Object.assign(style, { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline' })
     }
-    Object.assign(style, stateStyles(element, stateRules))
+    Object.assign(style, stateStyles(element, stateRules, customProperty(element)))
     return style as StyleDesc
   }
 

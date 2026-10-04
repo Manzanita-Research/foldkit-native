@@ -14,7 +14,7 @@ const GLOBALS = [
   'cancelAnimationFrame', 'getComputedStyle', 'matchMedia', 'location', 'history',
   'sessionStorage', 'localStorage', 'navigator', 'customElements', 'HTMLInputElement',
   'HTMLTextAreaElement', 'HTMLSelectElement', 'HTMLFormElement', 'HTMLButtonElement',
-  'DOMParser', 'CSSStyleSheet', 'ShadowRoot', 'EventTarget',
+  'DOMParser', 'CSSStyleSheet', 'ShadowRoot', 'EventTarget', 'Document',
 ] as const
 
 export type NativeWindow = Window

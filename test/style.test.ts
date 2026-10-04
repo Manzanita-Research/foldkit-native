@@ -99,6 +99,15 @@ describe('text', () => {
       whiteSpace: 'nowrap', textOverflow: 'ellipsis',
     })
   })
+  test('an input draws its own text, so it gets the text style too', async () => {
+    mounted = mountFake({ css: 'input { background-color: #111318; color: #eceef4; font-size: 15px; font-weight: 600; }' })
+    const input = mounted.document.createElement('input')
+    mounted.container.appendChild(input)
+    await mounted.settle()
+    expect(mounted.nativeOf(input).style).toMatchObject({
+      backgroundColor: '#111318', color: '#eceef4', fontSize: 15, fontWeight: 600,
+    })
+  })
 })
 
 describe('text selection', () => {
@@ -128,6 +137,44 @@ describe('text selection', () => {
 })
 
 describe('interaction states', () => {
+  const hovered = async (css: string) => {
+    mounted = mountFake({ css })
+    const div = mounted.document.createElement('div')
+    div.className = 'b'
+    mounted.container.appendChild(div)
+    await mounted.settle()
+    return div
+  }
+
+  test('a state rule written with var() gets the value, as Tailwind writes every hover colour', async () => {
+    const div = await hovered(':root { --h: #123456; } .b:hover { background-color: var(--h); }')
+    expect(mounted.nativeOf(div).style['hover']).toEqual({ backgroundColor: '#123456' })
+  })
+
+  test('hover rules inside @media (hover: hover), where Tailwind 4 puts them, count', async () => {
+    const div = await hovered(':root { --h: #123456; } @media (hover: hover) { .b:hover { background-color: var(--h); } }')
+    expect(mounted.nativeOf(div).style['hover']).toEqual({ backgroundColor: '#123456' })
+  })
+
+  test("var() in a state rule falls back when the property isn't set", async () => {
+    const div = await hovered('.b:hover { background-color: var(--missing, var(--also-missing, #abcdef)); color: var(--c, #fff); }')
+    expect(mounted.nativeOf(div).style['hover']).toEqual({ backgroundColor: '#abcdef', color: '#fff' })
+  })
+
+  test('a theme switch changes a var() hover colour', async () => {
+    const div = await hovered(`.app { --h: #111111; } .app[data-theme="light"] { --h: #eeeeee; }
+      .b:hover { background-color: var(--h); box-shadow: 0px 2px 4px 0px var(--h); }`)
+    const app = mounted.document.createElement('div')
+    app.className = 'app'
+    mounted.container.appendChild(app)
+    app.appendChild(div)
+    await mounted.settle()
+    expect(mounted.nativeOf(div).style['hover']).toMatchObject({ backgroundColor: '#111111', boxShadow: { color: '#111111' } })
+    app.setAttribute('data-theme', 'light')
+    await mounted.settle()
+    expect(mounted.nativeOf(div).style['hover']).toMatchObject({ backgroundColor: '#eeeeee', boxShadow: { color: '#eeeeee' } })
+  })
+
   test(':hover, :active and :focus-visible become GPUI state styles', async () => {
     mounted = mountFake({
       css: `.b { background-color: #000000; } .b:hover { background-color: #111111; color: #eeeeee; }

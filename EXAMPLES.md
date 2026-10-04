@@ -37,7 +37,7 @@ The existing **Counter** and **Themes** demos stay in the gallery too.
 - **UI Showcase** covers every `@foldkit/ui` component. Popovers, menus,
   tooltips and comboboxes need layout read-back (README, roadmap item 2), so it
   waits for that.
-- **Shopping Cart** runs, with gaps: nothing in GPUI goes back or forward (no back button, key or mouse button sends `popstate`); Tailwind's `space-y-*` gaps are lost (happy-dom never matches `:where()` with a combinator inside); and a block holding an inline-block (the order confirmation's button) lays out as one wrapping row.
+- **Shopping Cart** runs, with gaps: nothing in GPUI goes back or forward (no back button, key or mouse button sends `popstate`); and Tailwind's `space-y-*` gaps are lost (happy-dom never matches `:where()` with a combinator inside).
 - **Form** runs, with gaps: no focus ring shows (Tailwind's `focus:ring-2` is a `:focus` rule; gpuix's style has no focus state, and DOM focus doesn't follow GPUI focus); Tab doesn't move between fields; and the card isn't centred (`mx-auto`: gpuix's margins are numbers, not `auto`).
 
 ## What every example has

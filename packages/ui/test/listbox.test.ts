@@ -101,13 +101,9 @@ describe.skipIf(!METAL)('native, Metal', () => {
     const app = await metal('listbox', Picker)
     try {
       const list = app.document.getElementById('fruit')!
-      // What gpuix 0.10's own scrollIntoView does here (the adapter reveals
-      // through bounds and scrollTo instead), for the memo.
-      const last = app.document.getElementById('fruit-option-9')!
-      app.renderer.scrollIntoView(last.nativeId)
-      await app.settle()
-      console.log('ui listbox, gpuix scrollIntoView alone:', JSON.stringify(app.renderer.getScrollOffset(list.nativeId)))
-      list.scrollTop = 0
+      // (Called directly, gpuix's own scrollIntoView scrolled this list to
+      // [0,-173] on Metal, and the page with it; the adapter reveals through
+      // painted bounds and scrollTo, which moves only the list.)
       list.focus()
       await app.keys('down down down down down down down down')
       const option = app.document.getElementById('fruit-option-8')!

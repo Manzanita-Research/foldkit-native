@@ -35,6 +35,9 @@ describe.skipIf(!METAL)('FoldKit on gpuix, Metal', () => {
     await openExample('form')
     app!.screenshot('form-empty')
     await app!.click(byId('name'))
+    // Clicking into GPUI's editor sends no focus event; the adapter follows
+    // GPUI's focus on the root's press/release and before keys.
+    console.log('gpuix form after click:', JSON.stringify({ gpui: app!.gpuiFocus()?.getAttribute('id') ?? null, dom: active() }))
     const gpui = [app!.gpuiFocus()?.getAttribute('id') ?? null]
     const dom = [active()]
     for (const _ of [1, 2]) {
@@ -91,7 +94,14 @@ describe.skipIf(!METAL)('FoldKit on gpuix, Metal', () => {
     await app!.press('space')
     expect(app!.painted().some(text => text.includes('light'))).toBe(true)
     byId('accent').focus()
-    await app!.keys('down down down enter')
+    await app!.settle()
+    console.log('gpuix native-ui before arrows:', JSON.stringify({ dom: active(), gpui: app!.gpuiFocus()?.getAttribute('id') ?? null }))
+    await app!.keys('down down down')
+    console.log('gpuix native-ui after arrows:', JSON.stringify({
+      dom: active(), gpui: app!.gpuiFocus()?.getAttribute('id') ?? null,
+      highlighted: byId('accent').getAttribute('aria-activedescendant'),
+    }))
+    await app!.keys('enter')
     expect(app!.painted().some(text => text.includes('green'))).toBe(true)
     app!.screenshot('native-ui-light-green')
 

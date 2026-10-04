@@ -39,7 +39,10 @@ resolves `false` if a handler kept the window open.
   window open when the app asked (`reason: 'close'`). `close({ force: true })`
   can't be kept open. A handler that throws is reported and doesn't keep it.
 - **When GPUI's loop ends** (`reason: 'window'`: the person closed it, on
-  Linux and Windows), the handlers run but can't keep it.
+  Linux and Windows), the handlers run but can't keep it. On Linux gpuix
+  throws "GPUI application is not initialized" from every call once its
+  window is gone, so the adapter ends the loop on `tick()` and doesn't call
+  into GPUI to tear down (the tree went with the window).
 - **`exitOnClose`** (default `true`): the window is the process. Closing it
   ends the process (exit 0). With `false` the process is the host's:
   `close()` resolves and `app.closed` settles, and the process goes on.
@@ -52,10 +55,15 @@ resolves `false` if a handler kept the window open.
   `onError` they go to `console.error`.
 - **Starting**: gpuix loads when a window is mounted, not at import, so a
   failure to load is caught too. It's a `NativeStartError` with one sentence:
-  no display to open a window on (wayland-client's `NoCompositor`), a
-  missing library (`libxkbcommon.so.0`), or GPUI's own message. With
-  `exitOnClose` that sentence goes to stderr and the process exits 1. With
-  `false` it's thrown.
+  no display to open a window on, a missing library (`libxkbcommon.so.0`), or
+  GPUI's own message. With `exitOnClose` that sentence goes to stderr and the
+  process exits 1. With `false` it's thrown. Checked against the real gpuix
+  on Linux: a missing library and a `WAYLAND_DISPLAY` nobody listens on are
+  gpuix's own errors (`NoCompositor` panics GPUI's thread, so gpuix prints
+  its Rust panic first), but with neither `WAYLAND_DISPLAY` nor `DISPLAY` set,
+  or a `DISPLAY` on no X server, gpuix 0.10 starts *headless*: no window, no
+  error, an app running unseen. So on Linux the adapter looks first (a Wayland
+  socket that exists, or a local X socket) and gives the same sentence.
 
 **gpuix 0.10's limits.** Both are pinned by tests (`test/app.test.ts`), so a
 gpuix upgrade that changes them fails there.

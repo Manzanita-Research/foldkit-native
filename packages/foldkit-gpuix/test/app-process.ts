@@ -6,6 +6,7 @@
 //   bun app-process.ts close-host-busy   the same, with other work running
 //   bun app-process.ts close-exit        close() with the default exitOnClose
 //   bun app-process.ts no-compositor     init fails as gpuix does without one
+//   bun app-process.ts real-no-display   the real gpuix with no display (Linux)
 //   bun app-process.ts real-close-host   close() on a real window (Metal)
 //   bun app-process.ts real-native-close the window closes as a person's click does
 
@@ -27,6 +28,15 @@ if (mode === 'no-compositor') {
   })
   mountGpuix({ createRenderer: window.createRenderer })
   say('opened')
+} else if (mode === 'real-no-display') {
+  // The real gpuix, a real start: exitOnClose's default says why in a
+  // sentence and exits 1, or (with false) throws. Run it with no display.
+  try {
+    mountGpuix({ title: 'app-process', exitOnClose: process.argv[3] !== 'throw' })
+    say('opened')
+  } catch (error) {
+    say(`threw ${(error as Error).name}: ${(error as Error).message}`)
+  }
 } else if (mode === 'close-host' || mode === 'close-host-busy' || mode === 'close-exit') {
   const { app } = openApp(mode === 'close-exit' ? { exitOnClose: true } : {})
   if (mode === 'close-host-busy') setTimeout(() => say('other work done'), 1500)

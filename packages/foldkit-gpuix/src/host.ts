@@ -1382,7 +1382,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     /** Lets go of everything this host holds: the native tree (root,
      *  sentinel and all), event handlers, window key events, frame work and
      *  pending timers. The document stays, unconnected to GPUI. */
-    detach: () => {
+    detach: (options: { windowGone?: boolean } = {}) => {
       if (detached) return
       detached = true
       if (drawTimer !== undefined) clearTimeout(drawTimer)
@@ -1393,14 +1393,26 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       frameCallbacks = []
       dirty.clear()
       autofocus = []
-      renderer.setWindowKeyEvents?.(false, false, binding.windowKeyEventId)
+      // A window that's already gone took its native tree with it, and on
+      // Linux gpuix then throws from every call ("GPUI application is not
+      // initialized"): nothing left to free. Any other failure is real.
+      const native = (free: () => void) => {
+        try {
+          free()
+        } catch (error) {
+          if (options.windowGone !== true) throw error
+        }
+      }
+      native(() => renderer.setWindowKeyEvents?.(false, false, binding.windowKeyEventId))
       const root = body.nativeId
       if (root !== 0) {
-        unmount(body)
-        unregisterEventHandlers(eventHandlers, sentinel)
-        mutations.destroyElement(sentinel)
-        mutations.destroyElement(root)
-        mutations.flushMutations()
+        native(() => {
+          unmount(body)
+          unregisterEventHandlers(eventHandlers, sentinel)
+          mutations.destroyElement(sentinel)
+          mutations.destroyElement(root)
+          mutations.flushMutations()
+        })
       }
       eventHandlers.clear()
       nodes.clear()

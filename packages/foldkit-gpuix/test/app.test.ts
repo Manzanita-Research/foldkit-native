@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { createRendererState } from '@gpuix/native/host'
 
 import { CloseRequest, type ErrorReport, NativeStartError, explainStartError } from '../src/index.ts'
+import { hasDisplay, preflightDisplay } from '../src/start.ts'
 import { createFakeWindow, frames, log, openApp } from './app-support.ts'
 import { METAL } from './support.ts'
 
@@ -89,6 +90,33 @@ describe('close()', () => {
     expect(seen.map(request => [request.reason, request.vetoable, request.defaultPrevented])).toEqual([['window', false, false]])
     expect(log).toEqual(['mounted', 'released'])
     expect(window.fake.gpui.retainedCount()).toBe(0)
+  })
+
+  // Seen on m6 (FKN-26): the compositor closed a real Linux window, `tick()`
+  // said false, and `drawn()` then threw from `getWindowSize` before `tick`
+  // could return: the loop never ended and reported a frame error 60 times a
+  // second. Then the teardown threw from `setWindowKeyEvents` (every gpuix
+  // call does once GPUI is gone), so `closed` never settled and `exitOnClose`
+  // never exited.
+  test('when the window goes and the renderer then throws from its calls, the close still runs and finishes, with no errors', async () => {
+    const reports: Array<ErrorReport> = []
+    const { app, window } = open({ onError: report => void reports.push(report) })
+    await frames()
+    window.closeWindow()
+    await Promise.race([app.closed, new Promise((_, reject) => setTimeout(() => reject(new Error('close never ran')), 1000))])
+    await frames(3)
+    expect(reports).toEqual([])
+    expect(log).toEqual(['mounted', 'released'])
+    expect(window.fake.gpui.retainedCount()).toBe(0)
+  })
+
+  test('a failing native call is still an error when the window is not gone', async () => {
+    const { app, window } = open()
+    await frames()
+    window.fake.renderer.setWindowKeyEvents = () => {
+      throw new Error('GPUI application is not initialized')
+    }
+    expect(() => app.detach()).toThrow('not initialized')
   })
 })
 
@@ -189,11 +217,51 @@ describe('starting GPUI', () => {
   })
 })
 
+// Linux: gpuix starts HEADLESS when there is nothing to draw on (no error, no
+// window), so the adapter checks first. Seen on m6 (FKN-26): with neither
+// WAYLAND_DISPLAY nor DISPLAY set, mountGpuix returned and the app ran unseen.
+describe('a display to open a window on (Linux)', () => {
+  const sockets = (...paths: Array<string>) => (path: string) => paths.includes(path)
+  test('a Wayland socket under XDG_RUNTIME_DIR, or an absolute one, counts; a missing one does not', () => {
+    const wl = sockets('/run/user/1000/wayland-1', '/tmp/x/wl')
+    expect(hasDisplay({ WAYLAND_DISPLAY: 'wayland-1', XDG_RUNTIME_DIR: '/run/user/1000' }, wl)).toBe(true)
+    expect(hasDisplay({ WAYLAND_DISPLAY: '/tmp/x/wl' }, wl)).toBe(true)
+    expect(hasDisplay({ WAYLAND_DISPLAY: 'wayland-9', XDG_RUNTIME_DIR: '/run/user/1000' }, wl)).toBe(false)
+    expect(hasDisplay({ WAYLAND_DISPLAY: 'wayland-1' }, wl)).toBe(false)
+  })
+
+  test('a local X display needs its socket; one on another host is taken on trust', () => {
+    const x = sockets('/tmp/.X11-unix/X0')
+    expect(hasDisplay({ DISPLAY: ':0' }, x)).toBe(true)
+    expect(hasDisplay({ DISPLAY: ':0.1' }, x)).toBe(true)
+    expect(hasDisplay({ DISPLAY: 'unix:0' }, x)).toBe(true)
+    expect(hasDisplay({ DISPLAY: ':99' }, x)).toBe(false)
+    expect(hasDisplay({ DISPLAY: 'buildhost:0' }, x)).toBe(true)
+  })
+
+  test('neither set, or both empty: no display; either one alive is enough', () => {
+    expect(hasDisplay({}, () => true)).toBe(false)
+    expect(hasDisplay({ WAYLAND_DISPLAY: '', DISPLAY: '' }, () => true)).toBe(false)
+    expect(hasDisplay({ WAYLAND_DISPLAY: 'gone', XDG_RUNTIME_DIR: '/r', DISPLAY: ':0' }, sockets('/tmp/.X11-unix/X0'))).toBe(true)
+  })
+
+  test('the preflight throws the NoDisplay sentence, on Linux only', () => {
+    expect(() => preflightDisplay({}, 'linux', () => false)).toThrow(NativeStartError)
+    try {
+      preflightDisplay({}, 'linux', () => false)
+    } catch (error) {
+      expect((error as NativeStartError).reason).toBe('NoDisplay')
+      expect((error as Error).message).toBe('There is no display to open a window on: start the app from a Wayland or X11 session (WAYLAND_DISPLAY or DISPLAY must be set).')
+    }
+    expect(() => preflightDisplay({}, 'darwin', () => false)).not.toThrow()
+  })
+})
+
 // WHOLE PROCESSES
 
 const SCRIPT = join(import.meta.dir, 'app-process.ts')
-const run = async (mode: string, waitMs = 4000) => {
-  const child = Bun.spawn([process.execPath, SCRIPT, mode], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
+const run = async (mode: string, waitMs = 4000, env?: Record<string, string | undefined>, ...args: Array<string>) => {
+  const child = Bun.spawn([process.execPath, SCRIPT, mode, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', ...(env === undefined ? {} : { env }) })
   const killer = setTimeout(() => child.kill(), waitMs)
   const code = await child.exited
   clearTimeout(killer)
@@ -235,6 +303,33 @@ describe('the process', () => {
     expect(code).toBe(1)
     expect(stderr).toBe('There is no display to open a window on: start the app from a Wayland or X11 session (WAYLAND_DISPLAY or DISPLAY must be set).')
     expect(at('opened')).toBeUndefined()
+  })
+
+  // The real gpuix binary, on any Linux box (CI's ubuntu job included): a
+  // process with no display, a dead Wayland socket and a dead X display each
+  // get the sentence, where gpuix alone starts headless or panics.
+  const linux = process.platform === 'linux'
+  const without = (extra: Record<string, string> = {}) => {
+    const env: Record<string, string | undefined> = { ...process.env, ...extra }
+    for (const name of ['WAYLAND_DISPLAY', 'DISPLAY']) if (!(name in extra)) delete env[name]
+    return env
+  }
+  const SENTENCE = 'There is no display to open a window on: start the app from a Wayland or X11 session (WAYLAND_DISPLAY or DISPLAY must be set).'
+  test.skipIf(!linux)('real gpuix, no WAYLAND_DISPLAY and no DISPLAY: the sentence, exit 1, no window', async () => {
+    const { code, stderr, at } = await run('real-no-display', 8000, without())
+    expect(stderr).toBe(SENTENCE)
+    expect(code).toBe(1)
+    expect(at('opened')).toBeUndefined()
+  })
+  test.skipIf(!linux)('real gpuix, a Wayland socket nobody listens on: the sentence', async () => {
+    const { code, stderr } = await run('real-no-display', 8000, without({ WAYLAND_DISPLAY: 'wayland-fkn26-none', XDG_RUNTIME_DIR: '/tmp' }))
+    expect(stderr).toBe(SENTENCE)
+    expect(code).toBe(1)
+  })
+  test.skipIf(!linux)('real gpuix, DISPLAY on no X server, exitOnClose: false: a thrown NativeStartError', async () => {
+    const { code, lines } = await run('real-no-display', 8000, without({ DISPLAY: ':98' }), 'throw')
+    expect(code).toBe(0)
+    expect(lines.some(line => line.startsWith(`threw NativeStartError: ${SENTENCE}`))).toBe(true)
   })
 })
 

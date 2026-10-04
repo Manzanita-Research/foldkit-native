@@ -663,3 +663,41 @@ describe('pointer events, and listeners on document', () => {
     expect(names(seen)).toEqual(['pointermove'])
   })
 })
+
+describe('keys: one keystroke, one keydown', () => {
+  const board = async () => {
+    const { container, document } = await setup()
+    const card = el('div', 'card')
+    card.setAttribute('tabindex', '0')
+    card.addEventListener('keydown', () => {})
+    container.appendChild(card)
+    const seen = record(document, ['keydown'])
+    await mounted.settle()
+    return { card, seen }
+  }
+
+  test("GPUI's two copies (the focused element's and the window's) dispatch once", async () => {
+    const { card, seen } = await board()
+    mounted.send(card, { eventType: 'keyDown', key: 'down' })
+    mounted.mirror.windowKey({ eventType: 'keyDown', key: 'down' } as never)
+    expect(seen.map(event => (event as KeyboardEvent).key)).toEqual(['ArrowDown'])
+  })
+
+  test('in either order, and a key pressed twice in one task counts twice', async () => {
+    const { card, seen } = await board()
+    mounted.mirror.windowKey({ eventType: 'keyDown', key: 'down' } as never)
+    mounted.send(card, { eventType: 'keyDown', key: 'down' })
+    mounted.send(card, { eventType: 'keyDown', key: 'down' })
+    mounted.mirror.windowKey({ eventType: 'keyDown', key: 'down' } as never)
+    expect(seen).toHaveLength(2)
+  })
+
+  test('a key only the window hears (nothing focused listens) still dispatches, every time', async () => {
+    const { seen } = await board()
+    mounted.mirror.windowKey({ eventType: 'keyDown', key: 'a' } as never)
+    mounted.mirror.windowKey({ eventType: 'keyDown', key: 'a' } as never)
+    await mounted.settle()
+    mounted.mirror.windowKey({ eventType: 'keyDown', key: 'a' } as never)
+    expect(seen).toHaveLength(3)
+  })
+})

@@ -233,6 +233,25 @@ export const createMirror = (options: {
 
   // GPUI EVENTS → DOM EVENTS
   let lastClick: { node: Node; at: number; sameTask: boolean } | undefined
+  // GPUI sends a keystroke to the focused element and to the window, back to
+  // back. The first copy dispatches; the other one of the pair is skipped. A
+  // key only the window hears (nothing focused listens) still dispatches.
+  let lastKey: { key: string | undefined; type: string; from: 'element' | 'window'; at: number; sameTask: boolean } | undefined
+  const firstOfPair = (event: EventPayload, from: 'element' | 'window') => {
+    const now = performance.now()
+    const last = lastKey
+    if (last !== undefined && (last.sameTask || now - last.at < 4) && last.from !== from &&
+      last.key === event.key && last.type === event.eventType) {
+      lastKey = undefined
+      return false
+    }
+    const next = { key: event.key, type: event.eventType, from, at: now, sameTask: true }
+    lastKey = next
+    queueMicrotask(() => {
+      next.sameTask = false
+    })
+    return true
+  }
   /** When the latest input arrived, for click → frame timing. */
   let inputAt: number | undefined
   // Drag and drop, rebuilt from mouse events: a press on something listening
@@ -450,6 +469,7 @@ export const createMirror = (options: {
     if (on) registerEventHandler(eventHandlers, id, native, event => {
       if (debug) process.stderr.write(`foldkit-native: event ${id} ${event.eventType}\n`)
       const node = nodes.get(id)
+      if ((event.eventType === 'keyDown' || event.eventType === 'keyUp') && !firstOfPair(event, 'element')) return
       if (node !== undefined) toDom(node, event)
     })
     else unregisterEventHandler(eventHandlers, id, native)
@@ -800,7 +820,9 @@ export const createMirror = (options: {
     nodeFor: (id: number) => nodes.get(id),
     idFor: (node: Node) => ids.get(node),
     /** Window-level keys go to the focused element, like a browser. */
-    windowKey: (event: EventPayload) => toDom((document.activeElement as Node | null) ?? body, event),
+    windowKey: (event: EventPayload) => {
+      if (firstOfPair(event, 'window')) toDom((document.activeElement as Node | null) ?? body, event)
+    },
     stop: () => {
       trackers.delete(document)
       scrollers.delete(document)

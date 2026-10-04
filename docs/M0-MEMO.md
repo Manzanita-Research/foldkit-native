@@ -115,10 +115,10 @@ silent stand-in. The adapter's README has the full tables.
 | Styles | No cascade engine. Rules with descendant and child combinators (ancestors at rest), specificity, `!important`, custom properties and inherited text. Live `@media`, evaluated `@supports`, `vh`/`vw`, auto margins. **Missing:** sibling combinators and structural pseudo-classes (`space-y-*`), ancestor states (`group-hover:`), pseudo-elements, `z-index`. Unsupported rules are listed per app |
 | Layout | GPUI (taffy). Absolutely and fixed positioned boxes go under their CSS containing block. A `fixed` box scrolls with the page (the root scrolls) |
 | Overlays | `@foldkit-native/ui` Dialog (centred, focus trap, focus return), Select (GPUI's anchored element: flips to fit, paints on top), FoldKit's `Dom.showDialog` modal isolation |
-| Browser APIs | MutationObserver, rAF, history/location (in memory, with `popstate`), sessionStorage, getSelection, and matchMedia behave. localStorage is in memory and warns once. ResizeObserver and IntersectionObserver are absent |
+| Browser APIs | MutationObserver, rAF, history/location (in memory, with `popstate`), sessionStorage, getSelection, and matchMedia behave. localStorage was in memory and warned once (since FKN-22: written through to a per-app file). ResizeObserver and IntersectionObserver are absent |
 | Accessibility | Roles, names and expanded/selected reach AccessKit (the Select test reads ComboBox/ListBox/ListBoxOption from `getA11yTree()`). Checked state goes as value text. **Not yet checked with a screen reader** (M2.1) |
 | Platforms | macOS on Metal: tested offscreen and in real windows in CI. **Linux: headless only.** gpuix can't read frames back on Linux, so real-GPU checks there need the M1.6 test session |
-| Lifecycle | `detach()` frees everything; closing the window runs `onClose` (or exits) |
+| Lifecycle | `detach()` frees everything. Correction (FKN-22): a native window close on macOS ends the process inside GPUI's tick, so `onClose` never ran there; FKN-22's app handle runs `onClose` for `close()` and writes `localStorage` through instead |
 
 ## The honest missing list
 

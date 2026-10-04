@@ -27,7 +27,9 @@ FoldKit ◀─listeners── DOM ◀────dispatchEvent──── mirro
 - **The mirror** (`src/mirror.ts`) replays each DOM change into gpuix's
   retained tree, and turns GPUI's clicks, keys and pointer moves back into DOM
   events on the right element. Drag and drop (FoldKit's `OnDragStart`/`OnDrop`)
-  is rebuilt from mouse events.
+  is rebuilt from mouse events. A click on a child that paints a fill (a
+  switch's track, a card's badge) reaches the clickable element it's in, as it
+  bubbles in a browser, where GPUI would let the fill block it.
 - **Styles are CSS.** Modern CSS such as Tailwind 4's is first lowered to what
   happy-dom understands (`bun run css`, `scripts/css.ts`). happy-dom resolves
   stylesheets, classes, inline styles and custom properties; `src/style.ts` copies what GPUI can draw (flexbox, grid,

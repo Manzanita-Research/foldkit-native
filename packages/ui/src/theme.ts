@@ -154,6 +154,7 @@ ${ui('listbox', 'option')} {
 ${ui('listbox', 'option')}:hover { background-color: ${t('color.highlight')}; }
 ${ui('listbox', 'option')}[data-highlighted] { background-color: ${t('color.highlight')}; }
 ${ui('listbox', 'option')}[data-selected] { font-weight: ${t('font.weight.strong')}; color: ${t('color.accent')}; }
+${ui('listbox', 'option')}[data-disabled] { color: ${t('color.text-muted')}; cursor: default; }
 ${ui('listbox', 'swatch')} { width: 12px; height: 12px; border-radius: ${t('radius.full')}; }
 ${ui('listbox', 'check')} { width: 16px; color: ${t('color.accent')}; }
 

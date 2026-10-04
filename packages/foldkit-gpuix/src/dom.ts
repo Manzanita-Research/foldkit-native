@@ -578,6 +578,8 @@ export class NativeElement extends NativeNode {
   }
   submit() { this.requestSubmit() }
   click() {
+    // A disabled control ignores click(), as in a browser.
+    if (isDisabled(this)) return
     this.dispatchEvent(new NativeMouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
   }
   // Focus, layout, scroll: GPUI's (host.ts)
@@ -619,9 +621,27 @@ export class NativeElement extends NativeNode {
   attachShadow(): never { throw new Error('FoldKit on gpuix: no shadow DOM') }
 }
 
+/** The elements HTML's `disabled` applies to. On anything else (a `div`
+ *  with a tabindex, a listbox option) it means nothing: such an item says
+ *  `aria-disabled` and stays focusable, as composite widgets want. */
+export const DISABLEABLE: ReadonlySet<string> = new Set(['button', 'input', 'select', 'textarea', 'fieldset', 'optgroup', 'option'])
+
+/** Whether a form control is disabled: its own `disabled`, or a disabled
+ *  fieldset's, except inside that fieldset's first legend. */
+export const isDisabled = (element: NativeElement): boolean => {
+  if (!DISABLEABLE.has(element.localName)) return false
+  if (element.hasAttribute('disabled')) return true
+  for (let at = element.parentElement; at !== null; at = at.parentElement) {
+    if (at.localName !== 'fieldset' || !at.hasAttribute('disabled')) continue
+    const legend = at.children.find(child => child.localName === 'legend')
+    return legend === undefined || !legend.contains(element)
+  }
+  return false
+}
+
 /** The elements a browser puts in the tab order without a tabindex. */
 export const isNaturallyFocusable = (element: NativeElement) => {
-  if (element.hasAttribute('disabled')) return false
+  if (isDisabled(element)) return false
   switch (element.localName) {
     case 'input': return element.getAttribute('type') !== 'hidden'
     case 'button': case 'select': case 'textarea': case 'summary': return true
@@ -1020,8 +1040,8 @@ const matchCompound = (element: NativeElement, compound: Compound, scope: Native
   for (const not of compound.not) if (matches(element, not, scope)) return false
   for (const pseudo of compound.pseudo) {
     if (pseudo === 'scope') { if (element !== scope) return false; continue }
-    if (pseudo === 'disabled') { if (!element.hasAttribute('disabled')) return false; continue }
-    if (pseudo === 'enabled') { if (element.hasAttribute('disabled')) return false; continue }
+    if (pseudo === 'disabled') { if (!isDisabled(element)) return false; continue }
+    if (pseudo === 'enabled') { if (!DISABLEABLE.has(element.localName) || isDisabled(element)) return false; continue }
     if (pseudo === 'checked') { if (!element.checked && !element.hasAttribute('checked')) return false; continue }
     if (pseudo === 'focus' || pseudo === 'focus-visible') { if (element.ownerDocument.activeElement !== element) return false; continue }
     if (pseudo === 'focus-within') { if (!element.contains(element.ownerDocument.activeElement)) return false; continue }

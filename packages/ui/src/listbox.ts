@@ -10,6 +10,9 @@
 // the highlight (stopping at the ends), Home/End jump, a letter jumps to the
 // next option starting with it, Enter or Space selects. Moving the highlight
 // scrolls it into view: on FoldKit on gpuix that's GPUI's own scrollIntoView.
+// A disabled option is `aria-disabled`, not HTML-disabled: the highlight
+// still reaches it (so it can be read), but Enter, Space and a click don't
+// select it, as APG's composite widgets have it.
 
 import { Effect, Match, Option, Schema } from 'effect'
 import { Command, type Update } from 'foldkit'
@@ -101,7 +104,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
 // VIEW
 
-export type Item = Readonly<{ value: string; label: string; swatch?: string }>
+export type Item = Readonly<{ value: string; label: string; swatch?: string; disabled?: boolean }>
 
 export type ViewConfig<ParentMessage> = Readonly<{
   model: Model
@@ -119,7 +122,10 @@ export const view = <ParentMessage>(config: ViewConfig<ParentMessage>, h: HtmlBu
   const onKey = (key: string): Option.Option<ParentMessage> => {
     if (key === 'Enter' || key === ' ') {
       const item = items[model.highlighted]
-      return item === undefined ? Option.none() : Option.some(onSelect(item.value))
+      if (item === undefined) return Option.none()
+      // On a disabled option the key is still the list's (Space mustn't
+      // scroll it), but it selects nothing: a PressedKey that moves nothing.
+      return Option.some(item.disabled === true ? toParentMessage(Message.PressedKey({ key, labels })) : onSelect(item.value))
     }
     return handles(key) ? Option.some(toParentMessage(Message.PressedKey({ key, labels }))) : Option.none()
   }
@@ -133,13 +139,14 @@ export const view = <ParentMessage>(config: ViewConfig<ParentMessage>, h: HtmlBu
     h.OnKeyDownPreventDefault(onKey),
     ...(config.maxHeight === undefined ? [] : [h.Style({ 'max-height': `${config.maxHeight}px` })]),
   ], items.map((item, index) => {
-    const state = { highlighted: index === model.highlighted, selected: item.value === selected }
+    const disabled = item.disabled === true
+    const state = { highlighted: index === model.highlighted, selected: item.value === selected, disabled }
     return h.div([
       ...part(h, 'listbox', 'option', state),
       h.Id(optionId(model.id, index)),
       h.Role('option'),
       h.AriaSelected(item.value === selected),
-      h.OnClick(onSelect(item.value)),
+      ...(disabled ? [h.AriaDisabled(true)] : [h.OnClick(onSelect(item.value))]),
       h.OnMouseEnter(toParentMessage(Message.PointedAt({ index }))),
     ], [
       h.span([...part(h, 'listbox', 'check', state), h.AriaHidden(true)], [item.value === selected ? '✓' : '']),

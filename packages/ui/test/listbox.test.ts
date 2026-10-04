@@ -96,7 +96,81 @@ describe('native, headless', () => {
   })
 })
 
+// A sold-out fruit's option is aria-disabled: still reached by the
+// highlight (and the list keeps its focus), but never selected.
+describe('disabled options (aria-disabled, focusable)', () => {
+  test('the view: aria-disabled and no click; Enter and Space select nothing', () => {
+    scene(
+      { update: Picker.update, view: Picker.view },
+      givenScene({ ...Picker.init, soldOut: ['apricot'] }),
+      expect(role('option', { name: 'Apricot' })).toHaveAttr('aria-disabled', 'true'),
+      keydown(role('listbox'), 'ArrowDown'),
+      SceneCommand.resolve(Listbox.ScrollIntoView, Listbox.Message.CompletedScrollIntoView()),
+      expect(role('listbox')).toHaveAttr('aria-activedescendant', 'fruit-option-1'),
+      keydown(role('listbox'), 'Enter'),
+      keydown(role('listbox'), ' '),
+      expect(role('option', { name: 'Apple' })).toHaveAttr('aria-selected', 'true'),
+    )
+  })
+
+  test('headless: disabled while highlighted and focused, the list keeps focus and nothing selects; back in stock, Enter selects', async () => {
+    const app = await headless(Picker)
+    try {
+      const list = app.document.getElementById('fruit')!
+      await app.press('tab')
+      await app.press('down')
+      await app.press('escape')
+      bunExpect(app.model().soldOut).toEqual(['apricot'])
+      // aria-disabled is not HTML's disabled: still the focused tab stop.
+      bunExpect(app.document.activeElement).toBe(list)
+      bunExpect(app.fake.tabOrder()).toEqual([list.nativeId])
+      await app.press('enter')
+      await app.press('space')
+      bunExpect(app.model().fruit).toBe('apple')
+      // A click on it: GPUI has no listener there to tell.
+      bunExpect(app.gpui.node(app.document.getElementById('fruit-option-1')!.nativeId).listeners.has('click')).toBe(false)
+      // The highlight still moves past it and back.
+      await app.press('down')
+      await app.press('up')
+      bunExpect(list.getAttribute('aria-activedescendant')).toBe('fruit-option-1')
+      await app.press('escape')
+      await app.press('enter')
+      bunExpect(app.model().fruit).toBe('apricot')
+    } finally {
+      app.close()
+    }
+  })
+})
+
 describe.skipIf(!METAL)('native, Metal', () => {
+  test('a disabled option: keys and a click don\'t select it, the list keeps focus; re-enabled, it selects', async () => {
+    const app = await metal('listbox-disabled', Picker)
+    try {
+      const list = app.document.getElementById('fruit')!
+      await app.keys('tab')
+      bunExpect(app.document.activeElement).toBe(list)
+      await app.keys('down')
+      await app.press('escape')
+      bunExpect(app.model().soldOut).toEqual(['apricot'])
+      bunExpect(app.document.activeElement).toBe(list)
+      bunExpect(app.gpuiFocus()).toBe(list)
+      await app.press('enter')
+      await app.press('space')
+      // Space is the list's even here: it doesn't scroll the list a page.
+      bunExpect(list.scrollTop).toBe(0)
+      await app.click(app.document.getElementById('fruit-option-1')!)
+      bunExpect(app.model().fruit).toBe('apple')
+      app.screenshot('sold-out')
+      await app.keys('down up')
+      await app.press('escape')
+      await app.press('enter')
+      bunExpect(app.model().fruit).toBe('apricot')
+      app.screenshot('back-in-stock')
+    } finally {
+      app.close()
+    }
+  })
+
   test('arrowing past the fold scrolls the highlighted option into view (GPUI\'s scrollIntoView)', async () => {
     const app = await metal('listbox', Picker)
     try {

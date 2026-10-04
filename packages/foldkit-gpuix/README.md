@@ -48,6 +48,24 @@ what a browser's does, or is absent or says so. None is a silent stand-in.
 | `document.startViewTransition` | **Absent** | FoldKit feature-detects it and renders plainly |
 | `getBoundingClientRect` | **Behaves**, from where GPUI last painted (the border box) | gpuix reports content-corner boxes, and a scroll area's own box moved by its scroll; the host undoes both. On a live window it's a synchronous read (FKN-29) |
 
+## Disabled and read-only
+
+`disabled` means what HTML says: it applies to form controls (`button`,
+`input`, `textarea`, `select`, and everything in a disabled `fieldset`
+except its first legend), and nothing else. A disabled control leaves the tab
+order, `focus()` does nothing, it hears no clicks (nor do its ancestors, as a
+browser never dispatches them) and `click()` does nothing. A disabled or
+`readonly` field is read-only in GPUI's editor, so keys, paste and IME don't
+change it. Disabling the focused control moves focus off it; enabling it
+again, in step with the model, gives it all back. `:disabled` and `:enabled`
+match in styles and selectors.
+
+Composite widgets' items (a listbox's options, tabs) say `aria-disabled`
+instead and stay focusable, as WAI-ARIA wants: the widget decides what they
+ignore (`@foldkit-native/ui`'s Listbox reaches a disabled option but never
+selects it). gpuix has no disabled state for AccessKit yet, so neither kind
+is announced as disabled.
+
 ## Styles
 
 `src/sheet.ts` has no cascade engine. Rules match the element and, through
@@ -89,6 +107,13 @@ upstream asks in the M0 memo.
   owns the tab order, a browser's, and only asks GPUI to focus each stop.
 - **Editors are tab stops by default.** An unfocusable field is sent
   `tabIndex: -1`.
+- **Editors take focus on a press, even disabled.** The DOM doesn't follow
+  GPUI there, and GPUI is told to blur (a live window; the offscreen
+  renderer has no `blur`, and the field's `readOnly` keeps it unedited).
+- **Editors apply an edit as they take it.** A field that mustn't change is
+  `readOnly` in GPUI itself, and an edit that raced the model (typed as the
+  field was disabled) is refused: no `input`, and the editor gets the value
+  back.
 - **Bounds.** Boxes come from the content corner, and a scroll area's box
   moves with its own scroll offset.
 - **Containing blocks.** Taffy positions an `absolute` box against its

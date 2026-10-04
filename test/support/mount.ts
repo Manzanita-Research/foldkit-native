@@ -11,9 +11,16 @@ import { type Shape, createFakeGpui } from './fake-gpui.ts'
 
 /** What the native tree should be for a DOM subtree, by the mirror's rules:
  *  elements become `div` (or `input`/`textarea`/`img`), non-empty text becomes
- *  `text`, and `<style>`, `<script>`, comments and empty text are skipped. */
+ *  `text` (upper- or lower-cased for `text-transform`, which GPUI lacks), and
+ *  `<style>`, `<script>`, comments and empty text are skipped. */
 export const expectedShape = (node: Node): Shape | undefined => {
-  if (node.nodeType === 3) return (node.textContent ?? '') === '' ? undefined : { type: 'text', text: node.textContent! }
+  if (node.nodeType === 3) {
+    const text = node.textContent ?? ''
+    if (text === '') return undefined
+    const parent = node.parentElement
+    const transform = parent === null ? '' : parent.ownerDocument.defaultView!.getComputedStyle(parent).getPropertyValue('text-transform')
+    return { type: 'text', text: transform === 'uppercase' ? text.toUpperCase() : transform === 'lowercase' ? text.toLowerCase() : text }
+  }
   if (node.nodeType !== 1) return undefined
   const tag = (node as Element).tagName.toLowerCase()
   if (['style', 'script', 'head', 'template'].includes(tag)) return undefined

@@ -183,6 +183,8 @@ describe('text and attributes', () => {
     const [loud, quiet] = Array.from(container.children)
     expect(mounted.gpui.node(mounted.nativeOf(loud!).children[0]!).text).toBe('HELLO')
     expect(mounted.gpui.node(mounted.nativeOf(quiet!).children[0]!).text).toBe('hello')
+    // …and the sync check expects the transformed text too.
+    expect(mounted.inSync()).toBe(true)
   })
 
   test('a class change restyles the element and the text inside it', async () => {

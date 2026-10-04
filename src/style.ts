@@ -178,6 +178,20 @@ body { user-select: none; height: 100%; overflow-y: scroll; }
 button { text-align: center; }
 `
 
+/** A translation in pixels from `transform: translate(…)`/`translate3d(…)`/
+ *  `translateX|Y(…)`, or the `translate` property ("10px 20px"). Anything
+ *  else (rotate, scale, %, a matrix) → undefined: GPUI has no transforms. */
+export const translation = (transform: string, translate = ''): { x: number; y: number } | undefined => {
+  const fn = /^translate(3d|X|Y)?\((.*)\)$/.exec(transform.trim())
+  const args = fn !== null ? fn[2]!.split(',') : translate.trim() !== '' && translate !== 'none' ? translate.trim().split(/\s+/) : undefined
+  if (args === undefined) return undefined
+  const [first, second] = args.map(arg => px(arg))
+  if (first === undefined) return undefined
+  if (fn?.[1] === 'Y') return { x: 0, y: first }
+  if (fn?.[1] === 'X') return { x: first, y: 0 }
+  return args.length > 1 && second === undefined ? undefined : { x: first, y: second ?? 0 }
+}
+
 /** Layout and box properties of an element. */
 export const boxStyle = (computed: Computed): Style => {
   const style: Style = {}
@@ -195,6 +209,13 @@ export const boxStyle = (computed: Computed): Style => {
   for (const [css, key] of LENGTHS) {
     const value = px(get(css))
     if (value !== undefined && value !== 0) (style as Record<string, unknown>)[key] = value
+  }
+  // GPUI has no transforms. A translate on a positioned element is an offset,
+  // so it moves top/left: FoldKit's drag ghost follows the pointer this way.
+  const shift = style.position === undefined ? undefined : translation(get('transform'), get('translate'))
+  if (shift !== undefined) {
+    if (shift.x !== 0) style.left = (style.left ?? 0) + shift.x
+    if (shift.y !== 0) style.top = (style.top ?? 0) + shift.y
   }
   for (const [css, key] of DIMENSIONS) {
     const value = dimension(get(css))

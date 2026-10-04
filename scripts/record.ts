@@ -50,34 +50,40 @@ const { demo, ready } = demoFile === undefined
   : ((await import(demoFile)) as { demo: Demo; ready?: string })
 
 const app = await launch({ command: process.execPath, args: [...entry.command], cwd: root })
+// The app is its own process: close it however this script ends (a demo
+// that throws, a \`ready\` that never shows, Ctrl-C), or its window stays open.
+process.once('SIGINT', () => void app.close().finally(() => process.exit(130)))
 const pause = (ms: number) => new Promise<void>(done => setTimeout(done, ms))
-// `ready` may show more than once (a list), so wait for any match.
-const until = performance.now() + 10_000
-while (ready !== undefined && (await app.getByText(ready).count()) === 0) {
-  if (performance.now() > until) throw new Error(`"${ready}" didn't show within 10 s`)
-  await pause(50)
-}
-if (ready === undefined) await pause(1500)
-await pause(500)
-await app.screenshot({ path: join(outDir, `${entry.id}.png`) })
-
 // Frames are taken as fast as the app answers; each keeps its real duration.
 const frames: Array<{ file: string; at: number }> = []
-let recording = true
-const recordFrom = performance.now()
-const recorder = (async () => {
-  while (recording) {
-    const file = join(frameDir, `${String(frames.length).padStart(5, '0')}.png`)
-    await app.screenshot({ path: file })
-    frames.push({ file, at: performance.now() - recordFrom })
-  }
-})()
 try {
-  await demo(app, pause)
-  await pause(800)
+  // `ready` may show more than once (a list), so wait for any match.
+  const until = performance.now() + 10_000
+  while (ready !== undefined && (await app.getByText(ready).count()) === 0) {
+    if (performance.now() > until) throw new Error(`"${ready}" didn't show within 10 s`)
+    await pause(50)
+  }
+  if (ready === undefined) await pause(1500)
+  await pause(500)
+  await app.screenshot({ path: join(outDir, `${entry.id}.png`) })
+
+  let recording = true
+  const recordFrom = performance.now()
+  const recorder = (async () => {
+    while (recording) {
+      const file = join(frameDir, `${String(frames.length).padStart(5, '0')}.png`)
+      await app.screenshot({ path: file })
+      frames.push({ file, at: performance.now() - recordFrom })
+    }
+  })()
+  try {
+    await demo(app, pause)
+    await pause(800)
+  } finally {
+    recording = false
+    await recorder
+  }
 } finally {
-  recording = false
-  await recorder
   await app.close()
 }
 

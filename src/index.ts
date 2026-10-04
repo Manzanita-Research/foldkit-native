@@ -12,6 +12,7 @@
 
 import type { WindowOptions } from '@gpuix/native'
 import {
+  type NativeRenderer,
   createMutationQueue,
   createRendererState,
   registerEventHandler,
@@ -33,19 +34,25 @@ export { type Tokens, setTokens, token, tokensToCss } from './theme.ts'
  *  input (click, key, drop) caused it, from the input reaching the adapter. */
 export type FrameTiming = Readonly<{ syncMs: number; syncToFrameMs: number; inputToFrameMs?: number }>
 
-export type NativeOptions = WindowOptions & {
+export type AttachOptions = {
   /** The app's stylesheet, as it would be on the web. */
   css?: string
   /** Semantic tokens to start with (see theme.ts); change them later with `setTokens`. */
   tokens?: Tokens
   /** Called after every DOM → GPUI sync with how long it took. */
   onSynced?: (timings: MirrorTimings) => void
+}
+
+export type NativeOptions = WindowOptions & AttachOptions & {
   /** Called when a GPUI frame shows a DOM change. */
   onFrame?: (frame: FrameTiming) => void
 }
 
-export const mountNative = (options: NativeOptions = {}) => {
-  const { css, tokens, onSynced, onFrame, ...windowOptions } = options
+/** Gives FoldKit a DOM drawn by an already-initialised gpuix renderer: the
+ *  live window (`mountNative`) or gpuix's offscreen `TestRenderer` in tests.
+ *  Returns the container to hand to FoldKit's `Runtime.makeElement`. */
+export const attachDom = (renderer: NativeRenderer, options: AttachOptions = {}) => {
+  const { css, tokens, onSynced } = options
   const window = installDom()
   const document = window.document
 
@@ -60,24 +67,64 @@ export const mountNative = (options: NativeOptions = {}) => {
     document.head.appendChild(style)
   }
 
-  const renderer = createNativeRenderer({
-    onError: error => console.error('[foldkit-native] native event error', error),
-  })
-  renderer.init(windowOptions)
-
   const state = createRendererState(renderer)
   const eventHandlers = new Map()
   const mutations = createMutationQueue(renderer, ids => {
     for (const id of ids) unregisterEventHandlers(eventHandlers, id)
   })
-  // A DOM change is on screen at the end of the first GPUI tick after the
-  // mirror flushed it.
-  let flushed: { at: number; syncMs: number; inputAt?: number } | undefined
   const mirror = createMirror({
     window,
     mutations,
     eventHandlers,
-    boundsOf: id => renderer.getElementBounds(id),
+    ...(renderer.getElementBounds === undefined ? {} : { boundsOf: (id: number) => renderer.getElementBounds!(id) }),
+    ...(onSynced === undefined ? {} : { onSynced }),
+  })
+  mirror.refreshStyles()
+
+  // Releasing the mouse anywhere ends a drag that missed every drop zone.
+  const bodyId = mirror.idFor(document.body as unknown as Node)!
+  registerEventHandler(eventHandlers, bodyId, 'mouseUp', event => mirror.releaseAnywhere(event))
+  mutations.setEventListener(bodyId, 'mouseUp', true)
+  mutations.flushMutations()
+
+  const binding = state.attach({
+    eventHandlers,
+    onWindowKeyDown: event => mirror.windowKey(event),
+  })
+  renderer.setWindowKeyEvents?.(true, false, binding.windowKeyEventId)
+
+  // FoldKit replaces its container with the view's root element, inside <body>.
+  const container = document.createElement('div')
+  container.id = 'app'
+  document.body.appendChild(container)
+
+  return {
+    container: container as unknown as HTMLElement,
+    /** Switch theme at runtime: the native tree is restyled on the next frame. */
+    setTokens: (next: Tokens, selector?: string) => setTokens(document as unknown as Document, next, selector),
+    window,
+    mirror,
+    detach: () => {
+      mirror.stop()
+      binding.detach()
+    },
+  }
+}
+
+/** Opens a native window and gives FoldKit a DOM drawn in it. */
+export const mountNative = (options: NativeOptions = {}) => {
+  const { css, tokens, onSynced, onFrame, ...windowOptions } = options
+  const renderer = createNativeRenderer({
+    onError: error => console.error('[foldkit-native] native event error', error),
+  })
+  renderer.init(windowOptions)
+
+  // A DOM change is on screen at the end of the first GPUI tick after the
+  // mirror flushed it.
+  let flushed: { at: number; syncMs: number; inputAt?: number } | undefined
+  const dom = attachDom(renderer, {
+    ...(css === undefined ? {} : { css }),
+    ...(tokens === undefined ? {} : { tokens }),
     onSynced: timings => {
       flushed = {
         at: performance.now(),
@@ -87,8 +134,6 @@ export const mountNative = (options: NativeOptions = {}) => {
       onSynced?.(timings)
     },
   })
-  mirror.refreshStyles()
-  flushed = undefined
   const tick = renderer.tick.bind(renderer)
   renderer.tick = () => {
     const running = tick()
@@ -104,37 +149,19 @@ export const mountNative = (options: NativeOptions = {}) => {
     return running
   }
 
-  // Releasing the mouse anywhere ends a drag that missed every drop zone.
-  const bodyId = mirror.idFor(document.body as unknown as Node)!
-  registerEventHandler(eventHandlers, bodyId, 'mouseUp', event => mirror.releaseAnywhere(event))
-  mutations.setEventListener(bodyId, 'mouseUp', true)
-  mutations.flushMutations()
-
-  const binding = state.attach({
-    eventHandlers,
-    onWindowKeyDown: event => mirror.windowKey(event),
-  })
-  renderer.setWindowKeyEvents?.(true, false, binding.windowKeyEventId)
-
   const loop = startFrameLoop(renderer, {
     onTerminated: () => process.exit(0),
     onError: error => console.error('[foldkit-native] frame error', error),
   })
 
-  // FoldKit replaces its container with the view's root element, inside <body>.
-  const container = document.createElement('div')
-  container.id = 'app'
-  document.body.appendChild(container)
-
   return {
-    container: container as unknown as HTMLElement,
-    /** Switch theme at runtime: the native tree is restyled on the next frame. */
-    setTokens: (next: Tokens, selector?: string) => setTokens(document as unknown as Document, next, selector),
-    window,
+    container: dom.container,
+    setTokens: dom.setTokens,
+    window: dom.window,
     renderer,
     stop: () => {
       loop.stop()
-      mirror.stop()
+      dom.detach()
     },
   }
 }

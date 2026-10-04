@@ -11,5 +11,5 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["bun"]
   },
-  "include": ["src", "examples", "scripts"]
+  "include": ["src", "examples", "scripts", "test"]
 }

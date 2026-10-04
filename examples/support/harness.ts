@@ -125,13 +125,15 @@ export const openMetal = async (id: string, size?: { width: number; height: numb
   await settle()
   const out = evidenceDir()
 
-  /** Where GPUI laid out the element showing `text`. */
-  const bounds = (text: string) => {
-    const nativeId = dom.mirror.idFor(findElement(document, text) as unknown as Node)
+  /** Where GPUI laid out a DOM element (for elements with no text to name). */
+  const boundsOf = (element: Element, name = element.tagName) => {
+    const nativeId = dom.mirror.idFor(element as unknown as Node)
     const found = nativeId === undefined ? null : renderer.getElementBounds(nativeId)
-    if (found === null) throw new Error(`"${text}" isn't laid out`)
+    if (found === null) throw new Error(`"${name}" isn't laid out`)
     return found
   }
+  /** Where GPUI laid out the element showing `text`. */
+  const bounds = (text: string) => boundsOf(findElement(document, text), text)
 
   return {
     example,
@@ -139,6 +141,7 @@ export const openMetal = async (id: string, size?: { width: number; height: numb
     document,
     window: dom.window,
     bounds,
+    boundsOf,
     /** Text GPUI actually painted this frame. */
     painted: () => renderer.getPaintedText(),
     /** A click at the element's painted centre, through GPUI's own hit test. */

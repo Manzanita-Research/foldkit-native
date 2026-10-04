@@ -176,6 +176,24 @@ describe('text and attributes', () => {
     expect(mounted.inSync()).toBe(true)
   })
 
+  test('text that starts empty and gets content (an aria-live announcement) appears, and goes when emptied', async () => {
+    const { container } = await setup()
+    const live = el('div', '', { 'aria-live': 'assertive' })
+    live.appendChild(mounted.document.createTextNode(''))
+    container.appendChild(live)
+    await mounted.settle()
+    expect(mounted.nativeOf(live).children).toEqual([])
+    live.firstChild!.textContent = 'Picked up Fix bug.'
+    await mounted.settle()
+    expect(labels(live)).toEqual(['Picked up Fix bug.'])
+    expect(mounted.inSync()).toBe(true)
+    live.firstChild!.textContent = ''
+    await mounted.settle()
+    expect(mounted.nativeOf(live).children).toEqual([])
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+  })
+
   test('text-transform is applied to the text itself', async () => {
     const { container } = await setup('.loud { text-transform: uppercase; } .quiet { text-transform: lowercase; }')
     container.append(el('p', 'Hello', { class: 'loud' }), el('p', 'Hello', { class: 'quiet' }))

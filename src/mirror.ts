@@ -688,7 +688,8 @@ export const createMirror = (options: {
     const current = nativeChildren.get(parentId) ?? []
     const desired: Array<number> = []
     for (const child of Array.from(parent.childNodes)) {
-      const id = ids.get(child) ?? create(child)
+      // Text emptied since it was drawn isn't drawn any more.
+      const id = nativeType(child) === undefined ? undefined : ids.get(child) ?? create(child)
       if (id !== undefined) desired.push(id)
       if (pressed?.held === true && pressed.node === child) {
         // Back in the DOM: no longer held, and drawn as it is again.
@@ -706,7 +707,7 @@ export const createMirror = (options: {
         mutations.setStyle(id, HELD)
         continue
       }
-      if (node !== undefined && node.parentNode === null) forget(node)
+      if (node !== undefined && (node.parentNode === null || nativeType(node) === undefined)) forget(node)
       if (node === undefined || !ids.has(node)) mutations.destroyElement(id)
     }
     const remaining = current.filter(id => keep.has(id))
@@ -754,7 +755,10 @@ export const createMirror = (options: {
         parents.add(record.target)
       } else if (record.type === 'characterData') {
         const id = ids.get(record.target)
-        if (id !== undefined) mutations.setText(id, textOf(record.target))
+        const empty = (record.target.textContent ?? '') === ''
+        // Empty text isn't drawn: text that becomes empty, or appears in a
+        // node that was empty (an aria-live announcement), changes the children.
+        if (id !== undefined && !empty) mutations.setText(id, textOf(record.target))
         else if (record.target.parentNode !== null) parents.add(record.target.parentNode)
       } else if (record.type === 'attributes') {
         if (record.target.nodeName === 'STYLE') continue

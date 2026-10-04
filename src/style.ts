@@ -126,14 +126,29 @@ export const boxStyle = (computed: Computed): Style => {
   return style
 }
 
+/** CSS generic families → the names GPUI resolves itself: `.SystemUIFont` is
+ *  the platform's UI font (San Francisco on macOS) and `.ZedMono` a monospace
+ *  GPUI bundles. Without this the family is a name no font has, and the text
+ *  falls back to whatever the platform picks (Times on macOS). */
+const GENERIC_FAMILIES: Readonly<Record<string, string>> = {
+  'system-ui': '.SystemUIFont', '-apple-system': '.SystemUIFont', BlinkMacSystemFont: '.SystemUIFont',
+  'ui-sans-serif': '.SystemUIFont', 'sans-serif': '.SystemUIFont', monospace: '.ZedMono', 'ui-monospace': '.ZedMono',
+}
+
+/** The first family in a `font-family` list, generic names resolved. */
+export const fontFamily = (value: string): string | undefined => {
+  const first = value.split(',')[0]!.replace(/["']/g, '').trim()
+  return first === '' ? undefined : GENERIC_FAMILIES[first] ?? first
+}
+
 /** Text properties. GPUI text doesn't inherit, so every text node gets its
  *  parent's computed (already inherited) values. */
 export const textStyle = (computed: Computed): Style => {
   const style: Style = {}
   const get = (name: string) => computed.getPropertyValue(name).trim()
   if (isColor(get('color'))) style.color = get('color')
-  const family = get('font-family')
-  if (family !== '') style.fontFamily = family.split(',')[0]!.replace(/["']/g, '').trim()
+  const family = fontFamily(get('font-family'))
+  if (family !== undefined) style.fontFamily = family
   const size = px(get('font-size'))
   if (size !== undefined) style.fontSize = size
   const weight = get('font-weight')

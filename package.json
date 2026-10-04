@@ -5,13 +5,19 @@
   "type": "module",
   "description": "FoldKit apps drawn natively by GPUI, in-process, through gpuix.",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/Manzanita-Research/foldkit-native" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Manzanita-Research/foldkit-native"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./primitives": "./src/primitives.ts",
     "./theme": "./src/theme.ts"
   },
   "scripts": {
+    "demo": "bun examples/themes.ts",
+    "counter": "bun examples/counter.ts",
+    "record": "bun scripts/record-demo.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
@@ -21,8 +27,11 @@
   },
   "dependencies": {
     "@gpuix/native": "0.10.0",
-    "@gpuix/native-linux-x64-gnu": "0.10.0",
     "happy-dom": "20.14.5"
+  },
+  "optionalDependencies": {
+    "@gpuix/native-darwin-arm64": "0.10.0",
+    "@gpuix/native-linux-x64-gnu": "0.10.0"
   },
   "devDependencies": {
     "@effect/platform-browser": "4.0.0",

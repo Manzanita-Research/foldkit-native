@@ -99,6 +99,15 @@ describe('text', () => {
       whiteSpace: 'nowrap', textOverflow: 'ellipsis',
     })
   })
+  test('an input draws its own text, so it gets the text style too', async () => {
+    mounted = mountFake({ css: 'input { background-color: #111318; color: #eceef4; font-size: 15px; font-weight: 600; }' })
+    const input = mounted.document.createElement('input')
+    mounted.container.appendChild(input)
+    await mounted.settle()
+    expect(mounted.nativeOf(input).style).toMatchObject({
+      backgroundColor: '#111318', color: '#eceef4', fontSize: 15, fontWeight: 600,
+    })
+  })
 })
 
 describe('text selection', () => {

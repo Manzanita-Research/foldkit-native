@@ -321,6 +321,8 @@ export const createMirror = (options: {
     const element = node as Element
     const computed = window.getComputedStyle(element as never)
     const style: Record<string, unknown> = { ...boxStyle(computed) }
+    // A text field draws its own text: it needs the text style a text node gets.
+    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') Object.assign(style, textStyle(computed))
     // Inline runs (spans, links, text beside elements) become a wrapping row:
     // GPUI has blocks and flex, not inline formatting.
     const inlineChildren = Array.from(element.childNodes).some(

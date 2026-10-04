@@ -415,10 +415,32 @@ export const createMirror = (options: {
     }
   }
 
+  // Links, as a browser runs them: an <a href> is clickable with no click
+  // listener of its own. FoldKit's routing hears link clicks on `document`,
+  // which has no native element, so the link listens natively and the click
+  // bubbles up to it from there.
+  const links = new WeakSet<Node>()
+  const listenForLink = (node: Node) => {
+    if (node.nodeType !== 1 || links.has(node)) return
+    const element = node as Element
+    if (element.tagName !== 'A' || !element.hasAttribute('href')) return
+    links.add(node)
+    track(node, 'click', 1)
+  }
+  // A link click nobody handled would make happy-dom navigate, replacing the
+  // window and the app with it. There's one window and no browser to hand the
+  // link to, so an unhandled link click does nothing. (On the window, so it
+  // runs after FoldKit's listener on document has had its chance.)
+  const keepWindow = (event: Event) => {
+    if (!event.defaultPrevented && (event.target as Element | null)?.closest?.('a[href]')) event.preventDefault()
+  }
+  add.call(window as unknown as EventTarget, 'click', keepWindow)
+
   const create = (node: Node): number | undefined => {
     const type = nativeType(node)
     if (type === undefined) return undefined
     listenForForm(node)
+    listenForLink(node)
     const id = nextId++
     created += 1
     ids.set(node, id)
@@ -554,6 +576,7 @@ export const createMirror = (options: {
     stop: () => {
       observer.disconnect()
       themeObserver.disconnect()
+      remove.call(window as unknown as EventTarget, 'click', keepWindow)
     },
   }
 }

@@ -258,6 +258,49 @@ describe('forms', () => {
   })
 })
 
+describe('links', () => {
+  test('a click on a link reaches a listener on document, with the link as its target', async () => {
+    const { container } = await setup()
+    container.innerHTML = '<a href="/cart"><span>Cart</span></a><a>Not a link</a>'
+    await mounted.settle()
+    const [link, plain] = Array.from(container.querySelectorAll('a'))
+    expect(mounted.nativeOf(link!).listeners.has('click')).toBe(true)
+    expect(mounted.nativeOf(plain!).listeners.has('click')).toBe(false)
+    // FoldKit's routing: one listener on document, which stops the navigation.
+    const targets: Array<string> = []
+    const onClick = (event: Event) => {
+      event.preventDefault()
+      targets.push((event.target as Element).closest('a')!.getAttribute('href')!)
+    }
+    mounted.document.addEventListener('click', onClick)
+    mounted.send(link!, { eventType: 'click', x: 1, y: 1, button: 0, clickCount: 1 })
+    mounted.document.removeEventListener('click', onClick)
+    expect(targets).toEqual(['/cart'])
+  })
+
+  test('a link click nobody handles leaves the window and the app where they are', async () => {
+    const { container } = await setup()
+    container.innerHTML = '<a href="/cart">Cart</a><a href="https://example.com/">Elsewhere</a>'
+    await mounted.settle()
+    // happy-dom follows an unprevented link click with window.open(href, '_self').
+    const window = mounted.document.defaultView!
+    const opened: Array<string> = []
+    const open = window.open
+    window.open = ((url?: string | URL) => {
+      opened.push(String(url))
+      return null
+    }) as typeof window.open
+    for (const link of Array.from(container.querySelectorAll('a'))) {
+      mounted.send(link, { eventType: 'click', x: 1, y: 1, button: 0, clickCount: 1 })
+    }
+    window.open = open
+    await mounted.settle()
+    expect(opened).toEqual([])
+    expect(container.isConnected).toBe(true)
+    expect(mounted.inSync()).toBe(true)
+  })
+})
+
 describe('keys, focus, input', () => {
   test('gpuix key names become DOM KeyboardEvent.key', async () => {
     const { container } = await setup()

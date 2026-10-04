@@ -267,6 +267,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const testId = element.getAttribute('data-testid') ?? element.getAttribute('id')
     if (testId !== null) props.set('testId', testId)
     if (isFocusable(element)) props.set('tabIndex', element.tabIndex)
+    // GPUI's editors are tab stops unless told not to be (a disabled field
+    // took focus by Tab on Metal).
+    else if (isField(element)) props.set('tabIndex', -1)
     if (element.hasAttribute('autofocus')) props.set('autoFocus', true)
     const motion = element.getAttribute('data-fn-motion')
     if (motion !== null) {
@@ -300,7 +303,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     for (const key of sent.keys()) if (!next.has(key) && key !== 'value') mutations.setCustomProp(id, key, null)
     if (next.has('value') && sent.get('value') !== next.get('value')) pushValue(element, next.get('value') as string)
     sentProps.set(element, next)
-    if (next.has('tabIndex')) {
+    if (isFocusable(element)) {
       listenNatively(element, 'focus')
       listenNatively(element, 'blur')
     } else if (focused === element) {
@@ -521,10 +524,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       .sort((a, b) => a.element.tabIndex - b.element.tabIndex || a.at - b.at)
       .map(stop => stop.element)
   }
-  const stepStop = (from: number, delta: 1 | -1, scope: NativeElement | null): NativeElement | undefined => {
+  const stepStop = (from: number | null, delta: 1 | -1, scope: NativeElement | null): NativeElement | undefined => {
     const stops = tabStops(scope)
     if (stops.length === 0) return undefined
-    const index = stops.findIndex(stop => stop.nativeId === from)
+    const index = from === null ? -1 : stops.findIndex(stop => stop.nativeId === from)
     if (index === -1) return delta > 0 ? stops[0] : stops.at(-1)
     return stops[(index + delta + stops.length) % stops.length]
   }
@@ -567,15 +570,18 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (type === 'keydown' && name === 'Tab') {
       const scope = focusScope()
       const from = renderer.getFocusedElementId?.() ?? null
-      if (scope !== null && held?.shift) renderer.focusPreviousWithin?.(scope.nativeId)
-      else if (scope !== null) renderer.focusNextWithin?.(scope.nativeId)
-      else if (held?.shift) renderer.focusPrevious?.()
-      else renderer.focusNext?.()
-      // gpuix 0.10's focusPrevious doesn't move out of an editor (Shift-Tab
-      // in a field stayed put, on Metal): step through the same order here.
-      if ((renderer.getFocusedElementId?.() ?? null) === from && from !== null) {
-        const next = stepStop(from, held?.shift ? -1 : 1, scope)
-        if (next !== undefined && next.nativeId !== from) renderer.focusElement?.(next.nativeId)
+      if (held?.shift) {
+        // Backwards, the adapter steps through GPUI's order itself: on Metal,
+        // gpuix 0.10's focusPrevious didn't leave an editor, and its
+        // focusPreviousWithin never returned from a modal's first stop.
+        const next = stepStop(from, -1, scope)
+        if (next !== undefined) renderer.focusElement?.(next.nativeId)
+      } else {
+        if (scope !== null) renderer.focusNextWithin?.(scope.nativeId)
+        else renderer.focusNext?.()
+        // Not moved (no stop GPUI knows of): the same order, from here.
+        const next = (renderer.getFocusedElementId?.() ?? null) === from ? stepStop(from, 1, scope) : undefined
+        if (next !== undefined) renderer.focusElement?.(next.nativeId)
       }
       followGpui()
       return

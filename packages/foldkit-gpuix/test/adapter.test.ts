@@ -159,8 +159,9 @@ describe('fixes from the first real-GPUI run', () => {
     await app.click('next')
     expect(field()['aria-label']).toBe(null)
     expect(field()['placeholder']).toBe(null)
-    // Disabled: out of the tab order, and read-only in GPUI's editor.
-    expect(field()['tabIndex']).toBe(null)
+    // Disabled: out of the tab order (GPUI's editors are tab stops unless
+    // told -1; on Metal, Tab reached a disabled field), and read-only.
+    expect(field()['tabIndex']).toBe(-1)
     expect(field()['readOnly']).toBe(true)
     expect(app.gpui.node(app.document.getElementById('stop')!.nativeId).props['tabIndex']).toBe(null)
     expect(app.gpui.ops().length - before).toBeLessThan(40)

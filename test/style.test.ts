@@ -85,6 +85,32 @@ describe('text', () => {
   })
 })
 
+describe('text selection', () => {
+  test('like a native app, UI text is not selectable: the root opts out and everything inherits it', async () => {
+    const { box, text } = await styleOf('padding: 4px;')
+    expect(mounted.nativeOf(mounted.document.body).style.userSelect).toBe('none')
+    // Unset below the root, so GPUI's inheritance keeps it off.
+    expect(box.userSelect).toBeUndefined()
+    expect(text.userSelect).toBeUndefined()
+  })
+
+  test('text opts back in with user-select (text, all and contain all mean selectable)', async () => {
+    for (const value of ['text', 'all', 'contain']) {
+      const { box, text } = await styleOf(`user-select: ${value};`)
+      expect([box.userSelect, text.userSelect]).toEqual(['text', 'text'])
+      await mounted.close()
+    }
+    const { box } = await styleOf('user-select: auto;')
+    expect(box.userSelect).toBeUndefined()
+  })
+
+  test("the app's CSS can make the whole window selectable again", async () => {
+    mounted = mountFake({ css: 'body { user-select: text; }' })
+    await mounted.settle()
+    expect(mounted.nativeOf(mounted.document.body).style.userSelect).toBe('text')
+  })
+})
+
 describe('interaction states', () => {
   test(':hover, :active and :focus-visible become GPUI state styles', async () => {
     mounted = mountFake({

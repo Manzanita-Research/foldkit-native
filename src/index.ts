@@ -23,6 +23,7 @@ import { createNativeRenderer, startFrameLoop } from '@gpuix/native/runtime'
 import { installDom } from './dom.ts'
 import { type MirrorTimings, createMirror } from './mirror.ts'
 import { primitivesCss } from './primitives.ts'
+import { nativeDefaultsCss } from './style.ts'
 import { type Tokens, setTokens } from './theme.ts'
 
 export type { MirrorTimings }
@@ -56,9 +57,10 @@ export const attachDom = (renderer: NativeRenderer, options: AttachOptions = {})
   const window = installDom()
   const document = window.document
 
-  // Structural CSS for the primitives first, so the app's CSS can override it.
+  // Native defaults and the primitives' structural CSS first, so the app's CSS
+  // can override them.
   const base = document.createElement('style')
-  base.textContent = primitivesCss
+  base.textContent = nativeDefaultsCss + primitivesCss
   document.head.appendChild(base)
   if (tokens !== undefined) setTokens(document as unknown as Document, tokens)
   if (css !== undefined) {

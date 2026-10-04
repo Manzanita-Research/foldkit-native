@@ -95,9 +95,55 @@ describe('pointer', () => {
     mounted.send(button, { eventType: 'click', x: 5, y: 6, button: 0, clickCount: 2 })
     await Bun.sleep(5)
     mounted.send(button, { eventType: 'click', x: 5, y: 6, button: 2, clickCount: 1, isRightClick: true })
-    expect(names(seen)).toEqual(['click', 'dblclick', 'contextmenu'])
+    // A browser's order: the second press is a click too, then the dblclick.
+    expect(names(seen)).toEqual(['click', 'click', 'dblclick', 'contextmenu'])
     const click = seen[0] as MouseEvent
     expect([click.clientX, click.clientY, click.bubbles, click.detail]).toEqual([5, 6, true, 1])
+  })
+
+  test('every press of a quick run is a click; detail counts the run, only the second is a dblclick', async () => {
+    const { container } = await setup()
+    const button = el('button', 'Go')
+    const seen = record(button, ['click', 'dblclick'])
+    container.appendChild(button)
+    await mounted.settle()
+    for (const clickCount of [1, 2, 3]) {
+      mounted.send(button, { eventType: 'click', x: 1, y: 1, button: 0, clickCount })
+      await Bun.sleep(5)
+    }
+    expect(seen.map(event => `${event.type}:${(event as MouseEvent).detail}`))
+      .toEqual(['click:1', 'click:2', 'dblclick:2', 'click:3'])
+  })
+
+  test('an element listening only for dblclick still lets the clicks bubble', async () => {
+    const { container } = await setup()
+    const outer = el('div'); const inner = el('div', 'row')
+    outer.appendChild(inner)
+    const atOuter = record(outer, ['click']); const atInner = record(inner, ['dblclick'])
+    container.appendChild(outer)
+    await mounted.settle()
+    for (const clickCount of [1, 2]) {
+      const payload = { eventType: 'click', x: 1, y: 1, button: 0, clickCount }
+      mounted.send(inner, payload) // innermost first, as GPUI does
+      mounted.send(outer, payload)
+      await Bun.sleep(5)
+    }
+    expect(atOuter.map(event => (event as MouseEvent).detail)).toEqual([1, 2])
+    expect(atInner).toHaveLength(1)
+  })
+
+  test('mousedown and mouseup carry the click count as detail', async () => {
+    const { container } = await setup()
+    const node = el('div', 'x')
+    const seen = record(node, ['mousedown', 'mouseup'])
+    container.appendChild(node)
+    await mounted.settle()
+    for (const clickCount of [1, 2]) {
+      mounted.send(node, { eventType: 'mouseDown', x: 1, y: 1, button: 0, clickCount })
+      mounted.send(node, { eventType: 'mouseUp', x: 1, y: 1, button: 0, clickCount })
+    }
+    expect(seen.map(event => `${event.type}:${(event as MouseEvent).detail}`))
+      .toEqual(['mousedown:1', 'mouseup:1', 'mousedown:2', 'mouseup:2'])
   })
 
   test('GPUI reports a click to every listening ancestor; the DOM sees it once, bubbling', async () => {

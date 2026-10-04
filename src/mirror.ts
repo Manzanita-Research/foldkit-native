@@ -192,14 +192,24 @@ export const createMirror = (options: {
         if (now - dragEndedAt < 150) return
         if (lastClick !== undefined && now - lastClick.at < 4 && node !== lastClick.node && node.contains(lastClick.node)) return
         lastClick = { node, at: now }
-        const type = event.isRightClick ? 'contextmenu' : (event.clickCount ?? 1) > 1 ? 'dblclick' : 'click'
-        node.dispatchEvent(new W['MouseEvent']!(type, { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }))
+        const mouse = { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }
+        if (event.isRightClick) {
+          node.dispatchEvent(new W['MouseEvent']!('contextmenu', mouse))
+          return
+        }
+        // Like a browser: every press is a click, its `detail` counting the
+        // run (1, 2, 3…), and the second one is also a dblclick. A double
+        // click on a +1 button counts twice.
+        node.dispatchEvent(new W['MouseEvent']!('click', mouse))
+        if (mouse.detail === 2) node.dispatchEvent(new W['MouseEvent']!('dblclick', mouse))
         return
       }
       case 'mouseDown': case 'mouseUp': case 'mouseMove': {
         const type = { mouseDown: 'mousedown', mouseUp: 'mouseup', mouseMove: 'mousemove' }[event.eventType]!
         if (!listens(node, type)) return
-        node.dispatchEvent(new W['MouseEvent']!(type, { ...init, button: event.button ?? 0 }))
+        // A press and its release carry the click count, as `detail` does in a browser.
+        const detail = type === 'mousemove' ? 0 : event.clickCount ?? 1
+        node.dispatchEvent(new W['MouseEvent']!(type, { ...init, button: event.button ?? 0, detail }))
         return
       }
       case 'mouseEnter': case 'mouseLeave': {

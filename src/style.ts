@@ -64,6 +64,20 @@ const KEYWORDS = [
   ['visibility', 'visibility'],
 ] as const
 
+/** CSS `user-select` → gpuix's. `auto` (or unset) is left out, so the nearest
+ *  ancestor's value carries down: gpuix inherits it, as a browser does. */
+const userSelect = (value: string): 'none' | 'text' | undefined =>
+  value === 'none' ? 'none' : value === 'text' || value === 'all' || value === 'contain' ? 'text' : undefined
+
+/** What a native app does where a web page doesn't, applied before the app's
+ *  CSS so it can override any of it. UI text isn't selectable: a double click
+ *  on a button or a list row shouldn't highlight its label. Text that should be
+ *  selectable opts in with `user-select: text`, as in a native toolkit. Inputs
+ *  keep their own editing and selection. */
+export const nativeDefaultsCss = `
+body { user-select: none; }
+`
+
 /** Layout and box properties of an element. */
 export const boxStyle = (computed: Computed): Style => {
   const style: Style = {}
@@ -107,8 +121,8 @@ export const boxStyle = (computed: Computed): Style => {
   }
   const opacity = get('opacity')
   if (opacity !== '' && opacity !== '1') style.opacity = Number(opacity)
-  const select = get('user-select')
-  if (select === 'none' || select === 'text') style.userSelect = select
+  const select = userSelect(get('user-select'))
+  if (select !== undefined) style.userSelect = select
   const cursor = get('cursor')
   if (cursor === 'pointer' || cursor === 'text' || cursor === 'grab' || cursor === 'move') {
     style.cursor = cursor as StyleDesc['cursor']
@@ -159,8 +173,8 @@ export const textStyle = (computed: Computed): Style => {
   if (line !== undefined) style.lineHeight = line
   if (get('white-space') === 'nowrap') style.whiteSpace = 'nowrap'
   if (get('text-overflow') === 'ellipsis') style.textOverflow = 'ellipsis'
-  const select = get('user-select')
-  if (select === 'none' || select === 'text') style.userSelect = select
+  const select = userSelect(get('user-select'))
+  if (select !== undefined) style.userSelect = select
   return style
 }
 

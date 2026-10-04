@@ -17,10 +17,10 @@ FOLDKIT_NATIVE_NO_WINDOW=1 bun test   # a Mac without a logged-in desktop: skip 
 | Layer | File | What it proves | Runs on |
 |---|---|---|---|
 | Tree sync | `test/mirror-tree.test.ts` | DOM inserts, removes, reorders, moves and text changes leave GPUI's tree equal to the DOM, with nothing left alive off the tree. Includes 1,000 random edits. Attributes, classes, inline styles, `text-transform`, ARIA, `tabindex`, motion, inputs and images reach GPUI. | anywhere, headless |
-| Event replay | `test/events.test.ts` | A DOM listener turns the matching GPUI listener on, and removing it turns it off. GPUI's click, double click, right click, mouse down/up/move, enter/leave, keys, focus and input changes arrive as the DOM events a browser fires. Drag and drop is rebuilt from mouse events (threshold, enter/over/leave, drop, dragend, no stray click). | anywhere, headless |
+| Event replay | `test/events.test.ts` | A DOM listener turns the matching GPUI listener on, and removing it turns it off. GPUI's click, double click, right click, mouse down/up/move, enter/leave, keys, focus and input changes arrive as the DOM events a browser fires. Every press of a quick run is a `click` (a double click on +1 counts twice), the second is also a `dblclick`, and `detail` counts the run on click, mousedown and mouseup. Drag and drop is rebuilt from mouse events (threshold, enter/over/leave, drop, dragend, no stray click). | anywhere, headless |
 | FoldKit apps | `test/foldkit.test.ts` | Unmodified FoldKit apps: drive input, then check the **model** changed. Covers a counter, a text input, arrow keys, a keyed list reorder (same native elements reused), drag and drop between columns, and `@foldkit/ui`'s Disclosure (click, Enter, `aria-expanded`). | anywhere, headless |
-| Styles and tokens | `test/style.test.ts` | CSS → GPUI style: flex, grid, spacing, sizes, colours, borders, radius, gradients, shadows, fonts (including `system-ui`), `:hover`/`:active`/`:focus-visible` as GPUI states. Tokens resolve in colours, lengths and shadows, switch live, work in a scoped subtree, and follow the root's `data-theme`. | anywhere, headless |
-| Real GPUI, offscreen | `test/native/metal.test.ts` | A FoldKit counter drawn by GPUI's Metal renderer with no window. The pixels are right (background, button colour and position). A click goes through **GPUI's own hit test** and changes the model. A contract test replays the headless tests' mutations into real GPUI and checks both trees match, so the fake can't drift. | macOS |
+| Styles and tokens | `test/style.test.ts` | CSS → GPUI style: flex, grid, spacing, sizes, colours, borders, radius, gradients, shadows, fonts (including `system-ui`), `:hover`/`:active`/`:focus-visible` as GPUI states. UI text isn't selectable by default, and `user-select: text` opts back in. Tokens resolve in colours, lengths and shadows, switch live, work in a scoped subtree, and follow the root's `data-theme`. | anywhere, headless |
+| Real GPUI, offscreen | `test/native/metal.test.ts` | A FoldKit counter drawn by GPUI's Metal renderer with no window. The pixels are right (background, button colour and position). A click goes through **GPUI's own hit test** and changes the model. GPUI's own text selection skips UI text and buttons and selects text that opted in. A contract test replays the headless tests' mutations into real GPUI and checks both trees match, so the fake can't drift. | macOS |
 | Real windows | `test/native/window.test.ts` | Both examples launch as real apps in real windows and are driven through gpuix's automation channel. The counter draws, clicks change the count, and Reset works. The theme switch swaps every token, read back from the window's own frames. Loose time budgets: first text within 5 s, click → text within 1 s. | macOS with a logged-in desktop |
 
 The headless layers run against a **fake GPUI tree** (`test/support/fake-gpui.ts`)
@@ -28,7 +28,7 @@ that applies the same mutation batches gpuix sends, with GPUI's semantics: a
 style replaces the old one, `appendChild` moves, and destroying frees the
 subtree. The macOS contract test keeps that fake honest.
 
-That's 58 tests: 54 headless and 4 on macOS. The window test measured first
+That's 66 tests: 61 headless and 5 on macOS. The window test measured first
 text 561 ms after launch and click → updated text 7 ms on the Mac mini (M1),
 and 460 ms and 7 ms on Blacksmith's macOS 15 runner.
 
@@ -41,6 +41,9 @@ and 460 ms and 7 ms on Blacksmith's macOS 15 runner.
   reproduction is still missing.
 - The fake-vs-real check compares tree structure, text and element count. It
   doesn't compare styles, because GPUI keeps styles in its own form.
+- gpuix's test renderer and automation channel can only press with a click
+  count of 1, so no test makes GPUI itself produce a double click. The
+  headless tests send the payload GPUI sends for one (`clickCount: 2`).
 - The window tests need a logged-in desktop session. In a sandbox, over SSH,
   or on a headless CI machine without one, skip them with
   `FOLDKIT_NATIVE_NO_WINDOW=1`.

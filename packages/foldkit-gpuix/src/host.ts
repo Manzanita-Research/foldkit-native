@@ -205,10 +205,14 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     return transform === 'uppercase' ? text.data.toUpperCase() : transform === 'lowercase' ? text.data.toLowerCase() : text.data
   }
 
+  /** The style last sent per element, for its border box (boundsOf). */
+  const sentStyles = new WeakMap<NativeElement, StyleDesc>()
   const restyleTree = (element: NativeElement) => {
     if (element.nativeId === 0) return
     restyled++
-    mutations.setStyle(element.nativeId, styleOf(element))
+    const style = styleOf(element)
+    sentStyles.set(element, style)
+    mutations.setStyle(element.nativeId, style)
     syncProps(element)
     for (const child of element.childNodes) {
       if (child instanceof NativeElement) restyleTree(child)
@@ -291,9 +295,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const next = propsOf(element)
     const sent = sentProps.get(element) ?? new Map<string, unknown>()
     for (const [key, value] of next) {
-      if (JSON.stringify(sent.get(key)) !== JSON.stringify(value)) mutations.setCustomProp(id, key, value as never)
+      if (key !== 'value' && JSON.stringify(sent.get(key)) !== JSON.stringify(value)) mutations.setCustomProp(id, key, value as never)
     }
-    for (const key of sent.keys()) if (!next.has(key)) mutations.setCustomProp(id, key, null)
+    for (const key of sent.keys()) if (!next.has(key) && key !== 'value') mutations.setCustomProp(id, key, null)
+    if (next.has('value') && sent.get('value') !== next.get('value')) pushValue(element, next.get('value') as string)
     sentProps.set(element, next)
     if (next.has('tabIndex')) {
       listenNatively(element, 'focus')
@@ -310,10 +315,55 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     // submit button submits its form).
     if (element.localName === 'button' || (element.localName === 'a' && element.hasAttribute('href'))) listenNatively(element, 'click')
   }
-  /** The field's value as GPUI's editor has it, so it isn't sent back. */
+  /** The field's value as GPUI's editor has it, so it isn't sent back.
+   *  (`sentProps`' value is what the editor shows; `valueProps` is the
+   *  `value` prop gpuix last got. They differ once someone types.) */
   const nativeValue = (element: NativeElement, value: string) => {
     element.setValueFromNative(value)
     sentProps.get(element)?.set('value', value)
+  }
+  // CONTROLLED VALUES: gpuix 0.10 puts `value` into its editor only when the
+  // prop differs from the prop it last got, not from what the editor shows.
+  // So after typing, setting the field back to its last prop does nothing
+  // (Tab's tab stayed in GPUI's editor, on Metal). Then the adapter sends the
+  // value with a zero-width space after it, which draws the same, and the
+  // value itself once GPUI has drawn that.
+  const valueProps = new WeakMap<NativeElement, string>()
+  const NUDGE = '\u200b'
+  const pushValue = (element: NativeElement, value: string) => {
+    if (element.nativeId === 0) return
+    if (valueProps.get(element) !== value) {
+      valueProps.set(element, value)
+      mutations.setCustomProp(element.nativeId, 'value', value)
+      return
+    }
+    const nudge = value + NUDGE
+    valueProps.set(element, nudge)
+    mutations.setCustomProp(element.nativeId, 'value', nudge)
+    afterDraw(() => {
+      if (valueProps.get(element) !== nudge || element.nativeId === 0) return
+      valueProps.set(element, value)
+      mutations.setCustomProp(element.nativeId, 'value', value)
+      schedule()
+    })
+  }
+  /** What the editor reported, less a nudge's zero-width space. */
+  const unnudged = (element: NativeElement, value: string) =>
+    valueProps.get(element)?.endsWith(NUDGE) === true ? value.replace(NUDGE, '') : value
+  /** Work for after GPUI has drawn the latest changes: on `drawn()` (the
+   *  frame loop and the tests call it), or after two frames at the latest. */
+  let drawWaiters: Array<() => void> = []
+  let drawTimer: ReturnType<typeof setTimeout> | undefined
+  const afterDraw = (work: () => void) => {
+    drawWaiters.push(work)
+    drawTimer ??= setTimeout(drawn, 34)
+  }
+  const drawn = () => {
+    if (drawTimer !== undefined) clearTimeout(drawTimer)
+    drawTimer = undefined
+    const waiting = drawWaiters
+    drawWaiters = []
+    for (const work of waiting) work()
   }
 
   // TREE
@@ -456,6 +506,44 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     return scopes.at(-1) ?? null
   }
 
+  /** GPUI's tab order, from the DOM: focusable elements with a tab index of
+   *  0 or more, by tab index and then tree order (GPUI sorts by tab index,
+   *  then paint order; the contract test checks the two agree). */
+  const tabStops = (scope: NativeElement | null): Array<NativeElement> => {
+    const out: Array<NativeElement> = []
+    const walk = (element: NativeElement) => {
+      if (element.nativeId !== 0 && isFocusable(element) && element.tabIndex >= 0) out.push(element)
+      for (const child of element.children) walk(child)
+    }
+    walk(scope ?? body)
+    return out
+      .map((element, at) => ({ element, at }))
+      .sort((a, b) => a.element.tabIndex - b.element.tabIndex || a.at - b.at)
+      .map(stop => stop.element)
+  }
+  const stepStop = (from: number, delta: 1 | -1, scope: NativeElement | null): NativeElement | undefined => {
+    const stops = tabStops(scope)
+    if (stops.length === 0) return undefined
+    const index = stops.findIndex(stop => stop.nativeId === from)
+    if (index === -1) return delta > 0 ? stops[0] : stops.at(-1)
+    return stops[(index + delta + stops.length) % stops.length]
+  }
+
+  // TAB IN A FIELD: GPUI's editors type a tab for the Tab key (sometimes two),
+  // and report it as a change, before or after the window's keydown. In a
+  // browser, Tab in a field never types. A change that only adds tabs is held
+  // for one task; if a Tab keydown came for that field around it, the change
+  // is dropped and GPUI's editor gets the old value back. Otherwise (a pasted
+  // tab) it goes through, a task late. FoldKit never sees the tab Tab typed.
+  let lastTab: { element: NativeElement; at: number } | undefined
+  const tabbed = (element: NativeElement) => {
+    lastTab = { element, at: performance.now() }
+  }
+  const onlyAddsTabs = (before: string, after: string) =>
+    after.length > before.length && after.replace(/\t/g, '') === before.replace(/\t/g, '')
+  const typedByTab = (element: NativeElement) =>
+    lastTab !== undefined && lastTab.element === element && performance.now() - lastTab.at < 100
+
   // KEYS
   // Keys come from GPUI's window key events only (no element listens for
   // keys natively), so each keystroke arrives once. GPUI sends several in
@@ -472,15 +560,23 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       bubbles: true, cancelable: true, key: name, code: name, repeat: event.isHeld === true,
       ctrlKey: held?.ctrl ?? false, metaKey: held?.cmd ?? false, shiftKey: held?.shift ?? false, altKey: held?.alt ?? false,
     })
+    if (type === 'keydown' && name === 'Tab') tabbed(target)
     const proceed = target.dispatchEvent(keyboard)
     if (!proceed) return
     // The browser's default actions.
     if (type === 'keydown' && name === 'Tab') {
       const scope = focusScope()
+      const from = renderer.getFocusedElementId?.() ?? null
       if (scope !== null && held?.shift) renderer.focusPreviousWithin?.(scope.nativeId)
       else if (scope !== null) renderer.focusNextWithin?.(scope.nativeId)
       else if (held?.shift) renderer.focusPrevious?.()
       else renderer.focusNext?.()
+      // gpuix 0.10's focusPrevious doesn't move out of an editor (Shift-Tab
+      // in a field stayed put, on Metal): step through the same order here.
+      if ((renderer.getFocusedElementId?.() ?? null) === from && from !== null) {
+        const next = stepStop(from, held?.shift ? -1 : 1, scope)
+        if (next !== undefined && next.nativeId !== from) renderer.focusElement?.(next.nativeId)
+      }
       followGpui()
       return
     }
@@ -549,16 +645,6 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         return
       }
       case 'mouseDown': case 'mouseUp': case 'mouseMove': {
-        // Every press reaches the root (it listens). GPUI may have moved focus
-        // itself (its editors take focus on press and send no focus event),
-        // so the DOM asks GPUI once the press is handled.
-        // GPUI commits focus during the press, so this looks after it, on
-        // the press and again on the release (an editor may stop the press
-        // from bubbling).
-        if ((event.eventType === 'mouseDown' || event.eventType === 'mouseUp') && node === body) {
-          keyboardModality = false
-          setTimeout(reconcileFocus, 0)
-        }
         const type = { mouseDown: 'mousedown', mouseUp: 'mouseup', mouseMove: 'mousemove' }[event.eventType]!
         if (!listens(node, type) && !listens(node, type.replace('mouse', 'pointer'))) return
         const detail = type === 'mousemove' ? 0 : event.clickCount ?? 1
@@ -588,18 +674,17 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         return
       case 'change': {
         inputAt = performance.now()
-        const value = event.value ?? ''
-        // GPUI's editor takes Tab as text before the keydown moves focus; in
-        // a browser, Tab in a field never types a tab.
-        if (value.length === element.value.length + 1 && value.replace('\t', '') === element.value && value.includes('\t')) {
-          mutations.setCustomProp(element.nativeId, 'value', element.value)
-          schedule()
+        const value = unnudged(element, event.value ?? '')
+        if (onlyAddsTabs(element.value, value)) {
+          const before = element.value
+          if (typedByTab(element)) return restoreValue(element, before)
+          setTimeout(() => {
+            if (typedByTab(element)) restoreValue(element, before)
+            else typed(element, value)
+          }, 0)
           return
         }
-        nativeValue(element, value)
-        // Typing into a field means GPUI has it focused.
-        if (focused !== element) setFocus(element, true, false)
-        element.dispatchEvent(new NativeInputEvent('input', { bubbles: true, data: value }))
+        typed(element, value)
         return
       }
       case 'submit': {
@@ -614,21 +699,59 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         element.dispatchEvent(new NativeEvent(event.eventType, init))
     }
   }
+  /** Text GPUI's editor took: the DOM's value, then `input`. */
+  const typed = (element: NativeElement, value: string) => {
+    // Typed while a nudge was pending: the editor has the nudge's space in
+    // it, so it gets the typed value back without one.
+    if (valueProps.get(element)?.endsWith(NUDGE) === true) pushValue(element, value)
+    nativeValue(element, value)
+    // Typing lands where GPUI's focus is: the DOM follows it there.
+    reconcileFocus()
+    element.dispatchEvent(new NativeInputEvent('input', { bubbles: true, data: value }))
+  }
+  const restoreValue = (element: NativeElement, value: string) => {
+    if (element.nativeId === 0) return
+    pushValue(element, value)
+    sentProps.get(element)?.set('value', value)
+    schedule()
+  }
   const focusableAncestor = (element: NativeElement): NativeElement | null => {
     for (let at: NativeElement | null = element; at !== null; at = at.parentElement) if (isFocusable(at)) return at
     return null
   }
 
+  /** The border box where GPUI last painted `element`, as
+   *  `getBoundingClientRect` has it. gpuix 0.10 reports a box from the
+   *  content corner (moved by the left and top border and padding, the size
+   *  without the borders), and a scroll area's own box moved by its own scroll
+   *  offset (scrolled 100 down, it says the area is 100 higher than it's
+   *  drawn). Both are undone here. */
+  const boundsOf = (element: NativeElement) => {
+    if (element.nativeId === 0) return null
+    const box = renderer.getElementBounds?.(element.nativeId) ?? null
+    if (box === null) return null
+    const style = (sentStyles.get(element) ?? {}) as Record<string, unknown>
+    const px = (key: string) => (typeof style[key] === 'number' ? style[key] as number : 0)
+    const [left, top] = [px('borderLeftWidth') + px('paddingLeft'), px('borderTopWidth') + px('paddingTop')]
+    const [scrollX = 0, scrollY = 0] = scrollable(element) ? renderer.getScrollOffset?.(element.nativeId) ?? [0, 0] : [0, 0]
+    return {
+      x: box.x - left - scrollX,
+      y: box.y - top - scrollY,
+      width: box.width + px('borderLeftWidth') + px('borderRightWidth'),
+      height: box.height + px('borderTopWidth') + px('borderBottomWidth'),
+    }
+  }
+
   /** Scrolls the nearest scroll area until `element` shows, from where GPUI
-   *  last painted both (gpuix 0.10's own scrollIntoView left a plain
-   *  scrolling div where it was, on Metal). */
+   *  last painted both, and moves only that area (gpuix 0.10's own
+   *  scrollIntoView also scrolled the page, on Metal). */
   const reveal = (element: NativeElement) => {
     if (element.nativeId === 0) return
     let area = element.parentElement
     while (area !== null && (area.nativeId === 0 || !scrollable(area))) area = area.parentElement
     if (area === null) return
-    const box = renderer.getElementBounds?.(element.nativeId)
-    const view = renderer.getElementBounds?.(area.nativeId)
+    const box = boundsOf(element)
+    const view = boundsOf(area)
     if (box === null || box === undefined || view === null || view === undefined) {
       renderer.scrollIntoView?.(element.nativeId)
       return
@@ -701,7 +824,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     blur: element => {
       if (focused === element) setFocus(null, false)
     },
-    bounds: element => (element.nativeId === 0 ? null : renderer.getElementBounds?.(element.nativeId)) ?? { x: 0, y: 0, width: 0, height: 0 },
+    bounds: element => boundsOf(element) ?? { x: 0, y: 0, width: 0, height: 0 },
     scrollIntoView: element => reveal(element),
     scrollOffset: element => {
       const offset = element.nativeId === 0 ? null : renderer.getScrollOffset?.(element.nativeId)
@@ -714,11 +837,43 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     },
   }
 
+  // PRESSES: GPUI's editors stop a press from bubbling and send no focus
+  // event, so no element, the root included, hears a click into a field.
+  // GPUI runs "mouse down outside" in its capture phase, before an editor can
+  // stop anything, so a zero-size element that's never hit hears every press.
+  // It is GPUI's alone: no DOM node stands for it.
+  let sentinel = 0
+  const mountSentinel = () => {
+    sentinel = nextId++
+    mutations.createElement(sentinel, 'div')
+    mutations.setStyle(sentinel, { position: 'absolute', width: 0, height: 0 } as StyleDesc)
+    mutations.appendChild(body.nativeId, sentinel)
+    registerEventHandler(eventHandlers, sentinel, 'mouseDownOutside', event => {
+      keyboardModality = false
+      // Seen after GPUI dispatched the press, so its focus is committed.
+      press(event.x, event.y)
+    })
+    mutations.setEventListener(sentinel, 'mouseDownOutside', true)
+  }
+  /** A press anywhere. If GPUI moved focus, the DOM follows. If it didn't and
+   *  the press was outside the focused element, focus leaves it, as a
+   *  browser's does (a press on another focusable element then focuses that
+   *  one, from its click). */
+  const press = (x?: number, y?: number) => {
+    const id = renderer.getFocusedElementId?.() ?? null
+    const node = id === null ? undefined : nodes.get(id)
+    if (node instanceof NativeElement && node !== focused) return followGpui(false)
+    if (id === null) return focused === null ? undefined : setFocus(null, true, false)
+    // Offscreen, gpuix's test renderer can't blur: the DOM keeps GPUI's focus.
+    if (focused === null || x === undefined || y === undefined || renderer.blur === undefined) return
+    const box = boundsOf(focused)
+    if (box !== null && !(x >= box.x && x < box.x + box.width && y >= box.y && y < box.y + box.height)) setFocus(null, false, false)
+  }
+
   const mountBody = () => {
     if (body.nativeId !== 0) return
     mount(body)
-    listenNatively(body, 'mouseDown')
-    listenNatively(body, 'mouseUp')
+    mountSentinel()
     mutations.setRoot(body.nativeId)
     schedule()
   }
@@ -736,6 +891,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   return {
     /** Draw pending changes now (tests). */
     flush: sync,
+    /** GPUI drew a frame: work waiting for one runs (the frame loop and the
+     *  tests call this after the renderer draws). */
+    drawn: () => {
+      drawn()
+      if (scheduled) sync()
+    },
     /** Restyle everything (a sheet or tokens changed). */
     restyleAll: () => {
       dirty.add(body)

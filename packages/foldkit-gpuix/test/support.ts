@@ -69,8 +69,12 @@ export const mountHeadless = (options: AttachOptions = {}) => {
   const attached = attachGpuix(fake.renderer, options)
   const { document, host } = attached
   const settle = async () => {
-    for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve, 0))
-    host.flush()
+    for (let i = 0; i < 4; i++) {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      host.flush()
+      // The fake "draws" each batch as it's applied.
+      host.drawn()
+    }
   }
   /** Where the element showing `text` (its label, placeholder, or own text) is. */
   const find = (text: string) => {
@@ -166,6 +170,7 @@ export const openMetal = async (name: string, size: { width: number; height: num
       await new Promise(resolve => setTimeout(resolve, 0))
       host.flush()
       renderer.flush()
+      host.drawn()
       renderer.dispatchNativeEvents()
     }
   }

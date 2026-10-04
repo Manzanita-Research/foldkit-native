@@ -101,14 +101,15 @@ describe.skipIf(!METAL)('native, Metal', () => {
     const app = await metal('listbox', Picker)
     try {
       const list = app.document.getElementById('fruit')!
-      // (Called directly, gpuix's own scrollIntoView scrolled this list to
-      // [0,-173] on Metal, and the page with it; the adapter reveals through
-      // painted bounds and scrollTo, which moves only the list.)
+      // The adapter reveals through painted bounds and scrollTo, which moves
+      // only the list (gpuix's own scrollIntoView moved the page too).
       list.focus()
       await app.keys('down down down down down down down down')
       const option = app.document.getElementById('fruit-option-8')!
-      const listBox = app.bounds(list)
-      const optionBox = app.bounds(option)
+      // The document's boxes: gpuix reports a scrolled list's own box moved
+      // by its scroll offset, and the adapter puts it back.
+      const listBox = list.getBoundingClientRect()
+      const optionBox = option.getBoundingClientRect()
       console.log('ui listbox:', JSON.stringify({ listBox, optionBox, scrollTop: list.scrollTop }))
       bunExpect(optionBox.y).toBeGreaterThanOrEqual(listBox.y)
       bunExpect(optionBox.y + optionBox.height).toBeLessThanOrEqual(listBox.y + listBox.height + 1)

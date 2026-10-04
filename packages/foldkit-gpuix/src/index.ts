@@ -167,7 +167,16 @@ export const mountGpuix = (options: NativeOptions = {}) => {
   if (attached.unsupported.length > 0 && process.env['FOLDKIT_GPUIX_DEBUG'] !== undefined) {
     console.error(`[foldkit-gpuix] ${attached.unsupported.length} CSS rules not supported:\n  ${attached.unsupported.join('\n  ')}`)
   }
-  const loop = startFrameLoop(renderer, {
+  // After each tick GPUI may have drawn: the host's waiting work runs.
+  const ticking = {
+    requiresTick: () => renderer.requiresTick(),
+    tick: () => {
+      const more = renderer.tick()
+      attached.host.drawn()
+      return more
+    },
+  }
+  const loop = startFrameLoop(ticking, {
     onTerminated: () => process.exit(0),
     onError: error => console.error('[foldkit-gpuix] frame error', error),
   })

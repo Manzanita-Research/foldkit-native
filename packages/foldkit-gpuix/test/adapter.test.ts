@@ -176,18 +176,113 @@ describe('fixes from the first real-GPUI run', () => {
     expect(app.document.activeElement).toBe(app.document.body)
   })
 
-  test('a tab GPUI\'s editor types before Tab moves focus is dropped', async () => {
+  describe('Tab in a field (GPUI\'s editor types it, a browser never does)', () => {
     const Message = defineMessageUnion({ Typed: { value: Schema.String } })
-    const { app, model } = await run({}, {
-      Model: Schema.Struct({ value: Schema.String }), init: { value: 'Ada' },
-      update: (_, m: typeof Message.Type) => ({ value: m.value }),
-      view: (c, h) => h.input([h.Placeholder('Name'), h.Value(c.value), h.OnInput((value: string) => Message.Typed({ value }))]),
+    const field = (init: string) => run({}, {
+      Model: Schema.Struct({ value: Schema.String, seen: Schema.Array(Schema.String) }), init: { value: init, seen: [] },
+      update: (c, m: typeof Message.Type) => ({ value: m.value, seen: [...c.seen, m.value] }),
+      view: (c, h) => h.div([], [
+        h.input([h.Id('name'), h.Placeholder('Name'), h.Value(c.value), h.OnInput((value: string) => Message.Typed({ value }))]),
+        h.input([h.Id('next'), h.Placeholder('Next')]),
+      ]),
     })
-    await app.type('Name', 'Ada\t')
-    expect(model().value).toBe('Ada')
-    expect(app.native('Name').props['value']).toBe('Ada')
-    await app.type('Name', 'Ada L')
-    expect(model().value).toBe('Ada L')
+    const tabAnd = async (app: Headless, change: string, order: 'change first' | 'key first', shift = false) => {
+      const id = app.document.getElementById('name')!.nativeId
+      const keyDown = { eventType: 'windowKeyDown', elementId: 1, key: 'tab', modifiers: { shift } } as never
+      const changed = { eventType: 'change', elementId: id, value: change } as never
+      if (order === 'key first') app.host.dispatch(keyDown)
+      app.host.dispatch(changed)
+      if (order === 'change first') app.host.dispatch(keyDown)
+      app.host.dispatch({ eventType: 'windowKeyUp', elementId: 1, key: 'tab', modifiers: { shift } } as never)
+      await app.settle()
+    }
+
+    for (const order of ['change first', 'key first'] as const) {
+      test(`the tab is dropped and never reaches FoldKit (${order})`, async () => {
+        const { app, model } = await field('Ada')
+        app.document.getElementById('name')!.focus()
+        await tabAnd(app, 'Ada\t', order)
+        expect(model().value).toBe('Ada')
+        expect(model().seen).toEqual([])
+        expect(app.native('Name').props['value']).toBe('Ada')
+        expect(app.document.activeElement?.getAttribute('id')).toBe('next')
+      })
+    }
+
+    test('two tabs (GPUI typed one per key event) are dropped too', async () => {
+      const { app, model } = await field('')
+      app.document.getElementById('name')!.focus()
+      await tabAnd(app, '\t\t', 'key first')
+      expect(model().seen).toEqual([])
+      expect(app.native('Name').props['value']).toBe('')
+    })
+
+    test('Shift-Tab: dropped the same way, focus goes back', async () => {
+      const { app, model } = await field('Ada')
+      app.document.getElementById('name')!.focus()
+      await tabAnd(app, 'A\tda', 'change first', true)
+      expect(model().seen).toEqual([])
+      expect(app.document.activeElement?.getAttribute('id')).toBe('next')
+    })
+
+    test('a pasted tab, with no Tab key, goes through (a task late)', async () => {
+      const { app, model } = await field('Ada')
+      await app.type('Name', 'Ada\t')
+      expect(model().value).toBe('Ada\t')
+      await app.type('Name', 'Ada\tL')
+      expect(model().value).toBe('Ada\tL')
+    })
+
+    test('typing after the dropped tab lands on the value FoldKit has', async () => {
+      const { app, model } = await field('')
+      app.document.getElementById('name')!.focus()
+      await tabAnd(app, '\t', 'change first')
+      // The value prop was already "" when the tab came: gpuix needs a
+      // different prop first (a zero-width space after it), then "".
+      expect(app.native('Name').props['value']).toBe('')
+      expect(app.gpui.batches.flat().some(op => op[0] === 'setCustomProp' && op[3] === '\u200b')).toBe(true)
+      await app.type('Name', 'x')
+      expect(model().value).toBe('x')
+    })
+  })
+
+  describe('controlled values reach GPUI\'s editor', () => {
+    const Message = defineMessageUnion({ Typed: { value: Schema.String } })
+    const upper = (limit: number) => run({}, {
+      Model: Schema.Struct({ value: Schema.String }), init: { value: '' },
+      // Keeps at most `limit` characters: the rest of a keystroke is refused.
+      update: (_, m: typeof Message.Type) => ({ value: m.value.slice(0, limit) }),
+      view: (c, h) => h.input([h.Placeholder('Code'), h.Value(c.value), h.OnInput((value: string) => Message.Typed({ value }))]),
+    })
+
+    test('a keystroke the model refuses comes back out of the editor', async () => {
+      const { app, model } = await upper(2)
+      await app.type('Code', 'ab')
+      await app.type('Code', 'abc')
+      expect(model().value).toBe('ab')
+      // "ab" was never sent as a prop (the editor reported it), so it's sent.
+      expect(app.native('Code').props['value']).toBe('ab')
+    })
+
+    test('refused back to the last prop: nudged, then set', async () => {
+      const { app, model } = await upper(0)
+      await app.type('Code', 'x')
+      expect(model().value).toBe('')
+      expect(app.native('Code').props['value']).toBe('')
+    })
+
+    test('typed while a nudge waits for a frame: the space is taken out', async () => {
+      const { app, model } = await upper(0)
+      const id = app.document.querySelector('input')!.nativeId
+      app.host.dispatch({ eventType: 'change', elementId: id, value: 'x' } as never)
+      app.host.flush()
+      // GPUI drew "\u200b" and the person typed before the next frame.
+      app.host.dispatch({ eventType: 'change', elementId: id, value: '\u200by' } as never)
+      await app.settle()
+      expect(model().value).toBe('')
+      expect(app.native('Code').props['value']).toBe('')
+      expect(app.gpui.batches.flat().filter(op => op[0] === 'setCustomProp' && op[2] === 'value').map(op => op[3])).not.toContain('\u200by')
+    })
   })
 
   test('several identical keys GPUI delivers in one task each count', async () => {
@@ -209,6 +304,8 @@ describe('fixes from the first real-GPUI run', () => {
       Model: Counter.Model, init: { count: 0 }, update: c => c,
       view: (_, h) => h.div([], [h.input([h.Id('a'), h.Placeholder('A')]), h.input([h.Id('b'), h.Placeholder('B')])]),
     })
+    // GPUI took focus with no event; the typing is the first the DOM hears.
+    app.fake.renderer.focusElement?.(app.document.getElementById('b')!.nativeId)
     await app.type('B', 'x')
     expect(app.document.activeElement?.getAttribute('id')).toBe('b')
   })
@@ -218,9 +315,12 @@ describe('fixes from the first real-GPUI run', () => {
       Model: Counter.Model, init: { count: 0 }, update: c => c,
       view: (_, h) => h.div([], [h.input([h.Id('a')]), h.input([h.Id('b')])]),
     })
-    // GPUI focuses the field on press and says nothing; the root hears the press.
+    // GPUI focuses the field on press and says nothing, and its editor stops
+    // the press. GPUI's capture-phase "mouse down outside" still reaches the
+    // adapter's zero-size sentinel.
     app.fake.renderer.focusElement?.(app.document.getElementById('b')!.nativeId)
-    app.host.dispatch({ eventType: 'mouseDown', elementId: app.document.body.nativeId, x: 1, y: 1, button: 0 } as never)
+    const sentinel = app.gpui.node(app.document.body.nativeId).children.find(id => app.gpui.node(id).listeners.has('mouseDownOutside'))!
+    app.host.dispatch({ eventType: 'mouseDownOutside', elementId: sentinel, x: 1, y: 1, button: 0 } as never)
     await app.settle()
     expect(app.document.activeElement?.getAttribute('id')).toBe('b')
   })

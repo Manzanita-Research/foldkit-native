@@ -180,13 +180,13 @@ describe('focus, FoldKit on gpuix (headless)', () => {
   }
   const byId = (id: string) => app!.document.getElementById(id)!
 
-  test('GPUI focus reaches the DOM: a focused field is document.activeElement, with the blue ring', async () => {
+  test('GPUI focus reaches the DOM: a focused field is document.activeElement, with focus:ring-2 drawn', async () => {
     await open()
     app!.host.dispatch({ eventType: 'focus', elementId: byId('name').nativeId } as never)
     await app!.settle()
     expect(app!.document.activeElement).toBe(byId('name'))
-    // Tailwind's focus:ring-2 focus:ring-blue-500, lowered to GPUI's shadow.
-    // GPUI paints a shadow under the whole field: it gets the card's white
+    // Tailwind's focus:ring-2 focus:ring-blue-500, lowered to GPUI's box-shadow.
+    // GPUI paints a box-shadow under the whole field: it gets the card's white
     // to paint over it, as the card shows through it in a browser.
     expect(app!.gpui.node(byId('name').nativeId).style).toMatchObject({ boxShadow: { spreadRadius: 2, color: BLUE_500 }, backgroundColor: '#fff' })
   })
@@ -327,13 +327,13 @@ describe.skipIf(!METAL)('focus, FoldKit on gpuix (Metal, offscreen)', () => {
   })
   const byId = (id: string) => app!.document.getElementById(id)!
 
-  test('a click focuses a field; Tab moves GPUI focus from field to field and the DOM follows; the ring paints', async () => {
+  test('a click focuses a field; Tab moves GPUI focus from field to field and the DOM follows; focus:ring-2 paints', async () => {
     const example = await loadExample('form')
     const size = { width: example.meta.width, height: example.meta.height }
     app = await openGpuixMetal('form-focus', size, { css: example.css })
     example.start(app.container as unknown as HTMLElement)
     await app.settle()
-    /** Just left of a field's border box, where its 2px ring paints. (Its
+    /** Just left of a field's border box, where its focus:ring-2 paints. (Its
      *  left edge: a padded editor's reported top is off by its top padding.) */
     const beside = (shot: ReturnType<NonNullable<typeof app>['pixels']>, id: string) => {
       const box = byId(id).getBoundingClientRect()

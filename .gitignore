@@ -3,3 +3,5 @@ dist/
 *.png
 .claude/
 .mcp.json
+evidence/
+.scratch/

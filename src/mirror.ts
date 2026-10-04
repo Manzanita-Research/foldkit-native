@@ -114,7 +114,7 @@ export const createMirror = (options: {
   }
 
   // GPUI EVENTS → DOM EVENTS
-  let lastClick: { node: Node; at: number } | undefined
+  let lastClick: { node: Node; at: number; sameTask: boolean } | undefined
   /** When the latest input arrived, for click → frame timing. */
   let inputAt: number | undefined
   // Drag and drop, rebuilt from mouse events: a press on something listening
@@ -190,8 +190,15 @@ export const createMirror = (options: {
         const now = performance.now()
         // The release that ends a drag isn't a click.
         if (now - dragEndedAt < 150) return
-        if (lastClick !== undefined && now - lastClick.at < 4 && node !== lastClick.node && node.contains(lastClick.node)) return
-        lastClick = { node, at: now }
+        // The copies arrive back to back: in the same task, or within a few
+        // milliseconds (a slow machine can stretch one task past 4 ms).
+        if (lastClick !== undefined && (lastClick.sameTask || now - lastClick.at < 4) &&
+          node !== lastClick.node && node.contains(lastClick.node)) return
+        const click = { node, at: now, sameTask: true }
+        lastClick = click
+        queueMicrotask(() => {
+          click.sameTask = false
+        })
         const mouse = { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }
         if (event.isRightClick) {
           node.dispatchEvent(new W['MouseEvent']!('contextmenu', mouse))
@@ -227,6 +234,12 @@ export const createMirror = (options: {
         ;(node as HTMLInputElement).value = event.value ?? ''
         node.dispatchEvent(new W['Event']!('input', init))
         node.dispatchEvent(new W['Event']!('change', init))
+        return
+      }
+      case 'submit': {
+        // Enter in a field: the browser's implicit submission.
+        const form = (node as HTMLInputElement).form
+        if (form !== null && form !== undefined) form.requestSubmit()
         return
       }
       case 'focus': case 'blur':
@@ -321,9 +334,29 @@ export const createMirror = (options: {
   }
 
   // TREE
+  // Forms, as a browser runs them: a submit button submits its form with no
+  // click listener of its own, and Enter in a field submits it too (gpuix's
+  // input sends `submit` on Enter). So both listen natively, once each.
+  const formParts = new WeakSet<Node>()
+  const listenForForm = (node: Node) => {
+    if (node.nodeType !== 1 || formParts.has(node)) return
+    const element = node as HTMLInputElement | HTMLButtonElement
+    if (element.form === null || element.form === undefined) return
+    const tag = element.tagName.toLowerCase()
+    const type = (element.getAttribute('type') ?? '').toLowerCase()
+    if ((tag === 'button' && (type === '' || type === 'submit')) || (tag === 'input' && (type === 'submit' || type === 'image'))) {
+      formParts.add(node)
+      track(node, 'click', 1)
+    } else if (tag === 'input' && ['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(type)) {
+      formParts.add(node)
+      track(node, 'submit', 1)
+    }
+  }
+
   const create = (node: Node): number | undefined => {
     const type = nativeType(node)
     if (type === undefined) return undefined
+    listenForForm(node)
     const id = nextId++
     created += 1
     ids.set(node, id)

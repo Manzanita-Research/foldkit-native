@@ -1,0 +1,23 @@
+/* The gallery's own look: plain CSS, no Tailwind. */
+body { margin: 0; height: 100%; background-color: #141318; font-family: system-ui, sans-serif; }
+.gallery { display: flex; flex-direction: column; height: 100%; padding: 32px 36px 20px; gap: 20px; background-color: #141318; }
+.header { display: flex; flex-direction: column; gap: 6px; }
+.title { margin: 0; font-size: 30px; font-weight: 700; color: #f4f1f8; }
+.subtitle { margin: 0; font-size: 15px; color: #9d97a8; }
+.scroll { flex-grow: 1; flex-basis: 0; min-height: 0; overflow-y: auto; }
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.card { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; border-radius: 14px; cursor: pointer;
+        background-color: #1e1c24; border: 1px solid #ffffff14; box-shadow: 0px 6px 18px 0px #0000004d; text-align: left; }
+.card:hover { background-color: #26232e; border-color: #ffffff29; }
+.card:active { background-color: #2d2936; }
+.card-head { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.card-title { font-size: 19px; font-weight: 600; color: #f4f1f8; }
+.badge { padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; color: #b9b0c8; background-color: #ffffff12; }
+.badge.native { color: #1b1320; background-color: #ff9ed8; }
+.card-blurb { margin: 0; font-size: 14px; color: #c9c3d3; }
+.shows { display: flex; flex-direction: row; gap: 10px; align-items: flex-start; }
+.shows-label { width: 58px; flex-shrink: 0; padding: 2px 0; border-radius: 6px; font-size: 11px; font-weight: 700;
+               color: #7ee0c3; background-color: #7ee0c31a; text-align: center; }
+.shows-label.gpui { color: #ffc46b; background-color: #ffc46b1a; }
+.shows-text { font-size: 13px; color: #a59fb0; flex-grow: 1; flex-basis: 0; min-width: 0; }
+.status { margin: 0; font-size: 12px; color: #6f6979; }

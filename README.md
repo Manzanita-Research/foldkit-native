@@ -28,8 +28,9 @@ FoldKit ◀─listeners── DOM ◀────dispatchEvent──── mirro
   retained tree, and turns GPUI's clicks, keys and pointer moves back into DOM
   events on the right element. Drag and drop (FoldKit's `OnDragStart`/`OnDrop`)
   is rebuilt from mouse events.
-- **Styles are CSS.** happy-dom resolves stylesheets, classes, inline styles and
-  custom properties; `src/style.ts` copies what GPUI can draw (flexbox, grid,
+- **Styles are CSS.** Modern CSS such as Tailwind 4's is first lowered to what
+  happy-dom understands (`bun run css`, `scripts/css.ts`). happy-dom resolves
+  stylesheets, classes, inline styles and custom properties; `src/style.ts` copies what GPUI can draw (flexbox, grid,
   sizes, spacing, colours, borders, radius, gradients, shadows, fonts,
   `:hover`/`:active`/`:focus-visible`, cursor, `user-select`). GPUI does layout.
   Like a native app, UI text isn't selectable unless its CSS says
@@ -67,12 +68,19 @@ appears on that screen.
 
 ```sh
 npm ci                        # exact pins; installs only your platform's gpuix binary
+bun run gallery               # every example in one window; click one to open it
+bun run gallery --list        # the same list in the terminal
+bun run example weather       # open one example directly
 bun run demo                  # examples/themes.ts: primitives + two token sets, switched at runtime
 bun run counter               # examples/counter.ts: a FoldKit counter; only the setup import is native-specific
-bun test                      # mirror, events, FoldKit, tokens; on macOS also Metal and real windows (TESTING.md)
+bun test                      # everything this machine can run (TESTING.md)
 bun run typecheck
-bun run record demo.mp4       # macOS: drives the demo and records its own frames (needs ffmpeg)
+bun run css                   # regenerate the examples' CSS after changing classes or styles.css
+bun run record weather        # macOS: a still and a clip of an example, from its own frames (needs ffmpeg)
 ```
+
+The examples are FoldKit's own example apps (weather, kanban, snake…), ported
+with their tests, plus showcases written here: [EXAMPLES.md](EXAMPLES.md).
 
 In the demo, click a row to select it and **switch theme** to swap the whole
 token set live; `THEME=paper bun run demo` starts on the light set.
@@ -107,7 +115,8 @@ as gpuix's README insists.
 4. **Inputs and focus.** Map `<input>`/`<textarea>` to gpuix's native inputs both
    ways (value, selection, IME) and keep DOM focus and GPUI focus in step, so
    keyboard navigation and focus traps work.
-5. **CSS coverage and speed.** Transitions, transforms, `calc()`, `%` sizes; and a
+5. **CSS coverage and speed.** Transitions, transforms, `%` sizes, `vh` that
+   follows the window (happy-dom's viewport is a fixed 1024×768); and a
    faster path than happy-dom's `getComputedStyle`, which is most of the sync time.
 6. **happy-dom cache bug.** A descendant's cached selector match isn't
    invalidated when an ancestor's attribute changes; the mirror clears the
@@ -123,8 +132,10 @@ as gpuix's README insists.
 
 ## Credits and licences
 
-FoldKit Native is MIT licensed ([LICENSE](LICENSE)). It depends on, and does not
-copy code from:
+FoldKit Native is MIT licensed ([LICENSE](LICENSE)). Its examples include
+FoldKit's example apps, MIT licensed, © 2025 Devin Jameson
+([examples/FOLDKIT-LICENSE](examples/FOLDKIT-LICENSE)); each ported file says
+so. Otherwise it depends on, and does not copy code from:
 
 | Project | Licence | Used for |
 |---|---|---|
@@ -132,6 +143,8 @@ copy code from:
 | [gpuix](https://github.com/remorses/gpuix) (`@gpuix/native`, incl. its GPUI build) | Apache-2.0 | GPUI bindings and the native renderer |
 | [happy-dom](https://github.com/capricorn86/happy-dom) | MIT | The DOM FoldKit renders into |
 | [Effect](https://effect.website) | MIT | FoldKit's runtime (peer dependency) |
+| [Tailwind CSS](https://tailwindcss.com) and [Lightning CSS](https://lightningcss.dev) | MIT, MPL-2.0 | Building the examples' CSS (dev only) |
+| [clsx](https://github.com/lukeed/clsx), [fractional-indexing](https://github.com/rocicorp/fractional-indexing) | MIT, CC0-1.0 | Used by FoldKit's example apps (dev only) |
 
 All are compatible with MIT. If you distribute a compiled binary that embeds
 gpuix's native library, include its Apache-2.0 licence and notices with it.

@@ -11,12 +11,74 @@ type Writable<T> = { -readonly [K in keyof T]: T[K] }
 type Style = Writable<StyleDesc>
 type Computed = Pick<CSSStyleDeclaration, 'getPropertyValue'>
 
-/** "12px" → 12, "1.5rem" → 24. Anything else (auto, %, normal) → undefined. */
+/** "12px" → 12, "1.5rem" → 24, "calc(.25rem * 4)" → 16. Anything else
+ *  (auto, %, normal) → undefined. A bare number is taken as pixels. */
 export const px = (value: string): number | undefined => {
-  const match = /^(-?[\d.]+)(px|rem|em)?$/.exec(value.trim())
-  if (match === null) return undefined
-  const number = Number(match[1])
-  return match[2] === 'rem' || match[2] === 'em' ? number * 16 : number
+  const length = evaluate(value)
+  return length === undefined ? undefined : length.value
+}
+
+type Length = { value: number; unit: 'px' | '' }
+
+/** A length or a `calc()` of lengths and numbers (Tailwind writes
+ *  `calc(var(--spacing) * 4)`; happy-dom substitutes the variable and leaves
+ *  the arithmetic). rem and em are 16px. */
+const evaluate = (value: string): Length | undefined => {
+  const source = value.trim()
+  const tokens = /^calc\(/.test(source) ? source.slice(5, -1).match(/-?[\d.]+(?:px|rem|em)?|[-+*/()]/g) : [source]
+  if (tokens === null) return undefined
+  let at = 0
+  const atom = (): Length | undefined => {
+    const token = tokens[at++]
+    if (token === '(') {
+      const inner = sum()
+      at++
+      return inner
+    }
+    const match = /^(-?[\d.]+)(px|rem|em)?$/.exec(token ?? '')
+    if (match === null) return undefined
+    const number = Number(match[1])
+    return match[2] === undefined ? { value: number, unit: '' } : { value: match[2] === 'px' ? number : number * 16, unit: 'px' }
+  }
+  const product = (): Length | undefined => {
+    let left = atom()
+    while (left !== undefined && (tokens[at] === '*' || tokens[at] === '/')) {
+      const op = tokens[at++]
+      const right = atom()
+      if (right === undefined) return undefined
+      left = { value: op === '*' ? left.value * right.value : left.value / right.value, unit: left.unit || right.unit }
+    }
+    return left
+  }
+  const sum = (): Length | undefined => {
+    let left = product()
+    while (left !== undefined && (tokens[at] === '+' || tokens[at] === '-')) {
+      const op = tokens[at++]
+      const right = product()
+      if (right === undefined) return undefined
+      left = { value: op === '+' ? left.value + right.value : left.value - right.value, unit: left.unit || right.unit }
+    }
+    return left
+  }
+  const result = sum()
+  return result === undefined || at !== tokens.length || !Number.isFinite(result.value) ? undefined : result
+}
+
+/** Splits on commas outside parentheses: shadow lists, gradient stops. */
+const splitTopLevel = (value: string): Array<string> => {
+  const parts: Array<string> = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === '(') depth++
+    else if (value[i] === ')') depth--
+    else if (value[i] === ',' && depth === 0) {
+      parts.push(value.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  parts.push(value.slice(start).trim())
+  return parts
 }
 
 const dimension = (value: string): number | string | undefined =>
@@ -25,18 +87,52 @@ const dimension = (value: string): number | string | undefined =>
 const isColor = (value: string) =>
   value !== '' && value !== 'transparent' && value !== 'rgba(0, 0, 0, 0)' && value !== 'initial'
 
-/** `linear-gradient(180deg, #44304f, #19161d)` → a gpuix two-stop gradient. */
+const SIDES: Readonly<Record<string, number>> = {
+  'to top': 0, 'to right': 90, 'to bottom': 180, 'to left': 270,
+  'to top right': 45, 'to right top': 45, 'to bottom right': 135, 'to right bottom': 135,
+  'to bottom left': 225, 'to left bottom': 225, 'to top left': 315, 'to left top': 315,
+}
+
+/** `linear-gradient(180deg, #44304f, #19161d)` or Tailwind's
+ *  `linear-gradient(to bottom right in oklab, #dbeafe 0%, #90c5ff 100%)` → a
+ *  gpuix gradient. gpuix draws two stops, so a longer list keeps its ends. */
 const gradient = (value: string): StyleDesc['background'] | undefined => {
-  const match = /linear-gradient\(\s*(-?[\d.]+)deg\s*,\s*([^,]+?)\s*,\s*([^,]+?)\s*\)/.exec(value)
+  const match = /linear-gradient\((.*)\)/.exec(value)
   if (match === null) return undefined
+  const parts = splitTopLevel(match[1]!)
+  let angle = 180
+  const direction = parts[0]!.replace(/\s+in\s+[\w-]+$/, '').trim()
+  const degrees = /^(-?[\d.]+)deg$/.exec(direction)
+  if (degrees !== null) angle = Number(degrees[1])
+  else if (SIDES[direction] !== undefined) angle = SIDES[direction]!
+  if (degrees !== null || SIDES[direction] !== undefined || /^in\s/.test(parts[0]!)) parts.shift()
+  const stops = parts.map(stop => stop.replace(/\s+-?[\d.]+%$/, '').trim()).filter(Boolean)
+  if (stops.length < 2) return undefined
   return {
     type: 'linear-gradient',
-    angle: Number(match[1]),
+    angle,
     stops: [
-      { color: match[2]!, position: 0 },
-      { color: match[3]!, position: 1 },
+      { color: stops[0]!, position: 0 },
+      { color: stops.at(-1)!, position: 1 },
     ],
   }
+}
+
+/** The first visible shadow in a list. Tailwind stacks ring, inset and drop
+ *  shadows, with `0 0 #0000` for the unused ones; gpuix draws one shadow. */
+const boxShadow = (value: string): StyleDesc['boxShadow'] | undefined => {
+  for (const shadow of splitTopLevel(value)) {
+    if (/\binset\b/.test(shadow)) continue
+    const match = /^(-?[\d.]+)(?:px)?\s+(-?[\d.]+)(?:px)?(?:\s+(-?[\d.]+)(?:px)?)?(?:\s+(-?[\d.]+)(?:px)?)?\s+(.+)$/.exec(shadow)
+    if (match === null) continue
+    const color = match[5]!.trim()
+    if (!isColor(color) || /^#0000(?:0000)?$/.test(color) || /^rgba\([^)]*,\s*0\)$/.test(color)) continue
+    return {
+      offsetX: Number(match[1]), offsetY: Number(match[2]), blurRadius: Number(match[3] ?? 0),
+      spreadRadius: Number(match[4] ?? 0), color,
+    }
+  }
+  return undefined
 }
 
 const LENGTHS = [
@@ -129,13 +225,8 @@ export const boxStyle = (computed: Computed): Style => {
   }
   const shadow = get('box-shadow')
   if (shadow !== '' && shadow !== 'none') {
-    const match = /(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px(?:\s+(-?[\d.]+)px)?\s+(.+)$/.exec(shadow)
-    if (match !== null) {
-      style.boxShadow = {
-        offsetX: Number(match[1]), offsetY: Number(match[2]), blurRadius: Number(match[3]),
-        spreadRadius: Number(match[4] ?? 0), color: match[5]!,
-      }
-    }
+    const parsed = boxShadow(shadow)
+    if (parsed !== undefined) style.boxShadow = parsed
   }
   return style
 }
@@ -169,8 +260,8 @@ export const textStyle = (computed: Computed): Style => {
   if (weight !== '' && weight !== 'normal' && weight !== '400') {
     style.fontWeight = weight === 'bold' ? 700 : Number(weight)
   }
-  const line = px(get('line-height'))
-  if (line !== undefined) style.lineHeight = line
+  const line = evaluate(get('line-height'))
+  if (line !== undefined) style.lineHeight = line.unit === 'px' ? line.value : line.value * (size ?? 16)
   if (get('white-space') === 'nowrap') style.whiteSpace = 'nowrap'
   if (get('text-overflow') === 'ellipsis') style.textOverflow = 'ellipsis'
   const select = userSelect(get('user-select'))

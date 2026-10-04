@@ -27,6 +27,11 @@ describe('values', () => {
       .toEqual([12, 24, 32, -4, 7, undefined, undefined])
   })
 
+  test('calc(), as Tailwind writes it once happy-dom substitutes the variables', () => {
+    expect([px('calc(.25rem * 4)'), px('calc(0.25rem * -2)'), px('calc(10px + 2 * 3px)'), px('calc((4px + 2px) / 2)'), px('calc(1px * auto)')])
+      .toEqual([16, -8, 16, 3, undefined])
+  })
+
   test('font families: the first one, generic names resolved to GPUI names', () => {
     expect(fontFamily('"Inter", system-ui, sans-serif')).toBe('Inter')
     expect(fontFamily('system-ui, sans-serif')).toBe('.SystemUIFont')
@@ -61,6 +66,17 @@ describe('box', () => {
       backgroundColor: '#123456', borderColor: '#abcdef', borderTopWidth: 2, borderLeftWidth: 2,
       borderTopLeftRadius: 6, borderBottomRightRadius: 6, opacity: 0.5, cursor: 'pointer', userSelect: 'none', pointerEvents: 'none',
     })
+  })
+
+  test("Tailwind's shapes: unitless line height, stacked shadows, keyword gradients", async () => {
+    const { box, text } = await styleOf(`font-size: 36px; line-height: calc(2.5 / 2.25);
+      box-shadow: 0 0 #0000, 0 0 rgba(0, 0, 0, 0), 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -4px rgba(0, 0, 0, .1);
+      background-image: linear-gradient(to bottom right in oklab, #dbeafe 0%, #c0d8ff 50%, #90c5ff 100%);`)
+    expect(text.lineHeight).toBeCloseTo(40)
+    expect(box.boxShadow).toEqual({ offsetX: 0, offsetY: 10, blurRadius: 15, spreadRadius: -3, color: 'rgba(0, 0, 0, .1)' })
+    expect(box.background).toEqual({ type: 'linear-gradient', angle: 135, stops: [{ color: '#dbeafe', position: 0 }, { color: '#90c5ff', position: 1 }] })
+    const { text: plain } = await styleOf('font-size: 16px; line-height: 1.5;')
+    expect(plain.lineHeight).toBe(24)
   })
 
   test('a two-stop linear gradient and a box shadow', async () => {

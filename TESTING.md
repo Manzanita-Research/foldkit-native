@@ -17,9 +17,10 @@ FOLDKIT_NATIVE_NO_WINDOW=1 bun test   # a Mac without a logged-in desktop: skip 
 | Layer | File | What it proves | Runs on |
 |---|---|---|---|
 | Tree sync | `test/mirror-tree.test.ts` | DOM inserts, removes, reorders, moves and text changes leave GPUI's tree equal to the DOM, with nothing left alive off the tree. Includes 1,000 random edits. Attributes, classes, inline styles, `text-transform`, ARIA, `tabindex`, motion, inputs and images reach GPUI. | anywhere, headless |
-| Event replay | `test/events.test.ts` | A DOM listener turns the matching GPUI listener on, and removing it turns it off. GPUI's click, double click, right click, mouse down/up/move, enter/leave, keys, focus and input changes arrive as the DOM events a browser fires. Every press of a quick run is a `click` (a double click on +1 counts twice), the second is also a `dblclick`, and `detail` counts the run on click, mousedown and mouseup. Drag and drop is rebuilt from mouse events (threshold, enter/over/leave, drop, dragend, no stray click). | anywhere, headless |
+| Event replay | `test/events.test.ts` | Forms submit as in a browser: a click on a submit button, or Enter in a field. A DOM listener turns the matching GPUI listener on, and removing it turns it off. GPUI's click, double click, right click, mouse down/up/move, enter/leave, keys, focus and input changes arrive as the DOM events a browser fires. Every press of a quick run is a `click` (a double click on +1 counts twice), the second is also a `dblclick`, and `detail` counts the run on click, mousedown and mouseup. Drag and drop is rebuilt from mouse events (threshold, enter/over/leave, drop, dragend, no stray click). | anywhere, headless |
 | FoldKit apps | `test/foldkit.test.ts` | Unmodified FoldKit apps: drive input, then check the **model** changed. Covers a counter, a text input, arrow keys, a keyed list reorder (same native elements reused), drag and drop between columns, and `@foldkit/ui`'s Disclosure (click, Enter, `aria-expanded`). | anywhere, headless |
-| Styles and tokens | `test/style.test.ts` | CSS → GPUI style: flex, grid, spacing, sizes, colours, borders, radius, gradients, shadows, fonts (including `system-ui`), `:hover`/`:active`/`:focus-visible` as GPUI states. UI text isn't selectable by default, and `user-select: text` opts back in. Tokens resolve in colours, lengths and shadows, switch live, work in a scoped subtree, and follow the root's `data-theme`. | anywhere, headless |
+| App CSS | `test/css.test.ts` | `bun run css` turns Tailwind 4 into CSS happy-dom reads: no cascade layers, nesting, `oklch()` or logical properties left, and Tailwind's utilities reach GPUI (padding, colour, radius, shadow, opacity colours). | anywhere, headless |
+| Styles and tokens | `test/style.test.ts` | CSS → GPUI style: flex, grid, spacing, sizes, colours, borders, radius, gradients (angles and `to bottom right`), shadows (Tailwind's stacked lists), `calc()`, unitless line heights, fonts (including `system-ui`), `:hover`/`:active`/`:focus-visible` as GPUI states. UI text isn't selectable by default, and `user-select: text` opts back in. Tokens resolve in colours, lengths and shadows, switch live, work in a scoped subtree, and follow the root's `data-theme`. | anywhere, headless |
 | Real GPUI, offscreen | `test/native/metal.test.ts` | A FoldKit counter drawn by GPUI's Metal renderer with no window. The pixels are right (background, button colour and position). A click goes through **GPUI's own hit test** and changes the model. GPUI's own text selection skips UI text and buttons and selects text that opted in. A contract test replays the headless tests' mutations into real GPUI and checks both trees match, so the fake can't drift. | macOS |
 | Real windows | `test/native/window.test.ts` | Both examples launch as real apps in real windows and are driven through gpuix's automation channel. The counter draws, clicks change the count, and Reset works. The theme switch swaps every token, read back from the window's own frames. Loose time budgets: first text within 5 s, click → text within 1 s. | macOS with a logged-in desktop |
 
@@ -28,9 +29,47 @@ that applies the same mutation batches gpuix sends, with GPUI's semantics: a
 style replaces the old one, `appendChild` moves, and destroying frees the
 subtree. The macOS contract test keeps that fake honest.
 
-That's 66 tests: 61 headless and 5 on macOS. The window test measured first
-text 561 ms after launch and click → updated text 7 ms on the Mac mini (M1),
-and 460 ms and 7 ms on Blacksmith's macOS 15 runner.
+Run `bun test` for today's count: every example adds its own (below).
+
+The window test measured first text 561 ms after launch and click → updated
+text 7 ms on the Mac mini (M1), and 460 ms and 7 ms on Blacksmith's macOS 15
+runner.
+
+## Examples: story, scene and native tests
+
+Every example in `examples/<name>/` (see [EXAMPLES.md](EXAMPLES.md)) has three
+kinds of test. `examples/conventions.test.ts` fails if one is missing.
+
+| Kind | File | What it checks | Tooling | Runs on |
+|---|---|---|---|---|
+| **Story** | `story.test.ts` | The app's logic: Messages go through `update`, and the test checks the Model and the Commands it asked for, resolving each Command with the Message it would return. No view, no DOM, no network. | FoldKit's own `foldkit/story` (`story`, `given`, `message`, `model`, `Command.resolve`) | anywhere |
+| **Scene** | `scene.test.ts` | The app's view: renders it, clicks and types into it by role, label and text, and checks what's on screen and which Commands fired. | FoldKit's own `foldkit/scene` (`scene`, `click`, `type`, `expect(role(…)).toExist()`) | anywhere |
+| **Native** | `native.test.ts` | The app running in FoldKit Native: its own `start`, its CSS, the mirror. **Headless**, input goes in as GPUI's events and the test checks GPUI's tree (texts, styles, in sync with the DOM). **On macOS**, GPUI draws it with Metal offscreen: layout, hit testing, real typing and clicks through GPUI's input pipeline, and a screenshot of each step. | `examples/support/harness.ts` (`openHeadless`, `openMetal`) | headless anywhere; Metal on macOS |
+
+Story and scene tests are FoldKit's idea and FoldKit's tools, used as FoldKit
+uses them: for a ported example they are **FoldKit's own test files, unchanged**.
+They import `vitest`; under `bun test` that import is Bun's runner, so they run
+as they are (`examples/support/vitest.d.ts` tells TypeScript the same).
+
+Native tests stub the network (`globalThis.fetch`), so CI never calls a real
+service; the recorded demo (below) uses the real one.
+
+### Screenshots and clips (evidence)
+
+- **Screenshots, automatic.** `openMetal(…).screenshot(name)` saves
+  `<example>-<name>.png` to `$FOLDKIT_NATIVE_EVIDENCE` (or a temp folder).
+  The macOS CI job sets it and uploads the folder as the
+  **example-screenshots** artifact, so every PR has Metal screenshots of every
+  example without anyone taking them.
+- **A clip, on a Mac.** `bun run record <name>` opens the example in a real
+  window, waits for the demo's `ready` text, saves `evidence/<name>.png`,
+  plays `examples/<name>/demo.ts` and saves `evidence/<name>.mp4`. Frames come
+  from GPUI's own renderer (no screen-recording permission); needs ffmpeg.
+- **Where evidence goes.** Not into `main`: on the `evidence` branch, under
+  `examples/<name>/`, linked from the PR.
+- **Linux.** gpuix can't read frames back there yet, so the Metal tests skip;
+  the headless story, scene and native tests all run. `bun run example <name>`
+  opens a real Wayland window to look at by hand.
 
 ### Honest notes
 
@@ -103,7 +142,11 @@ In rough order of value.
 
 | | Headless (any OS, CI) | macOS offscreen (CI or a Mac) | Real window (desktop session) | Known machine only |
 |---|---|---|---|---|
-| Tree sync, events, styles, tokens | ✅ | | | |
+| Tree sync, events, styles, tokens, app CSS | ✅ | | | |
+| Examples: story and scene tests (FoldKit's own) | ✅ | | | |
+| Examples: native tests, headless | ✅ | | | |
+| Examples: native tests on Metal, screenshots | | ✅ | | |
+| Examples: clips (`bun run record`) | | | ✅ | |
 | FoldKit and `@foldkit/ui` interaction scripts | ✅ | | | |
 | GPUI layout, hit testing, pixels | | ✅ | ✅ | |
 | Fake-vs-real contract | | ✅ | | |
@@ -113,7 +156,9 @@ In rough order of value.
 | Linux/Wayland drawing | | | ✅ (m6) | |
 | Screen readers (planned) | | | | manual |
 
-CI (`.github/workflows/ci.yml`) runs typecheck and the headless layer on a
-Blacksmith Linux runner, and the whole suite on a Blacksmith macOS runner.
+CI (`.github/workflows/ci.yml`) runs typecheck, the CSS freshness check
+(`bun run css --check`) and the headless layer on a Blacksmith Linux runner,
+and the whole suite on a Blacksmith macOS runner, which also uploads the
+examples' Metal screenshots.
 That runner has Metal and a logged-in desktop, so the offscreen and the
 real-window tests both run there, in about 15 seconds.

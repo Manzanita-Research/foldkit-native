@@ -511,6 +511,47 @@ export const createMirror = (options: {
     }
   }
 
+  // LAYOUT, READ BACK
+  // happy-dom has no layout; GPUI does. Where GPUI last painted an element
+  // answers getBoundingClientRect and document.elementsFromPoint, which
+  // FoldKit's DragAndDrop uses to find the drop target under the pointer.
+  // (Scroll offsets and ResizeObserver are still zero: README, roadmap 2.)
+  const boundsOf = options.boundsOf
+  if (boundsOf !== undefined) {
+    const boxOf = (node: Node) => {
+      const id = ids.get(node)
+      return id === undefined ? null : boundsOf(id)
+    }
+    let elementProto = Object.getPrototypeOf(document.body) as Element
+    while (!Object.prototype.hasOwnProperty.call(elementProto, 'getBoundingClientRect')) {
+      elementProto = Object.getPrototypeOf(elementProto)
+    }
+    const unlaidOut = elementProto.getBoundingClientRect
+    const Rect = (window as unknown as { DOMRect: typeof DOMRect }).DOMRect
+    elementProto.getBoundingClientRect = function (this: Element) {
+      const box = boxOf(this as unknown as Node)
+      return box === null ? unlaidOut.call(this) : new Rect(box.x, box.y, box.width, box.height)
+    }
+    /** Every element GPUI painted under the point, topmost first: children
+     *  over parents, later siblings over earlier ones, as GPUI paints them.
+     *  `pointer-events: none` ones are skipped, as a browser skips them. */
+    const elementsFromPoint = (x: number, y: number): Array<Element> => {
+      const all = [document.body, ...Array.from(document.body.querySelectorAll('*'))]
+      const hits: Array<Element> = []
+      for (const element of all.reverse()) {
+        const box = boxOf(element as unknown as Node)
+        if (box === null || x < box.x || x > box.x + box.width || y < box.y || y > box.y + box.height) continue
+        if (window.getComputedStyle(element as never).getPropertyValue('pointer-events') === 'none') continue
+        hits.push(element)
+      }
+      return hits
+    }
+    Object.assign(document, {
+      elementsFromPoint,
+      elementFromPoint: (x: number, y: number) => elementsFromPoint(x, y)[0] ?? null,
+    })
+  }
+
   // TREE
   // Forms, as a browser runs them: a submit button submits its form with no
   // click listener of its own, and Enter in a field submits it too (gpuix's

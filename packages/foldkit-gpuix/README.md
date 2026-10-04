@@ -108,6 +108,7 @@ what a browser's does, or is absent or says so. None is a silent stand-in.
 | `document.elementsFromPoint`, `elementFromPoint` | **Behaves, from the last layout GPUI gave.** Topmost first, as GPUI paints: children over parents, later siblings over earlier, a box re-homed under its containing block over that block's other children, anchored elements over everything. Skips `pointer-events: none` (inherited), `visibility: hidden` and `display: none`. A scroll area or `overflow: hidden` clips what's inside it. Then `<html>`. Checked against GPUI's own hit test on Metal | @foldkit/ui's drag and drop finds the drop target with it |
 | `scrollIntoView`, keyboard scrolling | **Behaves, from the last layout GPUI gave**: the nearest scroll area moves until the element shows. With no layout for the element or its area, GPUI's own `scrollIntoView` | |
 | `scrollTop`, `scrollLeft` | **Behaves.** GPUI's offset; the last one known while GPUI isn't answering | |
+| Pointer and mouse events | **Behave for a press and its gesture.** `pointerdown`, `mousedown`, then each move and the release, pointer event first, on the pressed element, bubbling to `document` and `window`. While a button's held, `mouseover`/`enter` and `out`/`leave` follow the element under the pointer (from the layout). A pressed element the app removes mid-gesture keeps hearing it (dispatched on the body). **Missing:** `setPointerCapture`, and moves with no button held reach `document` only through an element that listens for them | @foldkit/ui's drag and drop listens on `document`; Pixel Art paints the cells a drag enters |
 
 ## Geometry
 
@@ -198,8 +199,11 @@ rules match the window as it is now, and a resize restyles everything and
 fires `resize`. `@supports` is evaluated. `vh`/`vw` become pixels.
 
 GPUI has no auto margins, so a box with auto side margins centres itself
-(`align-self`), and its block parent becomes a column. `sheetFromCss` lists
-what it can't follow instead of guessing:
+(`align-self`), and its block parent becomes a column. gpuix has no
+`aspect-ratio`, so a box with one and no height of its own gets the height
+its laid-out width calls for, a frame after GPUI lays it out (Pixel Art's
+`w-full aspect-square` board). `sheetFromCss` lists what it can't follow
+instead of guessing:
 
 - sibling combinators and structural pseudo-classes (`+`, `~`,
   `:last-child`, Tailwind's `space-y-*`);
@@ -247,6 +251,15 @@ upstream asks in the M0 memo.
   shadow and no background of its own gets the solid colour of the box it
   sits on (what shows through in CSS). Over a gradient or a see-through
   backdrop it gets nothing, and the ring fills it.
+- **A press goes only to what was pressed.** GPUI sends a press's moves and
+  release only to the pressed element, and no enter or leave to anything
+  else while the button's held. So an element listening for a press listens
+  natively for its moves and release too. Hover during a press is
+  hit-tested from the layout, and GPUI's late copies of what the host
+  already said are dropped. snabbdom takes an element's listeners off as it
+  removes it, so the pressed element keeps its gesture listeners until the
+  release. If the app removes it mid-gesture, GPUI's element is held,
+  unseen (`opacity: 0`, `pointer-events: none`), until the release.
 - **Containing blocks.** Taffy positions an `absolute` box against its
   parent, but CSS uses the nearest positioned ancestor, or the window. The
   host draws such a box under its containing block in GPUI's tree (last, so

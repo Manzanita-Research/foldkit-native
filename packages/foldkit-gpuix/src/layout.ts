@@ -178,6 +178,11 @@ export const createLayout = (options: LayoutOptions) => {
     drew: () => {
       frame++
     },
+    /** Whether something moved in the last few frames (the layout is still
+     *  being read again). */
+    get settling() {
+      return frame <= staleThrough + 1
+    },
     /** An element's border box where GPUI last painted it, or null if it
      *  wasn't in the last layout read. */
     box: (id: number): Box | null => {

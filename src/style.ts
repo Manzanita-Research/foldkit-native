@@ -218,7 +218,10 @@ export const boxStyle = (computed: Computed): Style => {
   }
   for (const [css, key] of LENGTHS) {
     const value = px(get(css))
-    if (value !== undefined && value !== 0) (style as Record<string, unknown>)[key] = value
+    // A zero length is the default, except an inset on a positioned box:
+    // `top: 0` pins it.
+    const inset = css === 'top' || css === 'right' || css === 'bottom' || css === 'left'
+    if (value !== undefined && (value !== 0 || (inset && style.position !== undefined))) (style as Record<string, unknown>)[key] = value
   }
   // GPUI has no transforms. A translate on a positioned element is an offset,
   // so it moves top/left: FoldKit's drag ghost follows the pointer this way.

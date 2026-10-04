@@ -22,7 +22,16 @@ import { boxStyle, px, resolveVars, textStyle } from 'foldkit-native/style'
 import { type NativeElement, type Selector, matches, parseSelector } from './dom.ts'
 
 export type State = 'base' | 'hover' | 'active' | 'focus' | 'focus-visible'
-export type Rule = Readonly<{ source: string; selector: Selector; state: State; declarations: ReadonlyMap<string, string> }>
+export type Rule = Readonly<{
+  source: string
+  selector: Selector
+  state: State
+  /** CSS specificity (ids, classes and attributes and pseudo-classes, types). */
+  specificity: number
+  declarations: ReadonlyMap<string, string>
+  /** `!important` declarations: they beat inline style, as in CSS. */
+  important: ReadonlyMap<string, string>
+}>
 export type Sheet = Readonly<{ rules: ReadonlyArray<Rule>; unsupported: ReadonlyArray<string> }>
 
 const STATES: ReadonlyArray<readonly [string, State]> = [
@@ -66,15 +75,45 @@ export const declarations = (entries: Iterable<readonly [string, string]>): Map<
 export const sheetFromObject = (rules: Readonly<Record<string, Readonly<Record<string, string>>>>): Sheet => {
   const out: Array<Rule> = []
   const unsupported: Array<string> = []
-  for (const [selectors, body] of Object.entries(rules)) addRule(out, unsupported, selectors, declarations(Object.entries(body)))
+  for (const [selectors, body] of Object.entries(rules)) addRule(out, unsupported, selectors, Object.entries(body))
   return { rules: out, unsupported }
 }
 
-const addRule = (out: Array<Rule>, unsupported: Array<string>, selectors: string, body: Map<string, string>) => {
+/** Specificity as one comparable number: ids, then classes, attributes and
+ *  pseudo-classes, then types (each part capped well below the next). */
+const specificityOf = (selector: Selector): number => {
+  const complex = selector[0] ?? []
+  let ids = 0
+  let classes = 0
+  let types = 0
+  for (const { compound } of complex) {
+    ids += compound.ids.length
+    classes += compound.classes.length + compound.attributes.length + compound.pseudo.filter(name => !name.startsWith('is:')).length
+    types += compound.tag === undefined ? 0 : 1
+    for (const not of compound.not) {
+      const inner = specificityOf(not)
+      ids += Math.floor(inner / 10_000)
+      classes += Math.floor(inner / 100) % 100
+      types += inner % 100
+    }
+  }
+  return ids * 10_000 + classes * 100 + types
+}
+
+/** Splits `!important` declarations from the rest. */
+const byImportance = (entries: Iterable<readonly [string, string]>) => {
+  const normal: Array<[string, string]> = []
+  const important: Array<[string, string]> = []
+  for (const [name, value] of entries) (/!important\s*$/.test(value) ? important : normal).push([name, value])
+  return { normal: declarations(normal), important: declarations(important) }
+}
+
+const addRule = (out: Array<Rule>, unsupported: Array<string>, selectors: string, entries: Iterable<readonly [string, string]>) => {
+  const { normal, important } = byImportance(entries)
   for (const one of splitTopLevel(selectors)) {
     const parsed = ruleSelector(one)
     if ('unsupported' in parsed) unsupported.push(`${one.trim()} (${parsed.unsupported})`)
-    else out.push({ source: one.trim(), selector: parsed.selector, state: parsed.state, declarations: body })
+    else out.push({ source: one.trim(), selector: parsed.selector, state: parsed.state, specificity: specificityOf(parsed.selector) + (parsed.state === 'base' ? 0 : 100), declarations: normal, important })
   }
 }
 
@@ -103,7 +142,7 @@ export const sheetFromCss = (css: string, options: { viewportWidth?: number } = 
         else if (media === undefined) unsupported.push(`${prelude} (media query)`)
       } else if (prelude.startsWith('@layer') || prelude.startsWith('@supports')) block(body)
       else if (prelude.startsWith('@')) continue
-      else addRule(rules, unsupported, prelude, declarations(splitDeclarations(body)))
+      else addRule(rules, unsupported, prelude, splitDeclarations(body))
     }
   }
   block(source)
@@ -231,8 +270,8 @@ export const userAgentSheet = sheetFromCss(`
 `)
 
 export type Declared = Readonly<{
-  /** The matching rules' declarations, in cascade order, with their state. */
-  rules: ReadonlyArray<Readonly<{ state: State; declarations: ReadonlyMap<string, string> }>>
+  /** The matching rules, in cascade order: specificity, then source order. */
+  rules: ReadonlyArray<Rule>
   inline: ReadonlyMap<string, string>
   /** `fold(…, ['base'])`: what applies at rest. */
   base: Map<string, string>
@@ -240,26 +279,33 @@ export type Declared = Readonly<{
 }>
 
 /** Every rule that applies to `element`, in cascade order: the user-agent
- *  sheet, then the app's sheets in order, then inline style. Rules for a
- *  state (`:hover`, `:focus`) keep their place in that order, so a later
- *  rule of the same weight wins, as in CSS. */
+ *  sheet, then the app's sheets, ordered by specificity and then source
+ *  order, then inline style, then `!important`. Rules for a state (`:hover`,
+ *  `:focus`) keep their place in that order, so the stronger rule wins
+ *  whatever state it's for, as in CSS. */
 export const declared = (element: NativeElement, sheets: ReadonlyArray<Sheet>): Declared => {
-  const rules: Array<{ state: State; declarations: ReadonlyMap<string, string> }> = []
-  for (const sheet of [userAgentSheet, ...sheets]) {
-    for (const rule of sheet.rules) if (matches(element, rule.selector, element)) rules.push(rule)
-  }
+  const matching = (sheet: Sheet) => sheet.rules.filter(rule => matches(element, rule.selector, element))
+  // The user agent's rules come before the app's, whatever their weight.
+  const app = sheets.flatMap(matching)
+    .map((rule, index) => ({ rule, index }))
+    .sort((a, b) => a.rule.specificity - b.rule.specificity || a.index - b.index)
+    .map(({ rule }) => rule)
+  const rules = [...matching(userAgentSheet), ...app]
   const inline = declarations(element.inline)
   const out = { rules, inline, has: (state: State) => rules.some(rule => rule.state === state) }
   return { ...out, base: fold(out, ['base']) }
 }
 
-/** The declarations that apply in the given states, later rules winning. */
+/** The declarations that apply in the given states, stronger rules winning. */
 export const fold = (own: Pick<Declared, 'rules' | 'inline'>, states: ReadonlyArray<State>): Map<string, string> => {
   const out = new Map<string, string>()
   for (const rule of own.rules) {
     if (states.includes(rule.state)) for (const [name, value] of rule.declarations) out.set(name, value)
   }
   for (const [name, value] of own.inline) out.set(name, value)
+  for (const rule of own.rules) {
+    if (states.includes(rule.state)) for (const [name, value] of rule.important) out.set(name, value)
+  }
   return out
 }
 

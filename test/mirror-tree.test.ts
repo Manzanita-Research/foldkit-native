@@ -261,6 +261,23 @@ describe('text and attributes', () => {
     expect(mounted.nativeOf(container.children[1]!).props).toMatchObject({ src: 'data:image/png;base64,AA==', alt: 'dot', objectFit: 'cover' })
   })
 
+  test("a textarea's text is its value, not a native child", async () => {
+    // FoldKit writes a textarea's value as its text, as HTML does.
+    const { container } = await setup()
+    const textarea = el('textarea') as HTMLTextAreaElement
+    container.append(textarea)
+    await mounted.settle()
+    textarea.textContent = 'Hello'
+    await mounted.settle()
+    expect(mounted.nativeOf(textarea).children).toEqual([])
+    expect(mounted.nativeOf(textarea).props['value']).toBe('Hello')
+    textarea.firstChild!.textContent = 'Hello there'
+    await mounted.settle()
+    expect(mounted.nativeOf(textarea).props['value']).toBe('Hello there')
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+  })
+
   test('mixed inline content becomes a wrapping row', async () => {
     const { container } = await setup()
     const p = el('p')

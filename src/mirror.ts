@@ -476,6 +476,8 @@ export const createMirror = (options: {
   const syncChildren = (parent: Node) => {
     const parentId = ids.get(parent)
     if (parentId === undefined) return
+    // A textarea's text is its value (FoldKit writes it that way), not a child.
+    if (nativeType(parent) !== 'div') return syncProps(parentId, parent)
     const current = nativeChildren.get(parentId) ?? []
     const desired: Array<number> = []
     for (const child of Array.from(parent.childNodes)) {
@@ -530,6 +532,7 @@ export const createMirror = (options: {
       } else if (record.type === 'characterData') {
         const id = ids.get(record.target)
         if (id !== undefined) mutations.setText(id, textOf(record.target))
+        else if (record.target.parentNode !== null) parents.add(record.target.parentNode)
       } else if (record.type === 'attributes') {
         if (record.target.nodeName === 'STYLE') continue
         if (debug) process.stderr.write(`foldkit-native: attr ${(record.target as Element).className} ${record.attributeName}\n`)

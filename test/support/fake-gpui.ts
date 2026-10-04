@@ -25,6 +25,9 @@ export const createFakeGpui = () => {
   const batches: Array<Array<[string, ...Array<unknown>]>> = []
   let root: number | undefined
   const bounds = new Map<number, { x: number; y: number; width: number; height: number }>()
+  /** Scroll offsets, gpuix's way: negative when scrolled down or right. */
+  const offsets = new Map<number, [number, number]>()
+  const scrollCalls: Array<{ id: number; x: number; y: number }> = []
 
   const node = (id: number) => {
     const found = nodes.get(id)
@@ -84,6 +87,11 @@ export const createFakeGpui = () => {
       return freed
     },
     getElementBounds: (id: number) => bounds.get(id) ?? null,
+    getScrollOffset: (id: number) => offsets.get(id) ?? null,
+    scrollTo: (id: number, x: number, y: number) => {
+      scrollCalls.push({ id, x, y })
+      offsets.set(id, [x, y])
+    },
     setWindowKeyEvents: () => {},
   }
 
@@ -110,6 +118,10 @@ export const createFakeGpui = () => {
     ops: () => batches.flat(),
     /** Where "GPUI painted" an element, for drag and drop hit tests. */
     setBounds: (id: number, box: { x: number; y: number; width: number; height: number }) => bounds.set(id, box),
+    /** Scrolls an element "in GPUI", as a wheel would: gpuix's negative offsets. */
+    setScrollOffset: (id: number, x: number, y: number) => offsets.set(id, [x, y]),
+    /** Every `scrollTo` the mirror asked GPUI for. */
+    scrollCalls,
   }
 }
 

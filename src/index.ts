@@ -79,6 +79,8 @@ export const attachDom = (renderer: NativeRenderer, options: AttachOptions = {})
     mutations,
     eventHandlers,
     ...(renderer.getElementBounds === undefined ? {} : { boundsOf: (id: number) => renderer.getElementBounds!(id) }),
+    ...(renderer.getScrollOffset === undefined ? {} : { scrollOffsetOf: (id: number) => renderer.getScrollOffset!(id) }),
+    ...(renderer.scrollTo === undefined ? {} : { scrollTo: (id: number, x: number, y: number) => renderer.scrollTo!(id, x, y) }),
     ...(onSynced === undefined ? {} : { onSynced }),
   })
   mirror.refreshStyles()

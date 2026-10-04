@@ -342,3 +342,58 @@ describe('drag and drop, rebuilt from mouse events', () => {
     expect(names(atCard)).toEqual(['click'])
   })
 })
+
+describe('scroll position, both ways', () => {
+  const scroller = async () => {
+    const { container, gpui } = await setup()
+    const list = el('div')
+    list.style.overflowY = 'scroll'
+    container.appendChild(list)
+    const tops: Array<number> = []
+    list.addEventListener('scroll', () => tops.push(list.scrollTop))
+    list.setAttribute('data-x', '1') // flushes the native scroll listener
+    await mounted.settle()
+    return { list, gpui, tops, id: mounted.idOf(list) }
+  }
+
+  test('a scroll in GPUI reaches the DOM with GPUI\'s offset in scrollTop', async () => {
+    const { list, gpui, tops, id } = await scroller()
+    expect(gpui.node(id).listeners.has('scroll')).toBe(true)
+    // gpuix offsets are negative when scrolled down.
+    gpui.setScrollOffset(id, 0, -440)
+    mounted.send(list, { eventType: 'scroll', deltaY: -440 } as never)
+    expect(tops).toEqual([440])
+    expect(list.scrollTop).toBe(440)
+    // Reading GPUI's position never writes it back.
+    expect(gpui.scrollCalls).toEqual([])
+  })
+
+  test('setting scrollTop scrolls GPUI and fires scroll back, as a browser does', async () => {
+    const { list, gpui, tops, id } = await scroller()
+    list.scrollTop = 880
+    expect(gpui.scrollCalls).toEqual([{ id, x: 0, y: -880 }])
+    await mounted.settle()
+    expect(tops).toEqual([880])
+    // The same value again is no scroll at all.
+    list.scrollTop = 880
+    list.scrollTo({ top: 880 })
+    await mounted.settle()
+    expect(gpui.scrollCalls).toHaveLength(1)
+    expect(tops).toEqual([880])
+  })
+
+  test('an app that scrolls on every scroll event settles instead of echoing', async () => {
+    const { list, gpui, id } = await scroller()
+    // Snap to 44px rows on every scroll, as a list might.
+    list.addEventListener('scroll', () => {
+      list.scrollTop = Math.round(list.scrollTop / 44) * 44
+    })
+    gpui.setScrollOffset(id, 0, -100)
+    mounted.send(list, { eventType: 'scroll', deltaY: -100 } as never)
+    await mounted.settle()
+    await mounted.settle()
+    // One write (100 → 88), its one scroll event, then quiet: 88 snaps to 88.
+    expect(gpui.scrollCalls).toEqual([{ id, x: 0, y: -88 }])
+    expect(list.scrollTop).toBe(88)
+  })
+})

@@ -1,0 +1,15 @@
+{
+  "name": "@foldkit-native/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Themeable FoldKit components (text field, switch, scroll area, listbox, dialog) for FoldKit on gpuix, and the web. Behaviour follows WAI-ARIA and Base UI; looks come from a token theme.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0",
+    "foldkit": "0.165.0"
+  }
+}

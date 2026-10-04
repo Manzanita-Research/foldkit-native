@@ -23,12 +23,17 @@ export type ExampleMeta = Readonly<{
   /** Window size in logical pixels. */
   width: number
   height: number
+  /** What draws it: the DOM mirror (the default), or FoldKit on gpuix
+   *  (packages/foldkit-gpuix), which has no DOM engine. */
+  renderer?: 'mirror' | 'gpuix'
 }>
 
 export type ExampleApp = Readonly<{
   meta: ExampleMeta
   /** Runs the app in a container: FoldKit's entry.ts, with the container passed in. */
   start: (container: HTMLElement) => void
+  /** CSS from the libraries the app uses (a UI library's), before its own. */
+  libraryCss?: string
 }>
 
 export const EXAMPLES_DIR = resolve(import.meta.dir, '..')
@@ -81,7 +86,7 @@ export const loadExample = async (id: string): Promise<ExampleApp & { id: string
     throw new Error(`no example "${id}". Examples: ${exampleIds().join(', ')}`)
   }
   const app = (await import(join(EXAMPLES_DIR, id, 'app.ts'))) as ExampleApp
-  return { ...app, id, css: exampleCss(id) }
+  return { ...app, id, css: (app.libraryCss ?? '') + exampleCss(id) }
 }
 
 /** The example's CSS as the mirror reads it (`bun run css` generates it). */

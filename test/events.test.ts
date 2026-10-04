@@ -524,6 +524,24 @@ describe('pointer events, and listeners on document', () => {
     expect((seen[0] as PointerEvent).clientY).toBe(6)
   })
 
+  test("through the global document (src/dom.ts's forwarder), as FoldKit adds them", async () => {
+    const { container } = await setup()
+    const card = el('div', 'card')
+    card.addEventListener('pointerdown', () => {})
+    container.appendChild(card)
+    await mounted.settle()
+    const forwarded = (globalThis as unknown as { document: Document }).document
+    expect(forwarded).not.toBe(mounted.document) // the forwarder, not the window's own document
+    const moves: Array<number> = []
+    forwarded.addEventListener('pointermove', event => moves.push((event as PointerEvent).clientX))
+    card.setAttribute('data-x', '1')
+    await mounted.settle()
+    expect(mounted.nativeOf(mounted.document.body as unknown as Node).listeners.has('mouseMove')).toBe(true)
+    mounted.send(card, { eventType: 'mouseDown', x: 1, y: 1, button: 0 })
+    mounted.send(card, { eventType: 'mouseMove', x: 42, y: 1, pressedButton: 0 })
+    expect(moves).toEqual([42])
+  })
+
   test('removing them stops the body listening for moves, but it still hears releases', async () => {
     const { document } = await setup()
     const body = document.body as unknown as Node

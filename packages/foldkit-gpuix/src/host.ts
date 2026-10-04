@@ -103,8 +103,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   let scheduled = false
   let inputAt: number | undefined
   let restyled = 0
+  let detached = false
   const schedule = () => {
-    if (scheduled) return
+    if (scheduled || detached) return
     scheduled = true
     queueMicrotask(sync)
   }
@@ -841,6 +842,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       renderer.scrollTo?.(element.nativeId, x, y)
       setTimeout(() => element.dispatchEvent(new NativeEvent('scroll')), 0)
     },
+    selectedText: () => renderer.getSelectedText?.() ?? null,
+    clearSelection: () => renderer.clearSelection?.(),
+    nextFrame: callback => {
+      if (detached) return
+      afterDraw(callback)
+    },
   }
 
   // PRESSES: GPUI's editors stop a press from bubbling and send no focus
@@ -912,7 +919,28 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     /** Sends a gpuix event as GPUI would (tests and automation). */
     dispatch: (event: EventPayload) => state.dispatch(event),
     focused: () => focused,
+    /** Lets go of everything this host holds: the native tree (root,
+     *  sentinel and all), event handlers, window key events, frame work and
+     *  pending timers. The document stays, unconnected to GPUI. */
     detach: () => {
+      if (detached) return
+      detached = true
+      if (drawTimer !== undefined) clearTimeout(drawTimer)
+      drawTimer = undefined
+      drawWaiters = []
+      dirty.clear()
+      autofocus = []
+      renderer.setWindowKeyEvents?.(false, false, binding.windowKeyEventId)
+      const root = body.nativeId
+      if (root !== 0) {
+        unmount(body)
+        unregisterEventHandlers(eventHandlers, sentinel)
+        mutations.destroyElement(sentinel)
+        mutations.destroyElement(root)
+        mutations.flushMutations()
+      }
+      eventHandlers.clear()
+      nodes.clear()
       binding.detach()
       document.host = undefined
     },

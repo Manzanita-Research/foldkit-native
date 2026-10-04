@@ -31,6 +31,37 @@ const nativeTexts = () => {
 }
 
 describe('FoldKit apps', () => {
+  test('counter: a double click on +1 counts twice, and OnDoubleClick fires once', async () => {
+    mounted = mountFake()
+    const Message = defineMessageUnion({ ClickedIncrement: {}, DoubleClickedCount: {} })
+    type Message = typeof Message.Type
+    type Model = { count: number; doubles: number }
+    const app = await runApp(mounted, {
+      Model: Schema.Struct({ count: Schema.Number, doubles: Schema.Number }),
+      init: () => ({ model: { count: 0, doubles: 0 } }),
+      update: (model: Model, message: Message) =>
+        Message.match(message, {
+          ClickedIncrement: () => ({ model: { ...model, count: model.count + 1 } }),
+          DoubleClickedCount: () => ({ model: { ...model, doubles: model.doubles + 1 } }),
+        }),
+      view: (model: Model, h: any) => h.div([], [
+        h.p([h.OnDoubleClick(Message.DoubleClickedCount())], [`Count: ${model.count}`]),
+        h.button([h.OnClick(Message.ClickedIncrement())], ['+1']),
+      ]),
+    })
+    // What GPUI sends for a double click: two releases, counted 1 then 2.
+    for (const clickCount of [1, 2]) {
+      mounted.send(byText('+1'), { eventType: 'click', x: 1, y: 1, button: 0, clickCount })
+      await mounted.settle()
+    }
+    expect(app.model().count).toBe(2)
+    for (const clickCount of [1, 2]) {
+      mounted.send(byText('Count: 2'), { eventType: 'click', x: 1, y: 1, button: 0, clickCount })
+      await mounted.settle()
+    }
+    expect(app.model().doubles).toBe(1)
+  })
+
   test('counter: clicks run update, the model and the native text follow', async () => {
     mounted = mountFake()
     const Message = defineMessageUnion({ ClickedIncrement: {}, ClickedReset: {} })

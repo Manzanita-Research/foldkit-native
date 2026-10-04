@@ -81,6 +81,39 @@ describe.skipIf(!metal)('Metal, offscreen', () => {
     expect(renderer.getRetainedElementCount()).toBeGreaterThan(0)
   })
 
+  test("GPUI's own text selection: UI text and buttons don't select, opted-in text does", async () => {
+    const renderer = await testRenderer(480, 320)
+    const css = `body { margin: 0; height: 100%; background-color: #1d1d21; font-family: system-ui; color: #f2f2f2; }
+      .app { display: flex; flex-direction: column; gap: 12px; padding: 20px; }
+      .title, .note { margin: 0; font-size: 20px; }
+      .note { user-select: text; }
+      .button { width: 120px; height: 40px; background-color: #3b82f6; color: #ffffff; font-size: 20px; }`
+    const dom = attachDom(renderer, { css })
+    cleanups.push(async () => {
+      dom.detach()
+      await dom.window.happyDOM.abort()
+      dom.window.close()
+    })
+    const document = dom.window.document
+    document.body.querySelector('#app')!.outerHTML =
+      '<div class="app"><p class="title">FoldKit Native</p><p class="note">Selectable note</p><div class="button">Increment</div></div>'
+    for (let i = 0; i < 3; i++) {
+      await dom.window.happyDOM.waitUntilComplete()
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+    renderer.flush()
+    /** Drag from just inside an element's left edge to its right edge. */
+    const dragAcross = (selector: string) => {
+      const bounds = renderer.getElementBounds(dom.mirror.idFor(document.querySelector(selector) as unknown as Node)!)!
+      const y = bounds.y + bounds.height / 2
+      renderer.clearSelection()
+      return renderer.dragSelect(bounds.x + 1, y, bounds.x + bounds.width - 1, y)
+    }
+    expect(dragAcross('.title')).toBeNull()
+    expect(dragAcross('.button')).toBeNull()
+    expect(dragAcross('.note')).toContain('Selectable')
+  })
+
   test('the fake GPUI tree agrees with the real one', async () => {
     // Record what the mirror sends for a run of edits, replay it into GPUI's
     // real retained tree, and compare: the unit tests' fake must not drift.

@@ -32,6 +32,8 @@ FoldKit ◀─listeners── DOM ◀────dispatchEvent──── mirro
   custom properties; `src/style.ts` copies what GPUI can draw (flexbox, grid,
   sizes, spacing, colours, borders, radius, gradients, shadows, fonts,
   `:hover`/`:active`/`:focus-visible`, cursor, `user-select`). GPUI does layout.
+  Like a native app, UI text isn't selectable unless its CSS says
+  `user-select: text`, so double-clicking a button never highlights its label.
 - **Primitives** (`src/primitives.ts`): look-free building blocks for views
   (`box`, `stack`, `row`, `grid`, `text`, `image`, `input`, `scroll`,
   `surface`) with stable `data-part` slots, state attributes and focus/motion

@@ -7,9 +7,10 @@
 //
 // What GPUI owns, and the DOM follows:
 // - Focus. GPUI's focus is the truth; `document.activeElement` follows it.
-//   Tab and Shift-Tab are GPUI's own `focusNext`/`focusPrevious`, run as the
-//   keydown's default action, so an app that prevents it (FoldKit's dialog
-//   trap) still can. `element.focus()` calls GPUI's `focusElement`.
+//   Tab and Shift-Tab, run as the keydown's default action (so an app that
+//   prevents it, FoldKit's dialog trap, still can), step through the
+//   document's tab order, as a browser's, and GPUI focuses each stop.
+//   `element.focus()` calls GPUI's `focusElement`.
 // - Keys go to the focused element and bubble, as in a browser. Buttons and
 //   links activate on Enter (and buttons on Space); a focused scroll area
 //   scrolls with the arrow keys, Page Up/Down, Home and End.
@@ -237,6 +238,40 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     return transform === 'uppercase' ? text.data.toUpperCase() : transform === 'lowercase' ? text.data.toLowerCase() : text.data
   }
 
+  // CONTAINING BLOCKS: CSS positions an `absolute` box against its nearest
+  // positioned ancestor (else the window), a `fixed` one against the window.
+  // GPUI (taffy) positions it against its parent. So such a box is drawn
+  // under its containing block in GPUI's tree, last (on top, as positioned
+  // boxes paint), while the DOM, styles and events stay where they are.
+  /** Elements drawn somewhere other than under their DOM parent. */
+  const homes = new Map<NativeElement, NativeElement>()
+  const positioned = (element: NativeElement) => {
+    const position = info(element).declared.base.get('position')
+    return position !== undefined && position !== 'static'
+  }
+  const containingBlock = (element: NativeElement, position: string | undefined): NativeElement | null => {
+    if (position === 'fixed') return body
+    if (position !== 'absolute') return null
+    for (let at = element.parentElement; at !== null; at = at.parentElement) if (at === body || positioned(at)) return at
+    return body
+  }
+  const rehome = (element: NativeElement, position: string | undefined) => {
+    const parent = element.parentElement
+    if (parent === null || element === body) return
+    const block = containingBlock(element, position)
+    const home = block === null || block === parent ? null : block
+    if (home === (homes.get(element) ?? null)) return
+    if (home === null) {
+      homes.delete(element)
+      place(parent, element)
+    } else {
+      homes.set(element, home)
+      mutations.appendChild(home.nativeId, element.nativeId)
+    }
+  }
+  /** Re-homed boxes inside `node` (going away): GPUI holds them elsewhere. */
+  const homedWithin = (node: NativeNode) => [...homes.keys()].filter(element => node.contains(element) && element !== node)
+
   /** The style last sent per element, for its border box (boundsOf). */
   const sentStyles = new WeakMap<NativeElement, StyleDesc>()
   const restyleTree = (element: NativeElement) => {
@@ -245,6 +280,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const style = styleOf(element)
     sentStyles.set(element, style)
     mutations.setStyle(element.nativeId, style)
+    rehome(element, (style as { position?: string }).position)
     syncProps(element)
     for (const child of element.childNodes) {
       if (child instanceof NativeElement) restyleTree(child)
@@ -450,7 +486,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const siblings = parent.childNodes
     let before: NativeNode | undefined
     for (let i = siblings.indexOf(node) + 1; i < siblings.length && before === undefined; i++) {
-      if (siblings[i]!.nativeId !== 0) before = siblings[i]
+      const sibling = siblings[i]!
+      if (sibling.nativeId !== 0 && !(sibling instanceof NativeElement && homes.has(sibling))) before = sibling
     }
     if (before === undefined) mutations.appendChild(parent.nativeId, node.nativeId)
     else mutations.insertBefore(parent.nativeId, node.nativeId, before.nativeId)
@@ -552,20 +589,24 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     return scopes.at(-1) ?? null
   }
 
-  /** GPUI's tab order, from the DOM: focusable elements with a tab index of
-   *  0 or more, by tab index and then tree order (GPUI sorts by tab index,
-   *  then paint order; the contract test checks the two agree). */
+  /** The tab order, as a browser has it: focusable elements with a positive
+   *  tab index first (lowest first, then tree order), then those with 0 in
+   *  tree order; nothing under `display: none`. The adapter owns the order
+   *  because GPUI's is paint order (positive tab indexes last, and an
+   *  overlay re-homed under its containing block would move). */
   const tabStops = (scope: NativeElement | null): Array<NativeElement> => {
     const out: Array<NativeElement> = []
     const walk = (element: NativeElement) => {
-      if (element.nativeId !== 0 && isFocusable(element) && element.tabIndex >= 0) out.push(element)
+      if (element.nativeId === 0 || info(element).declared.base.get('display') === 'none') return
+      if (isFocusable(element) && element.tabIndex >= 0) out.push(element)
       for (const child of element.children) walk(child)
     }
     walk(scope ?? body)
-    return out
+    const positive = out.filter(element => element.tabIndex > 0)
       .map((element, at) => ({ element, at }))
       .sort((a, b) => a.element.tabIndex - b.element.tabIndex || a.at - b.at)
       .map(stop => stop.element)
+    return [...positive, ...out.filter(element => element.tabIndex === 0)]
   }
   const stepStop = (from: number | null, delta: 1 | -1, scope: NativeElement | null): NativeElement | undefined => {
     const stops = tabStops(scope)
@@ -611,21 +652,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (!proceed) return
     // The browser's default actions.
     if (type === 'keydown' && name === 'Tab') {
-      const scope = focusScope()
-      const from = renderer.getFocusedElementId?.() ?? null
-      if (held?.shift) {
-        // Backwards, the adapter steps through GPUI's order itself: on Metal,
-        // gpuix 0.10's focusPrevious didn't leave an editor, and its
-        // focusPreviousWithin never returned from a modal's first stop.
-        const next = stepStop(from, -1, scope)
-        if (next !== undefined) renderer.focusElement?.(next.nativeId)
-      } else {
-        if (scope !== null) renderer.focusNextWithin?.(scope.nativeId)
-        else renderer.focusNext?.()
-        // Not moved (no stop GPUI knows of): the same order, from here.
-        const next = (renderer.getFocusedElementId?.() ?? null) === from ? stepStop(from, 1, scope) : undefined
-        if (next !== undefined) renderer.focusElement?.(next.nativeId)
-      }
+      // The document's order (tabStops), and GPUI focuses it. (gpuix 0.10's
+      // focusPrevious didn't leave an editor and its focusPreviousWithin
+      // never returned from a modal's first stop, on Metal.)
+      const next = stepStop(renderer.getFocusedElementId?.() ?? null, held?.shift ? -1 : 1, focusScope())
+      if (next !== undefined) renderer.focusElement?.(next.nativeId)
       followGpui()
       return
     }
@@ -841,7 +872,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         })
       }
       const id = node.nativeId
+      const away = homedWithin(node).map(element => element.nativeId)
+      if (node instanceof NativeElement) homes.delete(node)
+      for (const element of homes.keys()) if (node.contains(element)) homes.delete(element)
       unmount(node)
+      for (const homed of away) mutations.destroyElement(homed)
       mutations.destroyElement(id)
       if (parent instanceof NativeElement) dirty.add(parent)
       schedule()

@@ -84,12 +84,18 @@ upstream asks in the M0 memo.
   last prop does nothing. The host sends the value plus a zero-width space,
   then the value after the next frame (`host.drawn()`).
 - **`focusPrevious` and `focusPreviousWithin`.** The first doesn't leave an
-  editor, and the second never returned from a modal's first stop. Shift-Tab
-  steps backwards through the same order in the host.
+  editor, and the second never returned from a modal's first stop. And
+  GPUI's order is paint order: positive tab indexes come last. So the host
+  owns the tab order, a browser's, and only asks GPUI to focus each stop.
 - **Editors are tab stops by default.** An unfocusable field is sent
   `tabIndex: -1`.
 - **Bounds.** Boxes come from the content corner, and a scroll area's box
   moves with its own scroll offset.
+- **Containing blocks.** Taffy positions an `absolute` box against its
+  parent, but CSS uses the nearest positioned ancestor, or the window. The
+  host draws such a box under its containing block in GPUI's tree (last, so
+  on top). The DOM, styles and events stay where they are. `fixed` uses the
+  root, which scrolls, so a fixed box scrolls with the page.
 
 `test/contract.test.ts` runs one app on real GPUI and on the fake
 (`test/support/fake-gpui.ts`) and checks they agree on the tree, the focus

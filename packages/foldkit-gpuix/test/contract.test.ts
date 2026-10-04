@@ -6,8 +6,8 @@
 // stopped meaning anything. macOS only (gpuix's offscreen Metal renderer).
 //
 // What the real one does, written down (gpuix 0.10, Metal):
-// - Tab stops: focusable elements with a tab index of 0 or more, tab index
-//   0 first in tree order, then 1, 2… (browsers put positive ones first).
+// - The adapter owns the tab order (a browser's: positive tab indexes
+//   first); GPUI's focus must land on each stop it asks for.
 // - Scroll offsets are negative, null for an element GPUI doesn't scroll,
 //   [0, 0] for one at rest, and clamped to the content.
 // - A scroll area's own reported box moves by its own scroll offset; the
@@ -196,9 +196,10 @@ describe.skipIf(!METAL)('the fake GPUI agrees with real GPUI (Metal)', () => {
       return { dom, gpui }
     })
     console.log('contract focus:', JSON.stringify(seen))
+    // A browser's order: positive tab indexes first, then tree order.
     expect(seen.real.dom).toEqual([
-      'open', 'name', 'notes', 'log', 'link', 'first', 'second', 'open', 'name',
-      'open', 'second', 'first', 'link',
+      'first', 'second', 'open', 'name', 'notes', 'log', 'link', 'first', 'second',
+      'first', 'link', 'log', 'notes',
       'cancel', 'confirm', 'cancel', 'confirm',
     ])
     expect(seen.real.gpui).toEqual(seen.real.dom)

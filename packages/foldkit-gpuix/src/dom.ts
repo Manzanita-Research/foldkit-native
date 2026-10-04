@@ -21,6 +21,10 @@ import { mediaQueryMatches } from './media.ts'
 import { type NativeStorage, memoryStorage } from './storage.ts'
 
 export interface Host {
+  /** Throws if GPUI can't draw `node` as it's about to be: inserted, or with
+   *  attribute `name` set to `value`. Asked before the document changes, so
+   *  a refusal leaves it as it was. */
+  admit(node: NativeNode, name?: string, value?: string): void
   /** `node` (and its subtree) was inserted under `parent`, before `before`. */
   inserted(parent: NativeNode, node: NativeNode): void
   /** `node` was removed from `parent`. */
@@ -291,6 +295,7 @@ export class NativeNode extends NativeEventTarget {
       for (const inner of [...child.childNodes]) this.insertBefore(inner, before)
       return child
     }
+    if (this.isConnected) this.ownerDocument.host?.admit(child)
     if (child.parentNode !== null) child.parentNode.detach(child, child.parentNode === this)
     const index = before === null ? -1 : this.childNodes.indexOf(before)
     if (index === -1) this.childNodes.push(child)
@@ -509,6 +514,7 @@ export class NativeElement extends NativeNode {
     const next = String(value)
     const oldValue = this.attributeMap.get(key) ?? null
     if (oldValue === next) return
+    if (this.isConnected) this.ownerDocument.host?.admit(this, key, next)
     this.attributeMap.set(key, next)
     if (key === 'style') this.style.cssText = next
     if (key === 'value' && this.#value === '') this.#value = next

@@ -145,6 +145,21 @@ ignore (`@foldkit-native/ui`'s Listbox reaches a disabled option but never
 selects it). gpuix has no disabled state for AccessKit yet, so neither kind
 is announced as disabled.
 
+## Text fields: password, clipboard, undo
+
+`<input>` and `<textarea>` are GPUI's own editors. Copy, cut, paste, undo and
+redo are the editor's (cmd or ctrl, by platform), and each change reaches the
+app as an `input`. GPUI undoes in smaller steps than a browser does (a typed
+space and a word are two). `scripts/clipboard.ts` checks them in a live window
+against the system clipboard.
+
+gpuix has no masked input, so a password field would show the secret as it's
+typed. The document refuses one instead: inserting an `<input
+type="password">`, or making a field one, throws an error naming the gap
+(`PASSWORD_UNSUPPORTED`), before anything changes. In a FoldKit view, that's
+the app's crash. In its very first render FoldKit can't draw its crash view
+(it has taken the container out by then), but it reports the crash.
+
 ## Styles
 
 `src/sheet.ts` has no cascade engine. Rules match the element and, through

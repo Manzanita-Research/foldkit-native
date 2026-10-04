@@ -210,6 +210,12 @@ export const boxStyle = (computed: Computed): Style => {
   const [overflowX, overflowY = overflowX] = get('overflow').split(/\s+/)
   if (style.overflowX === undefined && overflowX !== undefined && overflowX !== '' && overflowX !== 'visible') style.overflowX = overflowX
   if (style.overflowY === undefined && overflowY !== undefined && overflowY !== '' && overflowY !== 'visible') style.overflowY = overflowY
+  // GPUI scrolls `scroll` and has no `auto`: a browser's `auto` scrolls when
+  // the content doesn't fit, and so does GPUI's `scroll` (no scrollbar shows
+  // when it fits). `overlay` is the old WebKit spelling of `auto`.
+  for (const key of ['overflowX', 'overflowY'] as const) {
+    if (style[key] === 'auto' || style[key] === 'overlay') style[key] = 'scroll'
+  }
   for (const [css, key] of LENGTHS) {
     const value = px(get(css))
     if (value !== undefined && value !== 0) (style as Record<string, unknown>)[key] = value

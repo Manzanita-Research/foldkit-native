@@ -288,3 +288,20 @@ describe('tokens', () => {
     expect(mounted.nativeOf(div).style['backgroundColor']).toBe('#ffffff')
   })
 })
+
+describe('viewport', () => {
+  test('vh, vw and media queries measure the window attachDom is given, not happy-dom’s 1024 × 768', async () => {
+    mounted = mountFake({
+      viewport: { width: 600, height: 900 },
+      css: '.x { min-height: 100vh; width: 50vw; } @media (min-width: 768px) { .x { padding-top: 7px; } }',
+    })
+    const div = mounted.document.createElement('div')
+    div.className = 'x'
+    mounted.container.appendChild(div)
+    await mounted.settle()
+    expect(mounted.window.innerWidth).toBe(600)
+    const style = mounted.nativeOf(div).style
+    expect(style).toMatchObject({ minHeight: 900, width: 300 })
+    expect(style['paddingTop']).toBeUndefined()
+  })
+})

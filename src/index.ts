@@ -38,6 +38,9 @@ export type FrameTiming = Readonly<{ syncMs: number; syncToFrameMs: number; inpu
 export type AttachOptions = {
   /** The app's stylesheet, as it would be on the web. */
   css?: string
+  /** The window's size in logical pixels, so `vh`, `vw` and media queries
+   *  measure it (happy-dom's own default is 1024 × 768). Not updated on resize yet. */
+  viewport?: { width: number; height: number }
   /** Semantic tokens to start with (see theme.ts); change them later with `setTokens`. */
   tokens?: Tokens
   /** Called after every DOM → GPUI sync with how long it took. */
@@ -53,8 +56,9 @@ export type NativeOptions = WindowOptions & AttachOptions & {
  *  live window (`mountNative`) or gpuix's offscreen `TestRenderer` in tests.
  *  Returns the container to hand to FoldKit's `Runtime.makeElement`. */
 export const attachDom = (renderer: NativeRenderer, options: AttachOptions = {}) => {
-  const { css, tokens, onSynced } = options
+  const { css, tokens, onSynced, viewport } = options
   const window = installDom()
+  if (viewport !== undefined) window.happyDOM.setViewport(viewport)
   const document = window.document
 
   // Native defaults and the primitives' structural CSS first, so the app's CSS
@@ -126,7 +130,9 @@ export const mountNative = (options: NativeOptions = {}) => {
   // A DOM change is on screen at the end of the first GPUI tick after the
   // mirror flushed it.
   let flushed: { at: number; syncMs: number; inputAt?: number } | undefined
+  const { width, height } = windowOptions
   const dom = attachDom(renderer, {
+    ...(width === undefined || height === undefined ? {} : { viewport: { width, height } }),
     ...(css === undefined ? {} : { css }),
     ...(tokens === undefined ? {} : { tokens }),
     onSynced: timings => {

@@ -114,7 +114,7 @@ export const createMirror = (options: {
   }
 
   // GPUI EVENTS → DOM EVENTS
-  let lastClick: { node: Node; at: number } | undefined
+  let lastClick: { node: Node; at: number; sameTask: boolean } | undefined
   /** When the latest input arrived, for click → frame timing. */
   let inputAt: number | undefined
   // Drag and drop, rebuilt from mouse events: a press on something listening
@@ -190,8 +190,15 @@ export const createMirror = (options: {
         const now = performance.now()
         // The release that ends a drag isn't a click.
         if (now - dragEndedAt < 150) return
-        if (lastClick !== undefined && now - lastClick.at < 4 && node !== lastClick.node && node.contains(lastClick.node)) return
-        lastClick = { node, at: now }
+        // The copies arrive back to back: in the same task, or within a few
+        // milliseconds (a slow machine can stretch one task past 4 ms).
+        if (lastClick !== undefined && (lastClick.sameTask || now - lastClick.at < 4) &&
+          node !== lastClick.node && node.contains(lastClick.node)) return
+        const click = { node, at: now, sameTask: true }
+        lastClick = click
+        queueMicrotask(() => {
+          click.sameTask = false
+        })
         const mouse = { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }
         if (event.isRightClick) {
           node.dispatchEvent(new W['MouseEvent']!('contextmenu', mouse))

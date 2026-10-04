@@ -1,3 +1,6 @@
+> **Superseded (Oct 4).** M0 is done: see [docs/M0-MEMO.md](docs/M0-MEMO.md) for what was
+> fixed, the measurements and the open list. This file is FKN-11's handoff, kept as a record.
+
 # Handoff: FKN-11 → FKN-15 M0 (qualify the adapter)
 
 From the FKN-11 explorer thread (thr_nftnu8ukkz, on jemarchy-m6) to whoever

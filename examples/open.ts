@@ -14,7 +14,10 @@ if (id === undefined) {
   process.exit(1)
 }
 const example = await loadExample(id)
-if (example.meta.renderer === 'gpuix') {
+// FOLDKIT_NATIVE_RENDERER=gpuix|mirror overrides the example's own choice
+// (scripts/measure.ts runs each example on both).
+const renderer = process.env['FOLDKIT_NATIVE_RENDERER'] ?? example.meta.renderer
+if (renderer === 'gpuix') {
   const { mountGpuix } = await import('foldkit-gpuix')
   const native = mountGpuix({ title: example.meta.title, width: example.meta.width, height: example.meta.height, css: example.css })
   example.start(native.container)

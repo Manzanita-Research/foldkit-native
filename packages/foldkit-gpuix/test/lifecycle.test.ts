@@ -130,14 +130,14 @@ describe('the FoldKit lifecycle on gpuix', () => {
     mounted.close()
   })
 
-  test('requestAnimationFrame runs after GPUI draws, and stops at detach', async () => {
+  test("requestAnimationFrame runs before GPUI draws, and stops at detach", async () => {
     const opened = await open()
     const ran: Array<string> = []
     window.requestAnimationFrame(() => ran.push('a'))
     const cancelled = window.requestAnimationFrame(() => ran.push('cancelled'))
     window.cancelAnimationFrame(cancelled)
     expect(ran).toEqual([])
-    opened.host.drawn()
+    opened.host.frame()
     expect(ran).toEqual(['a'])
     window.requestAnimationFrame(() => ran.push('after detach'))
     opened.close()

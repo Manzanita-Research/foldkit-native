@@ -22,6 +22,16 @@ import { entries } from '../examples/support/example.ts'
  *  and `demo`, which drives the app for the clip (`pause` is a plain wait). */
 export type Demo = (app: App, pause: (ms: number) => Promise<void>) => Promise<void>
 
+/** The centre of the `index`th element showing `text`, for `app.mouse`.
+ *  gpuix's locators insist on exactly one match; lists repeat their labels
+ *  ("Add to Cart" on every product). */
+export const nth = async (app: App, text: string, index = 0) => {
+  const found = (await app.getByText(text).all()).filter(node => node.bounds !== undefined)
+  const node = found[index]
+  if (node === undefined) throw new Error(`no element #${index} showing "${text}" (found ${found.length})`)
+  return { x: node.bounds!.x + node.bounds!.width / 2, y: node.bounds!.y + node.bounds!.height / 2 }
+}
+
 const id = process.argv[2]
 const all = await entries()
 const entry = all.find(candidate => candidate.id === id)
@@ -41,8 +51,13 @@ const { demo, ready } = demoFile === undefined
 
 const app = await launch({ command: process.execPath, args: [...entry.command], cwd: root })
 const pause = (ms: number) => new Promise<void>(done => setTimeout(done, ms))
+// `ready` may show more than once (a list), so wait for any match.
+const until = performance.now() + 10_000
+while (ready !== undefined && (await app.getByText(ready).count()) === 0) {
+  if (performance.now() > until) throw new Error(`"${ready}" didn't show within 10 s`)
+  await pause(50)
+}
 if (ready === undefined) await pause(1500)
-else await app.getByText(ready).waitFor({ timeoutMs: 10_000 })
 await pause(500)
 await app.screenshot({ path: join(outDir, `${entry.id}.png`) })
 

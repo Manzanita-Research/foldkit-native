@@ -224,3 +224,35 @@ describe('@foldkit/ui', () => {
     expect(mounted.inSync()).toBe(true)
   })
 })
+
+describe('Subscriptions', () => {
+  test('keyBindings hears GPUI window keys (it checks `instanceof Document`)', async () => {
+    mounted = mountFake()
+    // In happy-dom `document instanceof Document` is false even in its own
+    // windows (the document comes from a different per-window class), and
+    // keyBindings copes; what it can't survive is no `Document` at all.
+    expect(typeof Document).toBe('function')
+    expect(() => document instanceof Document).not.toThrow()
+    const { Runtime, Subscription } = await import('foldkit')
+    const Message = defineMessageUnion({ PressedDown: {} })
+    type Message = typeof Message.Type
+    type Model = { presses: number }
+    Runtime.run(Runtime.makeElement({
+      Model: Schema.Struct({ presses: Schema.Number }),
+      init: () => ({ model: { presses: 0 } }),
+      update: (model: Model, message: Message) =>
+        Message.match(message, { PressedDown: () => ({ model: { presses: model.presses + 1 } }) }),
+      view: (model: Model, h: any) => h.p([], [`Presses: ${model.presses}`]),
+      subscriptions: Subscription.make<Model, Message>()(() => ({
+        keys: Subscription.persistent(Subscription.keyBindings<Message>({
+          bindings: [{ keys: 'ArrowDown', mapEvent: () => Message.PressedDown() }],
+        })),
+      })),
+      container: mounted.container,
+    } as never))
+    await mounted.settle()
+    mounted.mirror.windowKey({ eventType: 'keyDown', key: 'down' } as never)
+    await mounted.settle()
+    expect(nativeTexts()).toContain('Presses: 1')
+  })
+})

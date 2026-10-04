@@ -51,6 +51,8 @@ const DOM_TO_NATIVE: Readonly<Record<string, ReadonlyArray<string>>> = {
  *  gpuix doesn't send its root mouse events yet. */
 const ROOT_TYPES = new Set(['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup'])
 
+const HOVER_TYPES: ReadonlyArray<string> = ['mouseenter', 'mouseover', 'mouseleave', 'mouseout']
+
 /** A GPUI mouse event → the DOM pointer and mouse events a browser fires for it, in order. */
 const POINTER_AND_MOUSE: Readonly<Record<string, readonly [string, string]>> = {
   mouseDown: ['pointerdown', 'mousedown'], mouseMove: ['pointermove', 'mousemove'], mouseUp: ['pointerup', 'mouseup'],
@@ -166,6 +168,9 @@ export const createMirror = (options: {
   /** Where GPUI last laid out an element, in window coordinates, as gpuix
    *  reports it (see `paintedBox`). */
   boundsOf?: (id: number) => { x: number; y: number; width: number; height: number } | null
+  /** Where GPUI last painted every element, read at once (gpuix walks its
+   *  whole tree for each boundsOf, so many of those are slow). */
+  allBounds?: () => ReadonlyMap<number, { x: number; y: number; width: number; height: number }>
   /** GPUI's scroll offset for a scroller, gpuix's way: `[x, y]`, negative
    *  when scrolled down or right. */
   scrollOffsetOf?: (id: number) => ReadonlyArray<number> | null
@@ -181,6 +186,9 @@ export const createMirror = (options: {
   const listened = new WeakMap<Node, Map<string, number>>()
   const domListened = new WeakMap<Node, Map<string, number>>()
   const listens = (node: Node, domType: string) => (domListened.get(node)?.get(domType) ?? 0) > 0
+  /** Elements listening for mouseenter/over/leave/out: what hover during a
+   *  press is hit-tested against (see HOVER DURING A PRESS). */
+  const hoverListeners = new Set<Node>()
   /** Listeners above the body, by DOM event type (see ROOT_TYPES). */
   const above = new Map<string, number>()
   const isAbove = (target: EventTarget) =>
@@ -218,6 +226,10 @@ export const createMirror = (options: {
     domListened.set(target as Node, dom)
     dom.set(type, Math.max(0, (dom.get(type) ?? 0) + delta))
     countNatives(target as Node, natives, delta)
+    if (HOVER_TYPES.includes(type)) {
+      if (HOVER_TYPES.some(hover => (dom.get(hover) ?? 0) > 0)) hoverListeners.add(target as Node)
+      else hoverListeners.delete(target as Node)
+    }
   }
   trackers.set(document, track)
 
@@ -346,6 +358,62 @@ export const createMirror = (options: {
       mutations.flushMutations()
     })
   }
+  // HOVER DURING A PRESS
+  // While a button is held, GPUI sends the press's moves only to the pressed
+  // element, and no enter or leave to what the pointer crosses. A browser
+  // keeps hovering (Pixel Art paints the cells a drag enters), so the mirror
+  // does it: each captured move is hit-tested against the elements listening
+  // for hover, where GPUI last painted them, and the browser's mouseout,
+  // mouseleave, mouseover and mouseenter fire as the topmost one changes.
+  // GPUI's own late copies, after the release, are skipped.
+  let hovered: Element | undefined
+  const told = new Map<Node, 'mouseEnter' | 'mouseLeave'>()
+  let painted: { epoch: number; boxes: ReadonlyMap<number, { x: number; y: number; width: number; height: number }> } | undefined
+  const paintedBounds = (): ((id: number) => { x: number; y: number; width: number; height: number } | null) => {
+    if (options.allBounds === undefined) return id => options.boundsOf!(id)
+    if (painted?.epoch !== layoutEpoch) painted = { epoch: layoutEpoch, boxes: options.allBounds() }
+    const boxes = painted.boxes
+    return id => boxes.get(id) ?? null
+  }
+  const hoverTarget = (x: number, y: number): Element | undefined => {
+    const boundsOf = paintedBounds()
+    let found: Element | undefined
+    for (const node of hoverListeners) {
+      const id = ids.get(node)
+      const box = id === undefined || !node.isConnected ? null : boundsOf(id)
+      if (box === null || x < box.x || x > box.x + box.width || y < box.y || y > box.y + box.height) continue
+      // The innermost wins; between unrelated ones, the later in the document (painted on top).
+      if (found === undefined || found.contains(node) ||
+        (!node.contains(found) && (found.compareDocumentPosition(node) & 4) !== 0)) found = node as Element
+    }
+    return found
+  }
+  const ancestry = (element: Element | undefined) => {
+    const chain: Array<Element> = []
+    for (let at = element; at !== undefined && at !== null && at !== document.documentElement; at = at.parentElement ?? undefined) chain.push(at)
+    return chain
+  }
+  const hoverTo = (next: Element | undefined, init: MouseEventInit) => {
+    const previous = hovered
+    if (next === previous) return
+    hovered = next
+    const was = ancestry(previous)
+    const now = ancestry(next)
+    const Mouse = W['MouseEvent']!
+    previous?.dispatchEvent(new Mouse('mouseout', { ...init, relatedTarget: next ?? null }))
+    for (const element of was) {
+      if (now.includes(element)) continue
+      element.dispatchEvent(new Mouse('mouseleave', { ...init, bubbles: false, relatedTarget: next ?? null }))
+      told.set(element as unknown as Node, 'mouseLeave')
+    }
+    next?.dispatchEvent(new Mouse('mouseover', { ...init, relatedTarget: previous ?? null }))
+    for (const element of now.slice().reverse()) {
+      if (was.includes(element)) continue
+      element.dispatchEvent(new Mouse('mouseenter', { ...init, bubbles: false, relatedTarget: previous ?? null }))
+      told.set(element as unknown as Node, 'mouseEnter')
+    }
+  }
+
   const toDom = (node: Node, event: EventPayload) => {
     // GPUI's modifiers ride on every key and mouse event (cmd is the platform
     // key: ⌘ on macOS, so `metaKey`, as a browser has it).
@@ -372,6 +440,9 @@ export const createMirror = (options: {
     switch (event.eventType) {
       case 'mouseDown':
         if (listens(node, 'dragstart')) press = { node, x: event.x ?? 0, y: event.y ?? 0 }
+        // GPUI has already told the DOM the pointer is over what it pressed.
+        told.clear()
+        hovered = hoverListeners.size > 0 ? (node as Element) : undefined
         break
       case 'mouseMove':
         if (press !== undefined && drag === undefined && event.pressedButton === 0 &&
@@ -389,9 +460,13 @@ export const createMirror = (options: {
           target?.dispatchEvent(dragEvent('dragover', init))
           return
         }
+        if (pressed !== undefined && event.pressedButton != null && options.boundsOf !== undefined && hoverListeners.size > 0) {
+          hoverTo(hoverTarget(event.x ?? 0, event.y ?? 0), init)
+        } else told.clear()
         break
       case 'mouseUp':
         press = undefined
+        hovered = undefined
         if (drag !== undefined) {
           inputAt = performance.now()
           dragEndedAt = inputAt
@@ -460,6 +535,11 @@ export const createMirror = (options: {
         return
       }
       case 'mouseEnter': case 'mouseLeave': {
+        // Already told during the press (HOVER DURING A PRESS).
+        if (told.get(node) === event.eventType) {
+          told.delete(node)
+          return
+        }
         const enter = event.eventType === 'mouseEnter'
         node.dispatchEvent(new W['MouseEvent']!(enter ? 'mouseenter' : 'mouseleave', { ...init, bubbles: false }))
         node.dispatchEvent(new W['MouseEvent']!(enter ? 'mouseover' : 'mouseout', init))
@@ -510,6 +590,23 @@ export const createMirror = (options: {
     })
     else unregisterEventHandler(eventHandlers, id, native)
     mutations.setEventListener(id, native, on)
+  }
+
+  // LAYOUT EPOCH
+  // Bumped by any change that can move things: structure, text, and styles
+  // other than paint (colours, shadows, opacity). A drag that only recolours
+  // cells leaves it alone, so bounds read once stay good (HOVER DURING A PRESS).
+  let layoutEpoch = 0
+  const layoutShapes = new Map<number, string>()
+  const PAINT_ONLY = new Set(['backgroundColor', 'background', 'color', 'opacity', 'boxShadow', 'borderColor', 'cursor'])
+  const setStyle = (id: number, style: StyleDesc) => {
+    sentBoxes.set(id, style)
+    const shape = JSON.stringify(style, (key, value) => PAINT_ONLY.has(key) ? undefined : value)
+    if (layoutShapes.get(id) !== shape) {
+      layoutShapes.set(id, shape)
+      layoutEpoch++
+    }
+    mutations.setStyle(id, style)
   }
 
   // STYLE
@@ -605,7 +702,7 @@ export const createMirror = (options: {
       if (box === null || box.width === aspect.width) continue
       aspect.width = box.width
       aspect.height = Math.round((box.width / aspect.ratio) * 100) / 100
-      mutations.setStyle(id, styleOf(node))
+      setStyle(id, styleOf(node))
       changed = true
     }
     if (changed) mutations.flushMutations()
@@ -624,13 +721,11 @@ export const createMirror = (options: {
   const syncProps = (id: number, node: Node) => {
     if (node.nodeType === 3) {
       mutations.setText(id, textOf(node))
-      mutations.setStyle(id, styleOf(node))
+      setStyle(id, styleOf(node))
       return
     }
     const element = node as Element
-    const style = styleOf(node)
-    sentBoxes.set(id, style)
-    mutations.setStyle(id, style)
+    setStyle(id, styleOf(node))
     // Accessibility travels as gpuix's universal props.
     for (const name of ['role', 'aria-label', 'aria-description', 'aria-expanded', 'aria-selected', 'aria-level']) {
       const value = element.getAttribute(name)
@@ -798,8 +893,7 @@ export const createMirror = (options: {
       if (pressed?.id === id && node !== undefined && node.parentNode === null) {
         pressed.held = true
         if (debug) process.stderr.write(`foldkit-native: hold ${id}\n`)
-        sentBoxes.set(id, HELD)
-        mutations.setStyle(id, HELD)
+        setStyle(id, HELD)
         continue
       }
       if (node !== undefined && (node.parentNode === null || nativeType(node) === undefined)) forget(node)
@@ -841,6 +935,7 @@ export const createMirror = (options: {
   const observer = new (window as unknown as { MutationObserver: typeof MutationObserver }).MutationObserver(records => {
     const started = performance.now()
     inlineRows = new WeakMap()
+    if (records.some(record => record.type !== 'attributes')) layoutEpoch++
     created = 0
     const parents = new Set<Node>()
     const styled = new Set<Node>()

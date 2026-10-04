@@ -719,3 +719,93 @@ describe('keys: one keystroke, one keydown', () => {
     expect(seen).toHaveLength(3)
   })
 })
+
+describe('hover during a press', () => {
+  // While a button is held GPUI sends the moves only to the pressed element,
+  // and no enter or leave to what the pointer crosses. The mirror hovers as a
+  // browser does, from where GPUI painted the elements listening for it.
+  const strip = async () => {
+    const { container, gpui } = await setup()
+    const wrapper = el('div')
+    const cells = [el('div', '0'), el('div', '1'), el('div', '2')]
+    wrapper.append(...cells)
+    container.appendChild(wrapper)
+    const seen: Array<string> = []
+    const name = (node: EventTarget) => node === wrapper ? 'wrapper' : (node as Element).textContent!
+    wrapper.addEventListener('mouseleave', event => seen.push(`mouseleave@${name(event.target!)}`))
+    for (const cell of cells) {
+      for (const type of ['mousedown', 'mouseenter', 'mouseover', 'mouseout', 'mouseleave']) {
+        cell.addEventListener(type, event => {
+          if (event.target === cell) seen.push(`${type}@${name(cell)}`)
+        })
+      }
+    }
+    await mounted.settle()
+    gpui.setBounds(mounted.idOf(wrapper), { x: 0, y: 0, width: 300, height: 100 })
+    cells.forEach((cell, i) => gpui.setBounds(mounted.idOf(cell), { x: i * 100, y: 0, width: 100, height: 100 }))
+    const at = (x: number, y = 50) => ({ x, y })
+    return { cells, seen, at }
+  }
+
+  test('a held press crossing elements fires out, leave, over and enter, as the pointer goes', async () => {
+    const { cells, seen, at } = await strip()
+    mounted.send(cells[0]!, { eventType: 'mouseDown', ...at(50), button: 0, clickCount: 1 })
+    // GPUI's moves all go to the pressed element.
+    mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(60), pressedButton: 0 })
+    mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(150), pressedButton: 0 })
+    mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(250), pressedButton: 0 })
+    expect(seen).toEqual([
+      'mousedown@0',
+      'mouseout@0', 'mouseleave@0', 'mouseover@1', 'mouseenter@1',
+      'mouseout@1', 'mouseleave@1', 'mouseover@2', 'mouseenter@2',
+    ])
+    // Out of the strip altogether: the wrapper is left too.
+    seen.length = 0
+    mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(150, 400), pressedButton: 0 })
+    expect(seen).toEqual(['mouseout@2', 'mouseleave@2', 'mouseleave@wrapper'])
+  })
+
+  test("GPUI's own enter and leave after the release aren't fired twice", async () => {
+    const { cells, seen, at } = await strip()
+    mounted.send(cells[0]!, { eventType: 'mouseDown', ...at(50), button: 0, clickCount: 1 })
+    mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(250), pressedButton: 0 })
+    mounted.send(cells[0]!, { eventType: 'mouseUp', ...at(250), button: 0, clickCount: 1 })
+    seen.length = 0
+    // What GPUI sends once the button is up and it hovers again.
+    mounted.send(cells[0]!, { eventType: 'mouseLeave', ...at(250), hovered: false })
+    mounted.send(cells[2]!, { eventType: 'mouseEnter', ...at(250), hovered: true })
+    expect(seen).toEqual([])
+    // Later ones are real.
+    mounted.send(cells[2]!, { eventType: 'mouseLeave', ...at(350), hovered: false })
+    expect(seen).toEqual(['mouseleave@2', 'mouseout@2'])
+  })
+
+  test('bounds are read once per layout: a drag that only recolours reads them once', async () => {
+    const { cells, at } = await strip()
+    // Painting, as Pixel Art does: entering a cell recolours it.
+    for (const cell of cells) cell.addEventListener('mouseenter', () => { cell.style.backgroundColor = 'red' })
+    mounted.send(cells[0]!, { eventType: 'mouseDown', ...at(50), button: 0, clickCount: 1 })
+    await mounted.settle()
+    const before = mounted.gpui.treeReads()
+    for (const x of [120, 150, 220, 250, 280]) {
+      mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(x), pressedButton: 0 })
+      await mounted.settle()
+    }
+    expect(cells.map(cell => cell.style.backgroundColor)).toEqual(['', 'red', 'red'])
+    expect(mounted.gpui.treeReads() - before).toBe(1)
+    // Something that can move things (a new element) means reading them again.
+    cells[2]!.after(el('div', 'new'))
+    await mounted.settle()
+    mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(150), pressedButton: 0 })
+    expect(mounted.gpui.treeReads() - before).toBe(2)
+  })
+
+  test('without a press, moves hover nothing: GPUI does that itself', async () => {
+    const { cells, seen, at } = await strip()
+    mounted.send(cells[0]!, { eventType: 'mouseDown', ...at(50), button: 0, clickCount: 1 })
+    mounted.send(cells[0]!, { eventType: 'mouseUp', ...at(50), button: 0, clickCount: 1 })
+    seen.length = 0
+    mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(150) })
+    expect(seen).toEqual([])
+  })
+})

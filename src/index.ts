@@ -51,6 +51,22 @@ export type NativeOptions = WindowOptions & AttachOptions & {
   onFrame?: (frame: FrameTiming) => void
 }
 
+type Box = { x: number; y: number; width: number; height: number }
+type TreeNode = { id: number; bounds?: Box; children?: Array<TreeNode> }
+
+/** Every element's last painted bounds, from gpuix's automation tree (one
+ *  call, where getElementBounds walks the whole tree for each element). */
+const paintedBounds = (json: string): ReadonlyMap<number, Box> => {
+  const boxes = new Map<number, Box>()
+  const walk = (node: TreeNode) => {
+    if (node.bounds !== undefined) boxes.set(node.id, node.bounds)
+    for (const child of node.children ?? []) walk(child)
+  }
+  const root = JSON.parse(json) as TreeNode | null
+  if (root !== null) walk(root)
+  return boxes
+}
+
 /** Gives FoldKit a DOM drawn by an already-initialised gpuix renderer: the
  *  live window (`mountNative`) or gpuix's offscreen `TestRenderer` in tests.
  *  Returns the container to hand to FoldKit's `Runtime.makeElement`. */
@@ -77,11 +93,13 @@ export const attachDom = (renderer: NativeRenderer, options: AttachOptions = {})
   const mutations = createMutationQueue(renderer, ids => {
     for (const id of ids) unregisterEventHandlers(eventHandlers, id)
   })
+  const tree = (renderer as { getAutomationTree?: () => string }).getAutomationTree
   const mirror = createMirror({
     window,
     mutations,
     eventHandlers,
     ...(renderer.getElementBounds === undefined ? {} : { boundsOf: (id: number) => renderer.getElementBounds!(id) }),
+    ...(tree === undefined ? {} : { allBounds: () => paintedBounds(tree.call(renderer)) }),
     ...(renderer.getScrollOffset === undefined ? {} : { scrollOffsetOf: (id: number) => renderer.getScrollOffset!(id) }),
     ...(renderer.scrollTo === undefined ? {} : { scrollTo: (id: number, x: number, y: number) => renderer.scrollTo!(id, x, y) }),
     ...(onSynced === undefined ? {} : { onSynced }),

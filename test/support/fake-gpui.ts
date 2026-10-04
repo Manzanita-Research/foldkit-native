@@ -48,7 +48,28 @@ export const createFakeGpui = () => {
     nodes.delete(id)
   }
 
-  const renderer: NativeRenderer = {
+  /** As gpuix reports bounds: from the content corner (moved by the left/top
+   *  border and padding), without the borders in the size. */
+  const reported = (id: number) => {
+    const box = bounds.get(id)
+    if (box === undefined) return null
+    const style = (nodes.get(id)?.style ?? {}) as Record<string, number | undefined>
+    const [left, top, right, bottom] = ['Left', 'Top', 'Right', 'Bottom'].map(side => style[`border${side}Width`] ?? 0) as [number, number, number, number]
+    return {
+      x: box.x + left + (style['paddingLeft'] ?? 0),
+      y: box.y + top + (style['paddingTop'] ?? 0),
+      width: box.width - left - right,
+      height: box.height - top - bottom,
+    }
+  }
+  let treeReads = 0
+  type TreeNode = { id: number; bounds?: { x: number; y: number; width: number; height: number }; children?: Array<TreeNode> }
+  const automation = (id: number): TreeNode => {
+    const box = reported(id)
+    const { children } = node(id)
+    return { id, ...(box === null ? {} : { bounds: box }), ...(children.length === 0 ? {} : { children: children.map(automation) }) }
+  }
+  const renderer: NativeRenderer & { getAutomationTree: () => string } = {
     applyBatch: (json: string) => {
       const ops = JSON.parse(json) as Array<[string, ...Array<unknown>]>
       batches.push(ops)
@@ -86,19 +107,12 @@ export const createFakeGpui = () => {
       }
       return freed
     },
-    // As gpuix reports bounds: from the content corner (moved by the left/top
-    // border and padding), without the borders in the size.
-    getElementBounds: (id: number) => {
-      const box = bounds.get(id)
-      if (box === undefined) return null
-      const style = (nodes.get(id)?.style ?? {}) as Record<string, number | undefined>
-      const [left, top, right, bottom] = ['Left', 'Top', 'Right', 'Bottom'].map(side => style[`border${side}Width`] ?? 0) as [number, number, number, number]
-      return {
-        x: box.x + left + (style['paddingLeft'] ?? 0),
-        y: box.y + top + (style['paddingTop'] ?? 0),
-        width: box.width - left - right,
-        height: box.height - top - bottom,
-      }
+    getElementBounds: (id: number) => reported(id),
+    /** gpuix's tree JSON with last-paint bounds (what its automation reads),
+     *  reported the same way. */
+    getAutomationTree: () => {
+      treeReads++
+      return JSON.stringify(root === undefined ? null : automation(root))
     },
     getScrollOffset: (id: number) => offsets.get(id) ?? null,
     scrollTo: (id: number, x: number, y: number) => {
@@ -131,6 +145,8 @@ export const createFakeGpui = () => {
     ops: () => batches.flat(),
     /** Where "GPUI painted" an element (its border box), for hit tests. */
     setBounds: (id: number, box: { x: number; y: number; width: number; height: number }) => bounds.set(id, box),
+    /** How many times the whole tree's bounds were read (getAutomationTree). */
+    treeReads: () => treeReads,
     /** Scrolls an element "in GPUI", as a wheel would: gpuix's negative offsets. */
     setScrollOffset: (id: number, x: number, y: number) => offsets.set(id, [x, y]),
     /** Every `scrollTo` the mirror asked GPUI for. */

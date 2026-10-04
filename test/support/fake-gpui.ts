@@ -63,9 +63,11 @@ export const createFakeGpui = () => {
     const style = (nodes.get(id)?.style ?? {}) as Record<string, number | undefined>
     const [left, top, right, bottom] = ['Left', 'Top', 'Right', 'Bottom'].map(side => style[`border${side}Width`] ?? 0) as [number, number, number, number]
     const [scrollX, scrollY] = scrolls(id) ? offsets.get(id) ?? [0, 0] : [0, 0]
+    // A single-line input's editor shares its vertical padding out evenly.
+    const down = nodes.get(id)?.type === 'input' ? ((style['paddingTop'] ?? 0) - (style['paddingBottom'] ?? 0)) / 2 : style['paddingTop'] ?? 0
     return {
       x: box.x + left + (style['paddingLeft'] ?? 0) + scrollX,
-      y: box.y + top + (style['paddingTop'] ?? 0) + scrollY,
+      y: box.y + top + down + scrollY,
       width: box.width - left - right,
       height: box.height - top - bottom,
     }
@@ -81,11 +83,11 @@ export const createFakeGpui = () => {
     return [-Math.max(0, right - own.width), -Math.max(0, bottom - own.height)]
   }
   let treeReads = 0
-  type TreeNode = { id: number; bounds?: { x: number; y: number; width: number; height: number }; children?: Array<TreeNode> }
+  type TreeNode = { id: number; type: string; bounds?: { x: number; y: number; width: number; height: number }; children?: Array<TreeNode> }
   const automation = (id: number): TreeNode => {
     const box = reported(id)
-    const { children } = node(id)
-    return { id, ...(box === null ? {} : { bounds: box }), ...(children.length === 0 ? {} : { children: children.map(automation) }) }
+    const { type, children } = node(id)
+    return { id, type, ...(box === null ? {} : { bounds: box }), ...(children.length === 0 ? {} : { children: children.map(automation) }) }
   }
   const renderer: NativeRenderer & { getAutomationTree: () => string } = {
     applyBatch: (json: string) => {

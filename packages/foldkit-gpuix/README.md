@@ -101,10 +101,52 @@ what a browser's does, or is absent or says so. None is a silent stand-in.
 | `localStorage` | **Behaves, in a file** per `appId`, written through on every change (Durable data, above). Without an `appId` it's in memory, and the first write says so once | Pixel Art and Kanban save there. In memory, throwing would break unmodified apps |
 | `getSelection()` | **Behaves.** GPUI's own selection: `toString()`, `rangeCount`, `removeAllRanges()` | GPUI owns text selection |
 | `matchMedia` | **Behaves, per call.** Sizes (`min-width`, `width < …`), `hover`, `pointer: fine` and `orientation`, against the window as it is (`src/media.ts`, shared with the sheet). `prefers-reduced-motion` and `prefers-color-scheme: dark` don't match, and anything else doesn't either. Its listeners never fire, but `resize` does | Re-query on `resize` |
-| `ResizeObserver`, `IntersectionObserver` | **Absent** (`typeof … === 'undefined'`) | Both need layout read back every frame, and a live gpuix window can't afford that yet (FKN-29). @foldkit/ui's virtual list and `Dom`'s element-movement wait use `ResizeObserver` and fail loudly |
+| `ResizeObserver`, `IntersectionObserver` | **Absent** (`typeof … === 'undefined'`) | Not built yet. The per-frame layout they need is there now (see Geometry below), so they're next. @foldkit/ui's virtual list and `Dom`'s element-movement wait use `ResizeObserver` and fail loudly |
 | `getComputedStyle` | **Partial.** Inline style only | There's no cascade engine: the flat sheet (`src/sheet.ts`) styles elements, and its rules aren't read back |
 | `document.startViewTransition` | **Absent** | FoldKit feature-detects it and renders plainly |
-| `getBoundingClientRect` | **Behaves**, from where GPUI last painted (the border box) | gpuix reports content-corner boxes, and a scroll area's own box moved by its scroll; the host undoes both. On a live window it's a synchronous read (FKN-29) |
+| `getBoundingClientRect`, `offsetWidth`, `clientHeight`… | **Behaves, from the last layout GPUI gave** (the border box). See Geometry below | A browser lays out on demand. GPUI lays out when it paints, and asking it can wait |
+| `document.elementsFromPoint`, `elementFromPoint` | **Behaves, from the last layout GPUI gave.** Topmost first, as GPUI paints: children over parents, later siblings over earlier, a box re-homed under its containing block over that block's other children, anchored elements over everything. Skips `pointer-events: none` (inherited), `visibility: hidden` and `display: none`. A scroll area or `overflow: hidden` clips what's inside it. Then `<html>`. Checked against GPUI's own hit test on Metal | @foldkit/ui's drag and drop finds the drop target with it |
+| `scrollIntoView`, keyboard scrolling | **Behaves, from the last layout GPUI gave**: the nearest scroll area moves until the element shows. With no layout for the element or its area, GPUI's own `scrollIntoView` | |
+| `scrollTop`, `scrollLeft` | **Behaves.** GPUI's offset; the last one known while GPUI isn't answering | |
+
+## Geometry
+
+Where GPUI last painted things answers every layout read (`src/layout.ts`).
+A browser lays out when it's asked. GPUI lays out when it paints, and
+asking it costs:
+
+- gpuix's `getElementBounds` walks the whole native tree per call. The
+  adapter never uses it. It reads the automation tree instead: every box in
+  one call, 5–12 ms per 1,000 elements in a live window on Metal.
+- On Linux, every geometry query (bounds, scroll offsets, the window's size)
+  is a round trip to GPUI's UI thread. It waits up to 2 s, then fails, when
+  the window isn't painting (hidden, minimised, behind a lock screen).
+
+So the layout is read only when someone asks for it, at most once per frame
+GPUI draws. It's read only in the frames after something could have moved it
+(a change, a scroll, a resize), or once it's half a second old. Every query
+is timed: a slow one (over 4 ms) spaces out the next of its kind, so queries
+take at most a quarter of the time. One that fails stops all geometry queries
+for three times what it cost (6 s after a 2 s timeout), doubling up to 30 s,
+and until input shows someone's using the window.
+
+What the APIs return when GPUI has no fresh layout (not painting, or not yet
+painted since a change):
+
+| | Returns |
+|---|---|
+| `getBoundingClientRect` and friends | The box from the last layout GPUI gave. An element that wasn't in it (added since, or never painted) gets zeros, as an unrendered element does in a browser |
+| `elementsFromPoint` | Hits in the last layout. Elements added since aren't hit; elements removed since are left out |
+| `scrollIntoView` | Scrolls by the last layout; with none, asks GPUI to (a command: it never waits) |
+| `scrollTop` | The last offset GPUI gave, or the one the app last set |
+| `resize`, `@media` | The window keeps its last size until GPUI answers again |
+
+The cost of finding out is one blocked frame: the first query after GPUI
+stops answering waits out gpuix's 2 s. After that, frames stay under budget
+(`test/window.test.ts` checks both in a real window, with Linux's timeouts
+reproduced). Only gpuix can remove that one frame, with a way to read the
+last painted layout that never waits (drafted as an upstream ask for Jem in
+FKN-29's PR; nothing is filed).
 
 ## Focus
 
@@ -194,7 +236,11 @@ upstream asks in the M0 memo.
   field was disabled) is refused: no `input`, and the editor gets the value
   back.
 - **Bounds.** Boxes come from the content corner, and a scroll area's box
-  moves with its own scroll offset.
+  moves with its own scroll offset. A single-line input's box comes down
+  from its top border plus half its top padding less its bottom padding
+  (its editor shares the vertical padding out evenly), not from the whole
+  top padding. On Linux, bounds queries wait for a painted frame, up to 2 s
+  (see Geometry).
 - **Box shadows paint under the whole box.** CSS clips an outer shadow to
   outside the border box, but GPUI paints it under the box too, so a focus
   ring on a field with no background filled the field (Metal). A box with a

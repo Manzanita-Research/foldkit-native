@@ -35,6 +35,8 @@ export interface Host {
   /** Whether the focused element shows its focus (`:focus-visible`). */
   focusVisible(): boolean
   bounds(element: NativeElement): { x: number; y: number; width: number; height: number }
+  /** Every element painted under the point, topmost first. */
+  elementsFromPoint(x: number, y: number): Array<NativeElement>
   scrollIntoView(element: NativeElement): void
   scrollOffset(element: NativeElement): [number, number]
   scrollTo(element: NativeElement, x: number, y: number): void
@@ -705,6 +707,9 @@ export class NativeDocument extends NativeNode {
   querySelectorAll(selector: string) { return querySelectorAll(this.documentElement, selector, false, true) }
   getElementsByTagName(tag: string) { return this.querySelectorAll(tag) }
   hasFocus() { return true }
+  /** Where GPUI last painted things (host.ts, layout.ts): topmost first. */
+  elementsFromPoint(x: number, y: number): Array<NativeElement> { return this.host?.elementsFromPoint(x, y) ?? [] }
+  elementFromPoint(x: number, y: number): NativeElement | null { return this.elementsFromPoint(x, y)[0] ?? null }
   // Not supported: FoldKit feature-detects these and falls back.
   startViewTransition: undefined
 }
@@ -766,8 +771,10 @@ export class NativeWindow extends NativeEventTarget {
   getComputedStyle(element: NativeElement) {
     return { getPropertyValue: (name: string) => element.inline.get(name) ?? '' } as unknown as CSSStyleDeclaration
   }
+  // The window itself never scrolls (the root element does).
   scrollTo() {}
   scroll() {}
+  scrollBy() {}
   /** GPUI's own selection: its text, and clearing it. */
   getSelection() {
     const host = () => this.document.host

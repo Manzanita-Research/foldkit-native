@@ -140,6 +140,8 @@ export const mountNative = (options: NativeOptions = {}) => {
   const tick = renderer.tick.bind(renderer)
   renderer.tick = () => {
     const running = tick()
+    // Heights from laid-out widths (aspect-ratio); the next tick draws them.
+    dom.mirror.afterLayout()
     if (flushed !== undefined) {
       const now = performance.now()
       onFrame?.({

@@ -121,6 +121,8 @@ export const openMetal = async (id: string, size?: { width: number; height: numb
       await new Promise(resolve => setTimeout(resolve, 0))
     }
     renderer.flush()
+    // Heights from laid-out widths (aspect-ratio), as the live window does each tick.
+    if (dom.mirror.afterLayout()) renderer.flush()
   }
   await settle()
   const out = evidenceDir()

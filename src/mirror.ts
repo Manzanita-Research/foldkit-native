@@ -565,7 +565,51 @@ export const createMirror = (options: {
       style['width'] = '100%'
     }
     Object.assign(style, stateStyles(element, stateRules, customProperty(element)))
+    const aspect = aspectOf(computed)
+    if (aspect === undefined) aspects.delete(node)
+    else {
+      const known = aspects.get(node)
+      if (known?.ratio !== aspect) aspects.set(node, { ratio: aspect })
+      else if (known.height !== undefined) style['height'] = known.height
+    }
     return style as StyleDesc
+  }
+
+  // ASPECT RATIO
+  // gpuix has no aspect-ratio (GPUI's layout engine does; gpuix doesn't pass
+  // it through), so an element with one and an auto height gets its height
+  // from the width GPUI laid it out at: `w-full aspect-square` stays square.
+  // The host calls afterLayout() once GPUI has laid out a frame.
+  const aspects = new Map<Node, { ratio: number; width?: number; height?: number }>()
+  const aspectOf = (computed: Pick<CSSStyleDeclaration, 'getPropertyValue'>): number | undefined => {
+    const height = computed.getPropertyValue('height').trim()
+    if (height !== '' && height !== 'auto') return undefined
+    const match = /(-?[\d.]+)\s*(?:\/\s*(-?[\d.]+))?\s*$/.exec(computed.getPropertyValue('aspect-ratio'))
+    if (match === null) return undefined
+    const ratio = Number(match[1]) / Number(match[2] ?? 1)
+    return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined
+  }
+  /** One correction pass: each aspect-ratio element whose laid-out width
+   *  changed gets its height. True if anything changed (GPUI should lay out
+   *  again); a pass with the same widths changes nothing, so it can't loop. */
+  const afterLayout = (): boolean => {
+    if (options.boundsOf === undefined) return false
+    let changed = false
+    for (const [node, aspect] of aspects) {
+      const id = ids.get(node)
+      if (id === undefined || !node.isConnected) {
+        aspects.delete(node)
+        continue
+      }
+      const box = options.boundsOf(id)
+      if (box === null || box.width === aspect.width) continue
+      aspect.width = box.width
+      aspect.height = Math.round((box.width / aspect.ratio) * 100) / 100
+      mutations.setStyle(id, styleOf(node))
+      changed = true
+    }
+    if (changed) mutations.flushMutations()
+    return changed
   }
 
   /** GPUI has no text-transform, so the text itself is transformed. */
@@ -851,6 +895,9 @@ export const createMirror = (options: {
     nodeFor: (id: number) => nodes.get(id),
     idFor: (node: Node) => ids.get(node),
     /** Window-level keys go to the focused element, like a browser. */
+    /** Call once GPUI has laid out a frame: elements with an aspect-ratio get
+     *  their heights. True if it changed anything (lay out again). */
+    afterLayout,
     windowKey: (event: EventPayload) => {
       if (firstOfPair(event, 'window')) toDom((document.activeElement as Node | null) ?? body, event)
     },

@@ -44,6 +44,18 @@ const findElement = (document: Document, text: string): Element => {
   return innermost
 }
 
+/** Whether GPUI stops a hit at an element with this native style, rather
+ *  than letting it through to what's behind (its ancestors included): gpuix's
+ *  `should_occlude`. `pointerEvents` decides; unset, a fill or an
+ *  absolute/fixed box blocks. */
+export const blocks = (style: Record<string, unknown>): boolean => {
+  if (style['pointerEvents'] === 'none') return false
+  if (style['pointerEvents'] === 'auto') return true
+  if (style['position'] === 'absolute' || style['position'] === 'fixed') return true
+  const fill = style['background'] ?? style['backgroundColor']
+  return fill !== undefined && !/^(transparent|rgba\(.*,\s*0\)|#0000|#00000000)$/.test(String(fill))
+}
+
 export type Headless = Awaited<ReturnType<typeof openHeadless>>
 
 export const openHeadless = async (id: string) => {
@@ -54,15 +66,22 @@ export const openHeadless = async (id: string) => {
   const { gpui, document } = mounted
 
   /** The element and its native twin, walking up to the nearest one that
-   *  listens for `event`, as GPUI's hit test would reach it. */
-  const target = (text: string, event: string) => {
-    let element: Element | null = findElement(document, text)
+   *  listens for `event`, as GPUI's hit test would reach it: an element on
+   *  the way that GPUI lets block hits (see `blocks`) stops it there. */
+  const target = (at: string | Element, event: string) => {
+    const name = typeof at === 'string' ? at : at.className || at.tagName
+    let element: Element | null = typeof at === 'string' ? findElement(document, at) : at
     while (element !== null) {
       const id = mounted.mirror.idFor(element as unknown as Node)
       if (id !== undefined && gpui.node(id).listeners.has(event)) return id
+      // A visually hidden label (sr-only: 1×1) is never where a click lands.
+      const style = id === undefined ? undefined : gpui.node(id).style
+      if (style !== undefined && blocks(style) && !(Number(style['width']) <= 1 && Number(style['height']) <= 1)) {
+        throw new Error(`"${name}": ${element.className || element.tagName} blocks the ${event} in GPUI`)
+      }
       element = element.parentElement
     }
-    throw new Error(`nothing under "${text}" listens for ${event}`)
+    throw new Error(`nothing under "${name}" listens for ${event}`)
   }
 
   return {
@@ -82,8 +101,9 @@ export const openHeadless = async (id: string) => {
     },
     /** The native element showing `text`. */
     native: (text: string) => mounted.nativeOf(findElement(document, text) as unknown as Node),
-    click: async (text: string) => {
-      mounted.send(target(text, 'click'), { eventType: 'click', x: 1, y: 1, button: 0, clickCount: 1 })
+    /** A click on the element showing `text` (or on `element`). */
+    click: async (at: string | Element) => {
+      mounted.send(target(at, 'click'), { eventType: 'click', x: 1, y: 1, button: 0, clickCount: 1 })
       await mounted.settle()
     },
     /** Types into a text field (found by label, placeholder or value), as
@@ -146,9 +166,10 @@ export const openMetal = async (id: string, size?: { width: number; height: numb
     boundsOf,
     /** Text GPUI actually painted this frame. */
     painted: () => renderer.getPaintedText(),
-    /** A click at the element's painted centre, through GPUI's own hit test. */
-    click: async (text: string) => {
-      const box = bounds(text)
+    /** A click at the painted centre of the element showing `text` (or of
+     *  `element`), through GPUI's own hit test. */
+    click: async (at: string | Element) => {
+      const box = typeof at === 'string' ? bounds(at) : boundsOf(at)
       renderer.nativeSimulateClick(box.x + box.width / 2, box.y + box.height / 2)
       await settle()
     },

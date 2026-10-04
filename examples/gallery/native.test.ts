@@ -8,8 +8,8 @@ import { join } from 'node:path'
 
 import { attachDom } from '../../src/index.ts'
 import { createFakeGpui } from '../../test/support/fake-gpui.ts'
-import { METAL } from '../support/harness.ts'
-import { type Entry, Model, init, update, view } from './main'
+import { METAL, blocks } from '../support/harness.ts'
+import { type Entry, Model, init, setLauncher, update, view } from './main'
 
 const css = readFileSync(join(import.meta.dir, 'styles.native.css'), 'utf8')
 const entries: Array<Entry> = Array.from({ length: 10 }, (_, i) => ({
@@ -47,6 +47,33 @@ test('the list is a GPUI scroller', async () => {
   expect(gpui.node(idOf('.scroll')).style).toMatchObject({ overflowY: 'scroll' })
 })
 
+// FKN-12: a filled child (the badge) blocked GPUI's hit test, so a click on
+// it never reached the card. It lets hits through now, as a browser bubbles.
+test("a click on a card's badge opens the example", async () => {
+  const gpui = createFakeGpui()
+  const { dom, settle, idOf } = await open(gpui.renderer)
+  const launched: Array<Array<string>> = []
+  setLauncher(command => launched.push(command))
+  try {
+    const native = (element: Element) => gpui.node(dom.mirror.idFor(element as unknown as Node)!)
+    const badge = dom.window.document.querySelector('.badge')! as unknown as Element
+    expect(native(badge).style).toMatchObject({ backgroundColor: 'rgba(255, 255, 255, .07)', pointerEvents: 'none' })
+    // As GPUI's hit test goes: up from the badge to the card listening for the click.
+    let at = badge
+    while (!native(at).listeners.has('click')) {
+      expect(blocks(native(at).style)).toBe(false)
+      at = at.parentElement!
+    }
+    expect(at.getAttribute('aria-label')).toBe('Open Example 0')
+    const { createRendererState } = await import('@gpuix/native/host')
+    createRendererState(gpui.renderer).dispatch({ eventType: 'click', elementId: native(at).id, x: 1, y: 1, button: 0, clickCount: 1 } as never)
+    await settle()
+    expect(launched).toHaveLength(1)
+  } finally {
+    setLauncher(() => {})
+  }
+})
+
 describe.skipIf(!METAL)('Metal, offscreen', () => {
   test('the wheel scrolls the list', async () => {
     const { TestRenderer } = await import('@gpuix/native/testing')
@@ -64,5 +91,22 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     renderer.flush()
     renderer.captureScreenshot(join(out, 'gallery-scrolled.png'))
     expect(last()).toBeLessThan(before - 200)
+  })
+
+  test("a click on a card's badge, through GPUI's hit test, opens the example", async () => {
+    const { TestRenderer } = await import('@gpuix/native/testing')
+    const renderer = new TestRenderer({ width: 960, height: 760 })
+    const { settle, idOf } = await open(renderer)
+    renderer.flush()
+    const launched: Array<Array<string>> = []
+    setLauncher(command => launched.push(command))
+    try {
+      const badge = renderer.getElementBounds(idOf('.badge'))!
+      renderer.nativeSimulateClick(badge.x + badge.width / 2, badge.y + badge.height / 2)
+      await settle()
+      expect(launched).toHaveLength(1)
+    } finally {
+      setLauncher(() => {})
+    }
   })
 })

@@ -114,6 +114,101 @@ describe.skipIf(!metal)('Metal, offscreen', () => {
     expect(dragAcross('.note')).toContain('Selectable')
   })
 
+  // CLICK-THROUGH (FKN-12)
+  // GPUI lets an element that paints a fill block hits to everything behind
+  // it, its own ancestors included; in a browser a click on a child bubbles
+  // to its parent. So a filled child of an element listening for the pointer
+  // lets hits through to it, keeping its own :hover.
+
+  /** A card listening for clicks, with filled children: a plain chip, a chip
+   *  with its own :hover, and a selectable note. */
+  const clickableCard = async () => {
+    const renderer = await testRenderer(400, 240)
+    const css = `body { margin: 0; height: 100%; background-color: #ffffff; font-family: system-ui; }
+      .card { display: flex; flex-direction: column; gap: 10px; width: 300px; padding: 20px; background-color: #333333; }
+      .card:hover { background-color: #00ff00; }
+      .chip { width: 80px; height: 30px; background-color: #ff0000; }
+      .hot { background-color: #0000ff; }
+      .hot:hover { background-color: #ffff00; }
+      .note { margin: 0; font-size: 20px; color: #ffffff; background-color: #222222; user-select: text; }`
+    const dom = attachDom(renderer, { css })
+    cleanups.push(async () => {
+      dom.detach()
+      await dom.window.happyDOM.abort()
+      dom.window.close()
+    })
+    const document = dom.window.document
+    document.body.querySelector('#app')!.outerHTML =
+      '<div class="card"><div class="chip"></div><div class="chip hot"></div><p class="note">Selectable note</p></div>'
+    const clicks: Array<string> = []
+    document.querySelector('.card')!.addEventListener('click', event => clicks.push((event.target as unknown as Element).className))
+    for (let i = 0; i < 3; i++) {
+      await dom.window.happyDOM.waitUntilComplete()
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+    renderer.flush()
+    const centre = (selector: string) => {
+      const box = renderer.getElementBounds(dom.mirror.idFor(document.querySelector(selector) as unknown as Node)!)!
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2, box }
+    }
+    /** How many pixels of this frame are each colour. */
+    const count = (name: string, colours: Record<string, string>) => {
+      const path = join(out, `click-through-${name}.png`)
+      renderer.captureScreenshot(path)
+      const image = readPng(path)
+      const counts = Object.fromEntries(Object.keys(colours).map(key => [key, 0]))
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          const pixel = image.pixel(x, y)
+          for (const [key, colour] of Object.entries(colours)) if (near(pixel, rgb(colour), 8)) counts[key]!++
+        }
+      }
+      return counts
+    }
+    return { renderer, clicks, centre, count }
+  }
+
+  test("a click on a filled child reaches its parent's listener, as the DOM bubbles it", async () => {
+    const { renderer, clicks, centre } = await clickableCard()
+    for (const selector of ['.chip', '.hot', '.note']) {
+      const { x, y } = centre(selector)
+      renderer.nativeSimulateClick(x, y)
+      renderer.flush()
+    }
+    // GPUI hits the card, so the DOM event's target is the card, as for any
+    // child that paints nothing.
+    expect(clicks).toHaveLength(3)
+  })
+
+  test("over a filled child, the parent's :hover applies, and the child's own :hover still does", async () => {
+    const { renderer, centre, count } = await clickableCard()
+    const colours = { cardHover: '#00ff00', chipHover: '#ffff00' }
+    expect(count('rest', colours)).toEqual({ cardHover: 0, chipHover: 0 })
+    renderer.nativeSimulateMouseMove(centre('.chip').x, centre('.chip').y)
+    const overChip = count('over-chip', colours)
+    renderer.nativeSimulateMouseMove(centre('.hot').x, centre('.hot').y)
+    const overHot = count('over-hot', colours)
+    console.log('click-through hover on Metal:', JSON.stringify({ overChip, overHot }))
+    expect(overChip.cardHover).toBeGreaterThan(0)
+    expect(overChip.chipHover).toBe(0)
+    expect(overHot.cardHover).toBeGreaterThan(0)
+    expect(overHot.chipHover).toBeGreaterThan(0)
+  })
+
+  test('a selectable note inside a clickable card: a drag selects its text, and clicks reach the card', async () => {
+    const { renderer, clicks, centre } = await clickableCard()
+    const { box, x, y } = centre('.note')
+    renderer.clearSelection()
+    expect(renderer.dragSelect(box.x + 1, y, box.x + box.width - 1, y)).toContain('Selectable')
+    renderer.clearSelection()
+    renderer.flush()
+    renderer.nativeSimulateClick(x, y)
+    renderer.flush()
+    // The drag pressed and released on the card, so it was a click too, as in
+    // a browser (gpuix delivers it with the next native input), then the click.
+    expect(clicks).toHaveLength(2)
+  })
+
   /** An input and a tabindex div with :focus-visible colours, focused through
    *  GPUI (a click, then focusElement): whether GPUI moved focus, and how many
    *  red (focus-visible) and grey (resting) pixels it painted each time. */

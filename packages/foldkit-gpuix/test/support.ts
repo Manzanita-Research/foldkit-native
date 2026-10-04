@@ -79,6 +79,7 @@ export const mountHeadless = (options: AttachOptions = {}) => {
   const settle = async () => {
     for (let i = 0; i < 4; i++) {
       await new Promise(resolve => setTimeout(resolve, 0))
+      host.frame()
       host.flush()
       // The fake "draws" each batch as it's applied.
       host.drawn()
@@ -176,6 +177,7 @@ export const openMetal = async (name: string, size: { width: number; height: num
   const settle = async () => {
     for (let i = 0; i < 4; i++) {
       await new Promise(resolve => setTimeout(resolve, 0))
+      host.frame()
       host.flush()
       renderer.flush()
       host.drawn()

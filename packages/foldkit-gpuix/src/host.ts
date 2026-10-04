@@ -470,6 +470,23 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     dirty.add(body)
     schedule()
   }
+  // FRAMES: animation-frame callbacks run before GPUI draws, as a browser's
+  // do before it paints, and their changes go into that same frame.
+  let frameCallbacks: Array<() => void> = []
+  let frameTimer: ReturnType<typeof setTimeout> | undefined
+  const nextFrame = (callback: () => void) => {
+    frameCallbacks.push(callback)
+    // No frame loop driving (headless, a test): a 60 Hz stand-in.
+    frameTimer ??= setTimeout(frame, 16)
+  }
+  const frame = () => {
+    if (frameTimer !== undefined) clearTimeout(frameTimer)
+    frameTimer = undefined
+    const due = frameCallbacks
+    frameCallbacks = []
+    for (const callback of due) callback()
+    if (scheduled) sync()
+  }
   const drawn = () => {
     watchSize()
     if (drawTimer !== undefined) clearTimeout(drawTimer)
@@ -963,7 +980,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     clearSelection: () => renderer.clearSelection?.(),
     nextFrame: callback => {
       if (detached) return
-      afterDraw(callback)
+      nextFrame(callback)
     },
   }
 
@@ -1023,6 +1040,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     flush: sync,
     /** GPUI drew a frame: work waiting for one runs (the frame loop and the
      *  tests call this after the renderer draws). */
+    /** GPUI is about to draw: animation frames run, and what they change
+     *  is synced into this frame (the frame loop and the tests call this). */
+    frame,
     drawn: () => {
       drawn()
       if (scheduled) sync()
@@ -1045,6 +1065,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       if (drawTimer !== undefined) clearTimeout(drawTimer)
       drawTimer = undefined
       drawWaiters = []
+      if (frameTimer !== undefined) clearTimeout(frameTimer)
+      frameTimer = undefined
+      frameCallbacks = []
       dirty.clear()
       autofocus = []
       renderer.setWindowKeyEvents?.(false, false, binding.windowKeyEventId)

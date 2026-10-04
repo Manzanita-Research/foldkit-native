@@ -38,7 +38,7 @@ export interface Host {
   /** The text GPUI has selected, and clearing it (GPUI owns selection). */
   selectedText(): string | null
   clearSelection(): void
-  /** Runs `callback` after GPUI draws its next frame (requestAnimationFrame). */
+  /** Runs `callback` before GPUI draws its next frame (requestAnimationFrame). */
   nextFrame(callback: () => void): void
 }
 
@@ -729,7 +729,7 @@ export class NativeWindow extends NativeEventTarget {
       empty: () => host()?.clearSelection(),
     }
   }
-  // ANIMATION FRAMES: after GPUI draws its next frame.
+  // ANIMATION FRAMES: before GPUI draws its next frame.
   #frames = new Map<number, (at: number) => void>()
   #nextFrame = 1
   requestAnimationFrame(callback: (at: number) => void) {

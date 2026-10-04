@@ -37,7 +37,7 @@ what a browser's does, or is absent or says so. None is a silent stand-in.
 | API | Here | Why |
 |---|---|---|
 | `MutationObserver` | **Behaves.** childList, attributes (filter, old values), characterData, subtree; records batched into a microtask | FoldKit's `Dom.showModal` keeps everything outside a dialog inert with one |
-| `requestAnimationFrame` | **Behaves.** Runs after GPUI draws its next frame (16 ms timer when no host); `cancelAnimationFrame` works; `detach` drops pending ones | FoldKit renders and `Render.afterPaint` count frames |
+| `requestAnimationFrame` | **Behaves.** Runs before GPUI draws its next frame, and what it changes goes into that frame (a 16 ms timer when nothing drives frames); `cancelAnimationFrame` works; `detach` drops pending ones | FoldKit renders in it, and `Render.afterPaint` counts frames |
 | `history`, `location` | **Behaves, in memory.** `pushState`/`replaceState` move `location`; `back`/`forward`/`go` fire `popstate` a task later | A router in one window wants exactly this. There's no address bar |
 | `sessionStorage` | **Behaves, in memory**, for the window's life | A process is a session |
 | `localStorage` | **In memory, and it says so.** The first write warns once on stderr that nothing durable backs it | FoldKit's own Kanban saves its board there, so throwing would break unmodified apps. A durable store is FKN-22 |

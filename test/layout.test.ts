@@ -3,6 +3,8 @@
 // each element (here, the fake GPUI's setBounds).
 import { afterEach, describe, expect, test } from 'bun:test'
 
+import { attachDom } from '../src/index.ts'
+import { createFakeGpui } from './support/fake-gpui.ts'
 import { type Mounted, mountFake } from './support/mount.ts'
 
 let mounted: Mounted
@@ -138,5 +140,29 @@ describe('aspect-ratio, from the laid-out width', () => {
     await mounted.settle()
     expect(height(square)).toBe(120)
     expect(mounted.mirror.afterLayout()).toBe(false)
+  })
+})
+
+describe('a window that answers no bounds', () => {
+  // A live window that isn't painting (hidden, behind a lock screen) answers
+  // gpuix's bounds query with a 2 s timeout. The mirror mustn't stall on it
+  // every frame: after a miss, bounds are unknown for a while.
+  test('a missed bounds read is not retried at once, and nothing throws', async () => {
+    const gpui = createFakeGpui()
+    let reads = 0
+    ;(gpui.renderer as { getAutomationTree: () => string }).getAutomationTree = () => {
+      reads++
+      throw new Error('Timed out after 2 seconds waiting for the automation bounds query')
+    }
+    const dom = attachDom(gpui.renderer, { css: '.square { aspect-ratio: 1; }' })
+    const square = dom.window.document.createElement('div')
+    square.className = 'square'
+    dom.container.appendChild(square as unknown as HTMLElement)
+    for (let i = 0; i < 3; i++) await new Promise(resolve => setTimeout(resolve, 0))
+    for (let frame = 0; frame < 10; frame++) expect(dom.mirror.afterLayout()).toBe(false)
+    expect(reads).toBe(1)
+    dom.detach()
+    await dom.window.happyDOM.abort()
+    dom.window.close()
   })
 })

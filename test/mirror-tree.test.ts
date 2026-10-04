@@ -316,3 +316,58 @@ describe('text and attributes', () => {
     expect(mounted.nativeOf(right).style).toMatchObject({ display: 'flex', justifyContent: 'flex-end' })
   })
 })
+
+describe('many windows in one process', () => {
+  // happy-dom's DOM classes are shared by every window. The mirror patches
+  // their methods once and each call goes to the mirror of the node's own
+  // document, so a stopped mirror hears nothing and holds nothing.
+  const owner = (from: object, key: string) => {
+    let proto = Object.getPrototypeOf(from)
+    while (!Object.prototype.hasOwnProperty.call(proto, key)) proto = Object.getPrototypeOf(proto)
+    return proto as Record<string, unknown>
+  }
+  const open = async () => {
+    const m = mountFake()
+    await m.settle()
+    const box = m.document.createElement('div')
+    box.style.overflowY = 'scroll'
+    m.container.appendChild(box)
+    await m.settle()
+    return { m, box }
+  }
+
+  test('the shared methods are patched once, however many mirrors there are', async () => {
+    const first = await open()
+    const methods = ['addEventListener', 'removeEventListener'].map(key => owner(first.box, key)[key])
+    const scroll = Object.getOwnPropertyDescriptor(owner(first.box, 'scrollTop'), 'scrollTop')!.set
+    const second = await open()
+    expect(['addEventListener', 'removeEventListener'].map(key => owner(second.box, key)[key])).toEqual(methods)
+    expect(Object.getOwnPropertyDescriptor(owner(second.box, 'scrollTop'), 'scrollTop')!.set).toBe(scroll)
+    await first.m.close()
+    await second.m.close()
+  })
+
+  test('live mirrors each hear their own document; a stopped one hears nothing', async () => {
+    const a = await open()
+    const b = await open()
+    a.box.addEventListener('click', () => {})
+    a.box.setAttribute('data-x', '1') // flushes the native listener
+    await a.m.settle()
+    expect(a.m.nativeOf(a.box as unknown as Node).listeners.has('click')).toBe(true)
+    expect(b.m.nativeOf(b.box as unknown as Node).listeners.has('click')).toBe(false)
+
+    // Stopped: no more listener tracking or scrolling from it.
+    await a.m.close()
+    a.box.addEventListener('mousedown', () => {})
+    a.box.setAttribute('data-x', '2')
+    await a.m.settle()
+    expect(a.m.nativeOf(a.box as unknown as Node).listeners.has('mouseDown')).toBe(false)
+    a.box.scrollTop = 100
+    expect(a.m.gpui.scrollCalls).toEqual([])
+
+    // The other one carries on.
+    b.box.scrollTop = 100
+    expect(b.m.gpui.scrollCalls).toEqual([{ id: b.m.idOf(b.box as unknown as Node), x: 0, y: -100 }])
+    await b.m.close()
+  })
+})

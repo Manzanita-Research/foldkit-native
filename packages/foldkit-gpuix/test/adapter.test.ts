@@ -445,6 +445,63 @@ describe('focus: GPUI owns it, the DOM follows', () => {
   })
 })
 
+describe('box shadows, which GPUI paints under the whole box', () => {
+  test('a box with a shadow and no background gets the solid colour it sits on; a see-through one, nothing', async () => {
+    const css = `.card { background-color: #fafafa; } .glass { background-color: rgba(0, 0, 0, 0.5); }
+      .ring { box-shadow: 0 0 0 2px #3080ff; }`
+    await run({ css }, {
+      Model: Counter.Model, init: { count: 0 }, update: c => c,
+      view: (_, h) => h.div([], [
+        h.div([h.Class('card')], [h.div([], [h.div([h.Id('on-card'), h.Class('ring')], ['a'])])]),
+        h.div([h.Class('glass')], [h.div([h.Id('on-glass'), h.Class('ring')], ['b'])]),
+      ]),
+    })
+    const style = (id: string) => app!.gpui.node(app!.document.getElementById(id)!.nativeId).style
+    expect(style('on-card')).toMatchObject({ backgroundColor: '#fafafa', boxShadow: { spreadRadius: 2 } })
+    expect(style('on-glass')['backgroundColor']).toBeUndefined()
+  })
+})
+
+describe(':focus-visible by input modality, as browsers judge it', () => {
+  const twoButtons = (h: any) => h.div([], [
+    h.button([h.Id('a'), h.OnClick(Counter.Message.Clicked())], ['A']),
+    h.button([h.Id('b'), h.OnClick(Counter.Message.Clicked())], ['B']),
+    h.input([h.Id('field')]),
+  ])
+  const visible = (id: string) => app!.document.getElementById(id)!.matches(':focus-visible')
+
+  test('focus() before any input shows, as on a page that just loaded', async () => {
+    await run({}, { Model: Counter.Model, init: { count: 0 }, update: c => c, view: (_, h) => twoButtons(h) })
+    app!.document.getElementById('a')!.focus()
+    expect(visible('a')).toBe(true)
+  })
+
+  test('a shortcut (cmd, ctrl or alt held) leaves the pointer\'s modality: focus() after it shows nothing', async () => {
+    await run({}, { Model: Counter.Model, init: { count: 0 }, update: c => c, view: (_, h) => twoButtons(h) })
+    await app!.click('A')
+    app!.host.dispatch({ eventType: 'windowKeyDown', key: 'c', modifiers: { cmd: true }, elementId: 1 } as never)
+    app!.document.getElementById('b')!.focus()
+    expect(app!.document.activeElement?.getAttribute('id')).toBe('b')
+    expect(visible('b')).toBe(false)
+    expect(app!.document.getElementById('b')!.matches(':focus')).toBe(true)
+    // A plain key does switch it.
+    await app!.press('a')
+    app!.document.getElementById('a')!.focus()
+    expect(visible('a')).toBe(true)
+  })
+
+  test('a text field shows its focus however it was focused (it takes keys)', async () => {
+    await run({}, { Model: Counter.Model, init: { count: 0 }, update: c => c, view: (_, h) => twoButtons(h) })
+    await app!.click('A')
+    expect(visible('a')).toBe(false)
+    // A press into GPUI's editor: GPUI focuses it, then the press is seen.
+    app!.fake.renderer.focusElement?.(app!.document.getElementById('field')!.nativeId)
+    app!.host.dispatch({ eventType: 'focus', elementId: app!.document.getElementById('field')!.nativeId } as never)
+    expect(app!.document.activeElement?.getAttribute('id')).toBe('field')
+    expect(visible('field')).toBe(true)
+  })
+})
+
 describe('keys and the browser\'s default actions', () => {
   test('keys go to the focused element and bubble; Enter and Space click a button', async () => {
     const { model } = await run({}, {

@@ -106,6 +106,27 @@ what a browser's does, or is absent or says so. None is a silent stand-in.
 | `document.startViewTransition` | **Absent** | FoldKit feature-detects it and renders plainly |
 | `getBoundingClientRect` | **Behaves**, from where GPUI last painted (the border box) | gpuix reports content-corner boxes, and a scroll area's own box moved by its scroll; the host undoes both. On a live window it's a synchronous read (FKN-29) |
 
+## Focus
+
+GPUI's focus is the truth and `document.activeElement` follows it. Tab and
+Shift-Tab step through a browser's tab order (positive tab indexes first),
+and an open `aria-modal` dialog keeps them inside it. `:focus` matches the
+focused element. `:focus-visible` follows input modality, as Chrome and
+Firefox judge it:
+
+- focus by a key (Tab, Shift-Tab, a key that moves focus) shows it;
+- focus by the pointer doesn't, and a press on an element already showing
+  it hides it;
+- `focus()` from script shows it if the latest input was a key, or if
+  there's been no input yet (a page that just loaded);
+- keys held with cmd, ctrl or alt (shortcuts) don't count as keyboard input;
+- a text field always shows it, however it was focused: it takes keys.
+
+It's a style state in the sheet, matched by `element.matches(':focus-visible')`
+too. No `[data-focus-visible]` attribute is needed. When gpuix gains a
+`focusVisible` style state, the sheet can hand it the rule rather than
+restyling on focus.
+
 ## Disabled and read-only
 
 `disabled` means what HTML says: it applies to form controls (`button`,
@@ -174,6 +195,12 @@ upstream asks in the M0 memo.
   back.
 - **Bounds.** Boxes come from the content corner, and a scroll area's box
   moves with its own scroll offset.
+- **Box shadows paint under the whole box.** CSS clips an outer shadow to
+  outside the border box, but GPUI paints it under the box too, so a focus
+  ring on a field with no background filled the field (Metal). A box with a
+  shadow and no background of its own gets the solid colour of the box it
+  sits on (what shows through in CSS). Over a gradient or a see-through
+  backdrop it gets nothing, and the ring fills it.
 - **Containing blocks.** Taffy positions an `absolute` box against its
   parent, but CSS uses the nearest positioned ancestor, or the window. The
   host draws such a box under its containing block in GPUI's tree (last, so

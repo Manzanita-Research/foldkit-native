@@ -173,10 +173,14 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     pass.set(element, result)
     return result
   }
-  /** Declarations with every var() substituted from the element's scope. */
+  /** Declarations with every var() substituted from the element's scope:
+   *  what it inherits, under its own custom properties in these states
+   *  (Tailwind's `focus:ring-2` sets `--tw-ring-shadow` on `:focus`). */
   const resolved = (values: ReadonlyMap<string, string>, inherited: Map<string, string>) => {
     const out = new Map<string, string>()
-    const lookup = (name: string) => inherited.get(name) ?? ''
+    const scope = new Map(inherited)
+    for (const [name, value] of values) if (name.startsWith('--')) scope.set(name, value)
+    const lookup = (name: string) => scope.get(name) ?? ''
     for (const [name, value] of values) if (!name.startsWith('--')) out.set(name, viewportUnits(resolveVars(value, lookup)))
     return out
   }
@@ -231,6 +235,14 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       if (!values.has('width')) values.set('width', '100%')
     }
     const style = toStyle(values, field) as Record<string, unknown>
+    // GPUI paints a box shadow under the whole box, where CSS clips it to
+    // outside the border box: a focus ring on a field with no background of
+    // its own filled the field (on Metal). It gets the solid background of the
+    // box it sits on, which is what shows through it in CSS.
+    if (style['boxShadow'] !== undefined && style['background'] === undefined && style['backgroundColor'] === undefined) {
+      const under = backdrop(element)
+      if (under !== undefined) style['backgroundColor'] = under
+    }
     // Hover and press are GPUI's own states, so they need no round trip.
     for (const name of ['hover', 'active'] as const) {
       if (!own.has(name)) continue
@@ -239,6 +251,17 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       if (change !== undefined) style[name] = change
     }
     return style as StyleDesc
+  }
+  /** The solid colour behind `element`: its nearest ancestor's background,
+   *  if that's opaque (not a gradient, nor see-through). */
+  const backdrop = (element: NativeElement): string | undefined => {
+    for (let at = element.parentElement; at !== null; at = at.parentElement) {
+      const style = (sentStyles.get(at) ?? {}) as Record<string, unknown>
+      if (style['background'] !== undefined) return undefined
+      const colour = style['backgroundColor']
+      if (typeof colour === 'string') return opaque(colour) ? colour : undefined
+    }
+    return undefined
   }
   const textStyleOf = (text: NativeText): StyleDesc => {
     const parent = text.parentElement
@@ -398,6 +421,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     return props
   }
   const isField = (element: NativeElement) => nativeType(element) === 'input' || nativeType(element) === 'textarea'
+  /** A field that takes typing: its focus always shows, as in a browser. */
+  const takesText = (element: NativeElement) => isField(element) && !element.hasAttribute('readonly')
   /** A field the person can't edit: read-only, or disabled. */
   const isLocked = (element: NativeElement) => element.hasAttribute('readonly') || isDisabled(element)
   const syncProps = (element: NativeElement) => {
@@ -582,16 +607,22 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   }
 
   // FOCUS
+  // `:focus-visible` as browsers judge it (Chrome's and the WICG polyfill's
+  // heuristic): focus by a key shows, focus by the pointer doesn't, and
+  // `focus()` from script shows if the latest input was a key, or before any
+  // input at all. A text field always shows: it takes keys, however it was
+  // focused. Keys held with cmd, ctrl or alt (shortcuts) don't count.
   let focused: NativeElement | null = null
   let focusVisible = false
-  /** Whether the latest input was a key (for :focus-visible), as browsers judge it. */
-  let keyboardModality = false
+  /** Whether the latest input was a key, or there's been none yet. */
+  let keyboardModality = true
   let valueAtFocus = ''
   const SCOPE = '[aria-modal="true"], [data-fn-focus-scope="trap"]'
   const returnFocus = new WeakMap<NativeElement, NativeElement | null>()
   /** Moves the DOM's focus to `next`, firing what a browser fires.
    *  `fromGpui` when GPUI already moved its own focus. */
-  const setFocus = (next: NativeElement | null, fromGpui: boolean, visible = keyboardModality) => {
+  const setFocus = (next: NativeElement | null, fromGpui: boolean, byKey = keyboardModality) => {
+    const visible = byKey || (next !== null && takesText(next))
     const previous = focused
     if (previous === next) {
       // Same element, now reached by keyboard: its focus ring shows.
@@ -627,7 +658,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
           if (focused === next && next.nativeId !== 0 && renderer.getFocusedElementId?.() !== next.nativeId) renderer.focusElement?.(next.nativeId)
         })
       }
-      if (visible) reveal(next)
+      if (byKey) reveal(next)
       next.dispatchEvent(new NativeFocusEvent('focus', { relatedTarget: previous }))
       next.dispatchEvent(new NativeFocusEvent('focusin', { bubbles: true, relatedTarget: previous }))
       dirty.add(next)
@@ -697,14 +728,15 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   // for one task; if a Tab keydown came for that field around it, the change
   // is dropped and GPUI's editor gets the old value back. Otherwise (a pasted
   // tab) it goes through, a task late. FoldKit never sees the tab Tab typed.
-  let lastTab: { element: NativeElement; at: number } | undefined
+  // Per field: Tabs GPUI queues together go to one field, then the next,
+  // before the first field's change comes in.
+  const tabbedAt = new WeakMap<NativeElement, number>()
   const tabbed = (element: NativeElement) => {
-    lastTab = { element, at: performance.now() }
+    tabbedAt.set(element, performance.now())
   }
   const onlyAddsTabs = (before: string, after: string) =>
     after.length > before.length && after.replace(/\t/g, '') === before.replace(/\t/g, '')
-  const typedByTab = (element: NativeElement) =>
-    lastTab !== undefined && lastTab.element === element && performance.now() - lastTab.at < 100
+  const typedByTab = (element: NativeElement) => performance.now() - (tabbedAt.get(element) ?? -Infinity) < 100
 
   // KEYS
   // Keys come from GPUI's window key events only (no element listens for
@@ -714,9 +746,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const name = event.key === undefined ? '' : KEY_NAMES[event.key] ?? event.key
     // Keys go where GPUI's focus is, even if it moved there by itself.
     reconcileFocus()
-    keyboardModality = true
     inputAt = performance.now()
     const held = event.modifiers
+    if (held?.cmd !== true && held?.ctrl !== true && held?.alt !== true) keyboardModality = true
     const target = focused ?? body
     const keyboard = new NativeKeyboardEvent(type, {
       bubbles: true, cancelable: true, key: name, code: name, repeat: event.isHeld === true,
@@ -787,9 +819,14 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         keyboardModality = false
         inputAt = performance.now()
         const mouse = { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }
-        // A press focuses the nearest focusable element, without a ring.
+        // A press focuses the nearest focusable element, without a ring; one
+        // already focused by a key loses its ring, as in a browser.
         const focusable = node instanceof NativeElement ? focusableAncestor(element) : null
         if (focusable !== null && focusable !== focused) setFocus(focusable, false, false)
+        else if (focusable !== null && focusVisible && !takesText(focusable)) {
+          focusVisible = false
+          dirty.add(focusable)
+        }
         if (event.isRightClick) {
           element.dispatchEvent(new NativeMouseEvent('contextmenu', mouse))
           return
@@ -999,6 +1036,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     blur: element => {
       if (focused === element) setFocus(null, false)
     },
+    focusVisible: () => focusVisible,
     bounds: element => boundsOf(element) ?? { x: 0, y: 0, width: 0, height: 0 },
     scrollIntoView: element => reveal(element),
     scrollOffset: element => {
@@ -1122,6 +1160,20 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 }
 
 export type GpuixHost = ReturnType<typeof createHost>
+
+/** Whether a colour hides what's behind it: no alpha, or a full one. */
+const opaque = (colour: string) => {
+  const value = colour.trim().toLowerCase()
+  if (value === 'transparent' || value === 'currentcolor' || value.includes('var(')) return false
+  if (value.startsWith('#')) return value.length === 4 || value.length === 7 || /^#...f$|^#......ff$/.test(value)
+  // rgba(r, g, b, a), and rgb(r g b / a) or oklch(l c h / a).
+  const inner = /^[a-z]+\((.*)\)$/.exec(value)?.[1]
+  if (inner === undefined) return true
+  const alpha = inner.includes('/') ? inner.split('/')[1]! : inner.split(',')[3]
+  if (alpha === undefined) return true
+  const amount = alpha.trim()
+  return amount.endsWith('%') ? Number(amount.slice(0, -1)) >= 100 : Number(amount) >= 1
+}
 
 /** The role a browser gives an element without one, for AccessKit. */
 const implicitRole = (element: NativeElement): string | undefined => {

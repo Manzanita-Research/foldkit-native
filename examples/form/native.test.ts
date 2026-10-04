@@ -10,6 +10,7 @@ import { attachDom } from '../../src/index.ts'
 import { type Mounted, mountFake } from '../../test/support/mount.ts'
 import { loadExample } from '../support/example.ts'
 import { METAL, type Headless, type Metal, openHeadless, openMetal } from '../support/harness.ts'
+import { type Headless as GpuixHeadless, mountHeadless as mountGpuixHeadless, openMetal as openGpuixMetal } from '../../packages/foldkit-gpuix/test/support.ts'
 
 /** Tailwind's colours, as styles.native.css lowers them. */
 const GRAY_300 = '#d1d5dc' // border-gray-300: not validated yet
@@ -157,18 +158,49 @@ describe('headless', () => {
     expect(app.texts()).toContain('Sorry, there was an error adding you to the waitlist. Please try again.')
     expect(app.inSync()).toBe(true)
   })
+})
 
-  // Not yet (README, "Inputs and focus"): GPUI only tells an element it took
-  // focus if the element listens for focus, and FoldKit's Input doesn't; and
-  // the mirror replays focus as a synthetic FocusEvent, which never moves
-  // document.activeElement. So the DOM never knows which field is focused, and
-  // `:focus` rules (Tailwind's focus:ring-2, the blue ring) never match. This
-  // test fails until that's fixed; then drop `.failing`.
-  test.failing('GPUI focus reaches the DOM: a focused field is document.activeElement', async () => {
-    app = await openHeadless('form')
-    expect(app.mounted.send(field('name') as unknown as Node, { eventType: 'focus' } as never)).toBe(true)
+// The mirror never learned which field GPUI focused (it replays focus as a
+// synthetic FocusEvent, which doesn't move document.activeElement), and it
+// won't: it's the regression comparator now. Focus is the adapter's, FoldKit
+// on gpuix, where GPUI's focus is the truth and the DOM follows it. These are
+// the Form's focus tests, there.
+describe('focus, FoldKit on gpuix (headless)', () => {
+  let app: GpuixHeadless | undefined
+  afterEach(() => {
+    app?.close()
+    app = undefined
+  })
+  const open = async () => {
+    const example = await loadExample('form')
+    app = mountGpuixHeadless({ css: example.css, viewport: { width: example.meta.width, height: example.meta.height } })
+    example.start(app.container as unknown as HTMLElement)
     await app.settle()
-    expect(app.document.activeElement).toBe(field('name'))
+    return app
+  }
+  const byId = (id: string) => app!.document.getElementById(id)!
+
+  test('GPUI focus reaches the DOM: a focused field is document.activeElement, with focus:ring-2 drawn', async () => {
+    await open()
+    app!.host.dispatch({ eventType: 'focus', elementId: byId('name').nativeId } as never)
+    await app!.settle()
+    expect(app!.document.activeElement).toBe(byId('name'))
+    // Tailwind's focus:ring-2 focus:ring-blue-500, lowered to GPUI's box-shadow.
+    // GPUI paints a box-shadow under the whole field: it gets the card's white
+    // to paint over it, as the card shows through it in a browser.
+    expect(app!.gpui.node(byId('name').nativeId).style).toMatchObject({ boxShadow: { spreadRadius: 2, color: BLUE_500 }, backgroundColor: '#fff' })
+  })
+
+  test('Tab moves focus from field to field, GPUI\'s and the DOM\'s', async () => {
+    await open()
+    byId('name').focus()
+    const seen = [app!.document.activeElement?.getAttribute('id')]
+    for (const _ of [1, 2]) {
+      await app!.press('tab')
+      seen.push(app!.document.activeElement?.getAttribute('id'))
+      expect(app!.gpuiFocus()).toBe(app!.document.activeElement as never)
+    }
+    expect(seen).toEqual(['name', 'email', 'message'])
   })
 })
 
@@ -285,18 +317,60 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     expect(gpui[0]).toBe(expected[0]!)
   })
 
-  // Not yet (README, "Inputs and focus"): Tab leaves GPUI's focus where it
-  // is; a browser moves it to the next field. Drop `.failing` when it does.
-  test.failing('Tab moves GPUI focus from field to field', async () => {
-    const { gpui, expected } = await tabThrough()
-    expect(gpui).toEqual(expected)
+})
+
+describe.skipIf(!METAL)('focus, FoldKit on gpuix (Metal, offscreen)', () => {
+  let app: Awaited<ReturnType<typeof openGpuixMetal>> | undefined
+  afterEach(() => {
+    app?.close()
+    app = undefined
+  })
+  const byId = (id: string) => app!.document.getElementById(id)!
+
+  test('a click focuses a field; Tab moves GPUI focus from field to field and the DOM follows; focus:ring-2 paints', async () => {
+    const example = await loadExample('form')
+    const size = { width: example.meta.width, height: example.meta.height }
+    app = await openGpuixMetal('form-focus', size, { css: example.css })
+    example.start(app.container as unknown as HTMLElement)
+    await app.settle()
+    /** Just left of a field's border box, where its focus:ring-2 paints. (Its
+     *  left edge: a padded editor's reported top is off by its top padding.) */
+    const beside = (shot: ReturnType<NonNullable<typeof app>['pixels']>, id: string) => {
+      const box = byId(id).getBoundingClientRect()
+      return shot.at(box.x - 1, box.y + box.height / 2)
+    }
+    const blue = (pixel: readonly [number, number, number]) => pixel[2] > 200 && pixel[0] < 120
+
+    const before = app.pixels('before')
+    expect(blue(beside(before, 'name'))).toBe(false)
+    await app.click(byId('name'))
+    const gpui = [app.gpuiFocus()?.getAttribute('id') ?? null]
+    const dom = [app.document.activeElement?.getAttribute('id') ?? null]
+    expect(blue(beside(app.pixels('clicked'), 'name'))).toBe(true)
+    for (const _ of [1, 2]) {
+      await app.keys('tab')
+      gpui.push(app.gpuiFocus()?.getAttribute('id') ?? null)
+      dom.push(app.document.activeElement?.getAttribute('id') ?? null)
+    }
+    console.log('form focus on gpuix:', JSON.stringify({ gpui, dom }))
+    expect(gpui).toEqual(['name', 'email', 'message'])
+    expect(dom).toEqual(gpui)
+    const tabbed = app.pixels('tabbed')
+    expect(blue(beside(tabbed, 'message'))).toBe(true)
+    expect(blue(beside(tabbed, 'name'))).toBe(false)
   })
 
-  // Not yet: the DOM never learns which field GPUI focused, so
-  // document.activeElement stays <body> (see the headless test above).
-  test.failing("the DOM's activeElement follows GPUI focus", async () => {
-    const { dom } = await tabThrough()
-    expect(dom[0]).toBe('name')
+  test('Tabs GPUI queues together move focus and type nothing in the fields they leave', async () => {
+    const example = await loadExample('form')
+    app = await openGpuixMetal('form-tabs', { width: example.meta.width, height: example.meta.height }, { css: example.css })
+    example.start(app.container as unknown as HTMLElement)
+    await app.settle()
+    await app.click(byId('name'))
+    await app.keys('tab tab')
+    expect(app.document.activeElement?.getAttribute('id')).toBe('message')
+    const values = ['name', 'email', 'message'].map(id => (byId(id) as unknown as { value: string }).value)
+    console.log('form values after queued Tabs:', JSON.stringify(values))
+    expect(values).toEqual(['', '', ''])
   })
 })
 

@@ -32,6 +32,8 @@ export interface Host {
   listening(node: NativeNode, type: string, delta: number): void
   focus(element: NativeElement, options?: { focusVisible?: boolean }): void
   blur(element: NativeElement): void
+  /** Whether the focused element shows its focus (`:focus-visible`). */
+  focusVisible(): boolean
   bounds(element: NativeElement): { x: number; y: number; width: number; height: number }
   scrollIntoView(element: NativeElement): void
   scrollOffset(element: NativeElement): [number, number]
@@ -1062,7 +1064,11 @@ const matchCompound = (element: NativeElement, compound: Compound, scope: Native
     if (pseudo === 'disabled') { if (!isDisabled(element)) return false; continue }
     if (pseudo === 'enabled') { if (!DISABLEABLE.has(element.localName) || isDisabled(element)) return false; continue }
     if (pseudo === 'checked') { if (!element.checked && !element.hasAttribute('checked')) return false; continue }
-    if (pseudo === 'focus' || pseudo === 'focus-visible') { if (element.ownerDocument.activeElement !== element) return false; continue }
+    if (pseudo === 'focus') { if (element.ownerDocument.activeElement !== element) return false; continue }
+    if (pseudo === 'focus-visible') {
+      if (element.ownerDocument.activeElement !== element || element.ownerDocument.host?.focusVisible() !== true) return false
+      continue
+    }
     if (pseudo === 'focus-within') { if (!element.contains(element.ownerDocument.activeElement)) return false; continue }
     if (pseudo === 'first-child') { if (element.parentElement?.firstElementChild !== element) return false; continue }
     if (pseudo === 'last-child') { if (element.parentElement?.lastElementChild !== element) return false; continue }

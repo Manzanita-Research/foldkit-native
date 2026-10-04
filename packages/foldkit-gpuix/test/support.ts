@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { type FakeGpui, createFakeGpui } from '../../../test/support/fake-gpui.ts'
+import { readPng } from '../../../test/support/png.ts'
 import { type AttachOptions, NativeElement, attachGpuix } from '../src/index.ts'
 
 export const createFocusableFake = (size = { width: 1024, height: 768 }) => {
@@ -233,6 +234,15 @@ export const openMetal = async (name: string, size: { width: number; height: num
       const path = join(out, `${name}-${step}.png`)
       renderer.captureScreenshot(path)
       return path
+    },
+    /** A screenshot's pixels, read at window coordinates (the image may be
+     *  at the display's scale). */
+    pixels: (step: string) => {
+      const path = join(out, `${name}-${step}.png`)
+      renderer.captureScreenshot(path)
+      const image = readPng(path)
+      const scale = image.width / size.width
+      return { path, at: (x: number, y: number) => image.pixel(Math.round(x * scale), Math.round(y * scale)) }
     },
     close: () => attached.detach(),
     document,

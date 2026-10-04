@@ -67,7 +67,7 @@ appears on that screen.
 npm ci                        # exact pins; installs only your platform's gpuix binary
 bun run demo                  # examples/themes.ts: primitives + two token sets, switched at runtime
 bun run counter               # examples/counter.ts: a FoldKit counter; only the setup import is native-specific
-bun test                      # headless: DOM → native mutations, clicks → FoldKit, tokens → restyle
+bun test                      # mirror, events, FoldKit, tokens; on macOS also Metal and real windows (TESTING.md)
 bun run typecheck
 bun run record demo.mp4       # macOS: drives the demo and records its own frames (needs ffmpeg)
 ```
@@ -112,8 +112,10 @@ as gpuix's README insists.
    caches it restyles. Needs a minimal reproduction and an upstream issue.
 7. **Accessibility.** ARIA attributes already reach gpuix's AccessKit props;
    check them with a real screen reader and map roles fully.
-8. **Tests in CI** with gpuix's test renderer (its `captureScreenshot` and test
-   renderer need gpuix's test-support build).
+8. **More tests.** CI runs the mirror, event, FoldKit and token tests headless,
+   and real-GPUI tests on macOS. [TESTING.md](TESTING.md) lists what's covered
+   and the layers still to build (conformance against a browser, performance
+   budgets, more platforms).
 9. **Theming seams** listed in [THEMING-SEAMS.md](THEMING-SEAMS.md) (per-element
    blur, multi-stop gradients, colour transitions…).
 

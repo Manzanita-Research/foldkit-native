@@ -126,6 +126,19 @@ describe('text', () => {
       backgroundColor: '#111318', color: '#eceef4', fontSize: 15, fontWeight: 600,
     })
   })
+
+  test("a button centres its label, as a browser's own stylesheet does; the app's CSS can override it", async () => {
+    mounted = mountFake({ css: '.left { text-align: left; }' })
+    const centred = mounted.document.createElement('button')
+    centred.textContent = 'Join Waitlist'
+    const left = mounted.document.createElement('button')
+    left.className = 'left'
+    left.textContent = 'Menu'
+    mounted.container.append(centred, left)
+    await mounted.settle()
+    expect(mounted.nativeOf(centred).style).toMatchObject({ textAlign: 'center' })
+    expect(mounted.nativeOf(left).style).toMatchObject({ textAlign: 'left' })
+  })
 })
 
 describe('the page', () => {

@@ -177,15 +177,15 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
 
   test('the products page scrolls when it is taller than the window, as a browser page does', async () => {
     app = await openMetal('shopping-cart', { width: 760, height: 600 })
-    const height = 600
+    // The last product is below the window's edge…
     const before = app.bounds('Eggs')
-    console.log(`[shopping-cart] Eggs at y=${before.y} in a ${height}px window`)
-    expect(before.y + before.height).toBeGreaterThan(height)
+    expect(before.y + before.height).toBeGreaterThan(600)
+    // …and a wheel scrolls the page (the body, GPUI's root) to bring it in.
     app.renderer.nativeSimulateScrollWheel(380, 300, 0, -400)
     await app.settle()
     const after = app.bounds('Eggs')
-    console.log(`[shopping-cart] after a 400px wheel: Eggs at y=${after.y}`)
-    app.screenshot('products-scrolled')
     expect(after.y).toBeLessThan(before.y)
+    expect(after.y + after.height).toBeLessThanOrEqual(600)
+    app.screenshot('products-scrolled')
   })
 })

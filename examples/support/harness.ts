@@ -48,7 +48,7 @@ export type Headless = Awaited<ReturnType<typeof openHeadless>>
 
 export const openHeadless = async (id: string) => {
   const example = await loadExample(id)
-  const mounted = mountFake({ css: example.css })
+  const mounted = mountFake({ css: example.css, viewport: { width: example.meta.width, height: example.meta.height } })
   example.start(mounted.container)
   await mounted.settle()
   const { gpui, document } = mounted
@@ -112,7 +112,7 @@ export const openMetal = async (id: string, size?: { width: number; height: numb
   const width = size?.width ?? example.meta.width
   const height = size?.height ?? example.meta.height
   const renderer = new TestRenderer({ width, height })
-  const dom = attachDom(renderer, { css: example.css })
+  const dom = attachDom(renderer, { css: example.css, viewport: { width, height } })
   example.start(dom.container)
   const document = dom.window.document as unknown as Document
   const settle = async () => {

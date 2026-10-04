@@ -47,6 +47,65 @@ const KEY_NAMES: Readonly<Record<string, string>> = {
   home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown',
 }
 
+// happy-dom's DOM classes are shared by every window, so the methods the
+// mirror watches are patched once per class, and each call goes to the mirror
+// of the node's own document. A stopped mirror unregisters, and it and its
+// window can go (patching per mirror kept every window alive, and ran every
+// listener through every mirror ever made).
+const trackers = new WeakMap<object, (target: EventTarget, type: string, delta: number) => void>()
+const originals = new WeakMap<object, { add: EventTarget['addEventListener']; remove: EventTarget['removeEventListener'] }>()
+/** The document a node, document or window belongs to. */
+const documentOf = (target: unknown): object | undefined => {
+  const node = target as { nodeType?: number; ownerDocument?: object | null; document?: object }
+  return node.nodeType === 9 ? node as object : node.ownerDocument ?? node.document
+}
+/** The prototype in `from`'s chain that defines `key`. */
+const owner = (from: object, key: string): Record<string, unknown> => {
+  let proto = Object.getPrototypeOf(from)
+  while (!Object.prototype.hasOwnProperty.call(proto, key)) proto = Object.getPrototypeOf(proto)
+  return proto
+}
+/** addEventListener and removeEventListener, reporting to the mirror of the
+ *  target's document; returns the unpatched pair. */
+const watchListeners = (body: Node) => {
+  const proto = owner(body, 'addEventListener') as unknown as EventTarget
+  let found = originals.get(proto)
+  if (found === undefined) {
+    const { addEventListener: add, removeEventListener: remove } = proto
+    found = { add, remove }
+    originals.set(proto, found)
+    proto.addEventListener = function (this: EventTarget, type: string, listener: unknown, opts?: unknown) {
+      trackers.get(documentOf(this)!)?.(this, type, 1)
+      return add.call(this, type, listener as EventListener, opts as AddEventListenerOptions)
+    }
+    proto.removeEventListener = function (this: EventTarget, type: string, listener: unknown, opts?: unknown) {
+      trackers.get(documentOf(this)!)?.(this, type, -1)
+      return remove.call(this, type, listener as EventListener, opts as EventListenerOptions)
+    }
+  }
+  return found
+}
+/** scrollTop and scrollLeft: a change an app makes is reported to the mirror
+ *  of the element's document (which scrolls GPUI to match). */
+const scrollers = new WeakMap<object, (element: Element) => void>()
+const scrollPatched = new WeakSet<object>()
+const watchScroll = (body: Node) => {
+  const proto = owner(body, 'scrollTop')
+  if (scrollPatched.has(proto)) return
+  scrollPatched.add(proto)
+  for (const axis of ['scrollTop', 'scrollLeft'] as const) {
+    const descriptor = Object.getOwnPropertyDescriptor(proto, axis)!
+    Object.defineProperty(proto, axis, {
+      ...descriptor,
+      set(this: Element, value: number) {
+        const before = descriptor.get!.call(this) as number
+        descriptor.set!.call(this, value)
+        if (descriptor.get!.call(this) !== before) scrollers.get(this.ownerDocument as object)?.(this)
+      },
+    })
+  }
+}
+
 const nativeType = (node: Node): string | undefined => {
   if (node.nodeType === 3) return (node.textContent ?? '').length > 0 ? 'text' : undefined
   if (node.nodeType !== 1) return undefined
@@ -87,13 +146,8 @@ export const createMirror = (options: {
 
   // DOM EVENTS → which GPUI events an element wants.
   // snabbdom attaches listeners with addEventListener; watch that.
-  // happy-dom builds classes per window, so find the prototype in the real
-  // chain of a DOM node that owns addEventListener rather than trusting
-  // window.EventTarget.
-  let proto = Object.getPrototypeOf(document.body) as EventTarget
-  while (!Object.prototype.hasOwnProperty.call(proto, 'addEventListener')) proto = Object.getPrototypeOf(proto)
-  const add = proto.addEventListener
-  const remove = proto.removeEventListener
+  // The unpatched pair, for the mirror's own listeners (see watchListeners).
+  const { add, remove } = watchListeners(document.body as unknown as Node)
   const track = (target: EventTarget, type: string, delta: number) => {
     const natives = DOM_TO_NATIVE[type]
     if (natives === undefined || !(target as Node).nodeType) return
@@ -109,14 +163,7 @@ export const createMirror = (options: {
       if (id !== undefined && (before === 0) !== (counts.get(native) === 0)) syncListener(id, native, before === 0)
     }
   }
-  proto.addEventListener = function (type: string, listener: unknown, opts?: unknown) {
-    track(this, type, 1)
-    return add.call(this, type, listener as EventListener, opts as AddEventListenerOptions)
-  }
-  proto.removeEventListener = function (type: string, listener: unknown, opts?: unknown) {
-    track(this, type, -1)
-    return remove.call(this, type, listener as EventListener, opts as EventListenerOptions)
-  }
+  trackers.set(document, track)
 
   // SCROLL POSITION, both ways. GPUI owns scrolling; the DOM's scrollTop and
   // scrollLeft follow it, so an app reading them (FoldKit's OnScroll) sees
@@ -124,25 +171,15 @@ export const createMirror = (options: {
   // hears `scroll` back, as in a browser. Copying GPUI's offset into the DOM
   // never writes back, so a scroll can't echo between the two.
   let readingScroll = false
-  let scrollProto = Object.getPrototypeOf(document.body) as object
-  while (!Object.prototype.hasOwnProperty.call(scrollProto, 'scrollTop')) scrollProto = Object.getPrototypeOf(scrollProto)
-  for (const axis of ['scrollTop', 'scrollLeft'] as const) {
-    const descriptor = Object.getOwnPropertyDescriptor(scrollProto, axis)!
-    Object.defineProperty(scrollProto, axis, {
-      ...descriptor,
-      set(this: Element, value: number) {
-        const before = descriptor.get!.call(this) as number
-        descriptor.set!.call(this, value)
-        const id = ids.get(this as unknown as Node)
-        if (readingScroll || id === undefined || options.scrollTo === undefined) return
-        if (descriptor.get!.call(this) === before) return
-        options.scrollTo(id, -this.scrollLeft || 0, -this.scrollTop || 0)
-        setTimeout(() => {
-          if (ids.has(this as unknown as Node)) this.dispatchEvent(new W['Event']!('scroll', { bubbles: false }))
-        }, 0)
-      },
-    })
-  }
+  watchScroll(document.body as unknown as Node)
+  scrollers.set(document, element => {
+    const id = ids.get(element as unknown as Node)
+    if (readingScroll || id === undefined || options.scrollTo === undefined) return
+    options.scrollTo(id, -element.scrollLeft || 0, -element.scrollTop || 0)
+    setTimeout(() => {
+      if (ids.has(element as unknown as Node)) element.dispatchEvent(new W['Event']!('scroll', { bubbles: false }))
+    }, 0)
+  })
   /** Copies GPUI's scroll offset for `node` into the DOM. */
   const readScroll = (node: Node) => {
     const id = ids.get(node)
@@ -192,7 +229,13 @@ export const createMirror = (options: {
   // When the last drag ended: never, so a click right after startup counts.
   let dragEndedAt = -Infinity
   const toDom = (node: Node, event: EventPayload) => {
-    const init = { bubbles: true, cancelable: true, clientX: event.x ?? 0, clientY: event.y ?? 0 }
+    // GPUI's modifiers ride on every key and mouse event (cmd is the platform
+    // key: ⌘ on macOS, so `metaKey`, as a browser has it).
+    const held = event.modifiers
+    const init = {
+      bubbles: true, cancelable: true, clientX: event.x ?? 0, clientY: event.y ?? 0,
+      ctrlKey: held?.ctrl ?? false, metaKey: held?.cmd ?? false, shiftKey: held?.shift ?? false, altKey: held?.alt ?? false,
+    }
     if (event.eventType === 'click' || event.eventType === 'mouseUp' || event.eventType === 'keyDown') {
       inputAt = performance.now()
     }
@@ -602,6 +645,8 @@ export const createMirror = (options: {
     /** Window-level keys go to the focused element, like a browser. */
     windowKey: (event: EventPayload) => toDom((document.activeElement as Node | null) ?? body, event),
     stop: () => {
+      trackers.delete(document)
+      scrollers.delete(document)
       observer.disconnect()
       themeObserver.disconnect()
       remove.call(window as unknown as EventTarget, 'click', keepWindow)

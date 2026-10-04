@@ -113,9 +113,19 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
   window.innerWidth = viewport.width
   window.innerHeight = viewport.height
   const restore = installGlobals(window)
-  const appSheet = options.css === undefined ? undefined : sheetFromCss(options.css, { viewportWidth: viewport.width })
+  const appSheet = options.css === undefined ? undefined : sheetFromCss(options.css)
   const sheets = [...(options.sheets ?? []), ...(appSheet === undefined ? [] : [appSheet])]
-  const host = createHost(document, { renderer, sheets, ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }) })
+  const host = createHost(document, {
+    renderer, sheets,
+    viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+    // As a browser: the window's size changes, then `resize` fires.
+    onResize: size => {
+      window.innerWidth = size.width
+      window.innerHeight = size.height
+      window.dispatchEvent(new NativeEvent('resize'))
+    },
+    ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
+  })
 
   const setTokens = (tokens: Tokens) => {
     for (const [name, value] of Object.entries(tokens)) {

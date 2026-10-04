@@ -42,11 +42,31 @@ what a browser's does, or is absent or says so. None is a silent stand-in.
 | `sessionStorage` | **Behaves, in memory**, for the window's life | A process is a session |
 | `localStorage` | **In memory, and it says so.** The first write warns once on stderr that nothing durable backs it | FoldKit's own Kanban saves its board there, so throwing would break unmodified apps. A durable store is FKN-22 |
 | `getSelection()` | **Behaves.** GPUI's own selection: `toString()`, `rangeCount`, `removeAllRanges()` | GPUI owns text selection |
-| `matchMedia` | **Behaves, fixed per call.** min/max width and height against the window, `hover`, `pointer: fine`, `orientation`; `prefers-reduced-motion` and `prefers-color-scheme: dark` don't match; anything else doesn't match. Listeners never fire | Live changes come with resize (FKN-18) |
+| `matchMedia` | **Behaves, per call.** Sizes (`min-width`, `width < …`), `hover`, `pointer: fine` and `orientation`, against the window as it is (`src/media.ts`, shared with the sheet). `prefers-reduced-motion` and `prefers-color-scheme: dark` don't match, and anything else doesn't either. Its listeners never fire, but `resize` does | Re-query on `resize` |
 | `ResizeObserver`, `IntersectionObserver` | **Absent** (`typeof … === 'undefined'`) | Both need layout read back every frame, and a live gpuix window can't afford that yet (FKN-29). @foldkit/ui's virtual list and `Dom`'s element-movement wait use `ResizeObserver` and fail loudly |
 | `getComputedStyle` | **Partial.** Inline style only | There's no cascade engine: the flat sheet (`src/sheet.ts`) styles elements, and its rules aren't read back |
 | `document.startViewTransition` | **Absent** | FoldKit feature-detects it and renders plainly |
 | `getBoundingClientRect` | **Behaves**, from where GPUI last painted (the border box) | gpuix reports content-corner boxes, and a scroll area's own box moved by its scroll; the host undoes both. On a live window it's a synchronous read (FKN-29) |
+
+## Styles
+
+`src/sheet.ts` has no cascade engine. Rules match the element and, through
+descendant and child combinators, its ancestors at rest. Any attribute change
+restyles the element's whole subtree, so `.row[data-selected] .cell` follows
+the row. The cascade runs specificity, then source order, then inline style,
+then `!important`. Custom properties and text properties inherit. `@media`
+rules match the window as it is now, and a resize restyles everything and
+fires `resize`. `@supports` is evaluated. `vh`/`vw` become pixels.
+
+GPUI has no auto margins, so a box with auto side margins centres itself
+(`align-self`), and its block parent becomes a column. `sheetFromCss` lists
+what it can't follow instead of guessing:
+
+- sibling combinators and structural pseudo-classes (`+`, `~`,
+  `:last-child`, Tailwind's `space-y-*`);
+- a state on an ancestor (`group-hover:`);
+- pseudo-elements;
+- media features other than sizes, hover, pointer and orientation.
 
 ## gpuix behaviours the host works around
 

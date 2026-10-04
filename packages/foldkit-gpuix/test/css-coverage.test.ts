@@ -11,7 +11,7 @@ import { sheetFromCss } from '../src/index.ts'
 describe('example CSS on the flat sheet', () => {
   test('coverage per example', () => {
     const rows = exampleIds().map(id => {
-      const sheet = sheetFromCss(exampleCss(id), { viewportWidth: 1024 })
+      const sheet = sheetFromCss(exampleCss(id))
       const used = sheet.rules.length
       const dropped = sheet.unsupported.length
       const reasons = new Map<string, number>()

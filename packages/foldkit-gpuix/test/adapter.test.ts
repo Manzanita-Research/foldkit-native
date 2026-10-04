@@ -95,7 +95,7 @@ describe('tree', () => {
   })
 })
 
-describe('styles: a flat sheet, no cascade engine', () => {
+describe('styles: a sheet with no cascade engine', () => {
   const css = `
     :root { --fn-color-accent: #3d6df2; }
     .app { display: flex; flex-direction: column; gap: 8px; color: #222222; font-size: 15px; }
@@ -103,12 +103,13 @@ describe('styles: a flat sheet, no cascade engine', () => {
     .button:hover { background-color: #2f5ee0; }
     .button[data-on] { border: 2px solid #000000; }
     .card .title { color: red; }
+    .card + .title { color: red; }
   `
   const view = (h: any, on = false) => h.div([h.Class('app')], [
     h.button([h.Class('button'), ...(on ? [h.DataAttribute('on', '')] : []), h.OnClick(Counter.Message.Clicked())], ['Go']),
   ])
 
-  test('one-element rules apply; :hover is GPUI\'s own state; text inherits', async () => {
+  test('rules apply; :hover is GPUI\'s own state; text inherits', async () => {
     const { app } = await run({ css }, { Model: Counter.Model, init: { count: 0 }, update: c => c, view: (_, h) => view(h) })
     const button = app.gpui.node(app.find('Go').nativeId)
     expect(button.style).toMatchObject({ paddingTop: 6, paddingLeft: 10, borderTopLeftRadius: 6, backgroundColor: '#3d6df2' })
@@ -117,7 +118,7 @@ describe('styles: a flat sheet, no cascade engine', () => {
     const text = app.gpui.node(app.gpui.node(app.find('Go').nativeId).children[0]!)
     expect(text.style).toMatchObject({ color: '#222222', fontSize: 15 })
     // What it can't do, it says, rather than guessing.
-    expect(app.unsupported).toEqual(['.card .title (descendant combinator)'])
+    expect(app.unsupported).toEqual(['.card + .title (sibling combinator)'])
   })
 
   test('a state attribute restyles; new tokens restyle everything live', async () => {
@@ -131,14 +132,17 @@ describe('styles: a flat sheet, no cascade engine', () => {
     expect(app.gpui.node(app.find('Go').nativeId).style['backgroundColor']).toBe('#e5484d')
   })
 
-  test('sheetFromCss reports what one-element rules can\'t express', () => {
+  test('sheetFromCss reports what a restyle can\'t follow', () => {
     const sheet = sheetFromCss(`
       .a { color: red } .a:hover { color: blue } .b > .c { color: red } .d + .e { color: red }
       .f::before { content: "" } @media (min-width: 640px) { .g { color: red } } @media print { .h { color: red } }
-    `, { viewportWidth: 800 })
-    expect(sheet.rules.map(rule => rule.source)).toEqual(['.a', '.a:hover', '.g'])
+      .group:hover .i { color: red } li:last-child { color: red } @media (scripting: none) { .j { color: red } }
+    `)
+    expect(sheet.rules.map(rule => rule.source)).toEqual(['.a', '.a:hover', '.b > .c', '.g', '.h'])
+    expect(sheet.rules.find(rule => rule.source === '.g')?.media).toEqual(['(min-width: 640px)'])
     expect(sheet.unsupported).toEqual([
-      '.b > .c (descendant combinator)', '.d + .e (sibling combinator)', '.f::before (pseudo-element)', '@media print (media query)',
+      '.d + .e (sibling combinator)', '.f::before (pseudo-element)', '.group:hover .i (state on an ancestor)',
+      'li:last-child (structural pseudo-class)', '@media (scripting: none) (media query)',
     ])
   })
 })

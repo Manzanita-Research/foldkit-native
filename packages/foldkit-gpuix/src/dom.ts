@@ -15,6 +15,8 @@
 // inline styles and a flat sheet (sheet.ts).
 
 /** What a document reports to whoever draws it (host.ts). */
+import { mediaQueryMatches } from './media.ts'
+
 export interface Host {
   /** `node` (and its subtree) was inserted under `parent`, before `before`. */
   inserted(parent: NativeNode, node: NativeNode): void
@@ -692,12 +694,12 @@ export class NativeWindow extends NativeEventTarget {
     warnedLocalStorage = true
     console.warn('[foldkit-gpuix] localStorage is in memory only: what an app saves there is gone when the window closes (a durable store is FKN-22)')
   })
-  /** Width and height queries against the window, hover and a fine pointer
-   *  (a desktop), and no reduced motion or dark scheme preference. Anything
-   *  else doesn't match. Fixed for the window's size at the call. */
+  /** The query against the window as it is (media.ts: sizes, hover, a fine
+   *  pointer, orientation, no preferences); anything else doesn't match.
+   *  Fixed at the call: its listeners never fire. */
   matchMedia(query: string) {
     return {
-      matches: mediaQueryMatches(query, this.innerWidth, this.innerHeight), media: query, onchange: null,
+      matches: mediaQueryMatches(query, { width: this.innerWidth, height: this.innerHeight }) === true, media: query, onchange: null,
       addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {},
       dispatchEvent: () => true,
     }
@@ -740,31 +742,6 @@ export class NativeWindow extends NativeEventTarget {
   /** Drops every pending frame callback (the window is going away). */
   cancelAllFrames() { this.#frames.clear() }
 }
-
-const mediaQueryMatches = (query: string, width: number, height: number): boolean =>
-  query.split(',').some(part => {
-    const one = part.trim().replace(/^only\s+/, '').replace(/^(screen|all)\s*(and\s*)?/, '')
-    if (one === '') return true
-    return one.split(/\s+and\s+/).every(feature => {
-      const match = /^\(\s*([a-z-]+)\s*(?::\s*([^)]+?))?\s*\)$/.exec(feature.trim())
-      if (match === null) return false
-      const [, name, raw] = match
-      const value = raw?.trim()
-      const px = (text: string | undefined) => (text === undefined ? NaN : parseFloat(text) * (/r?em$/.test(text) ? 16 : 1))
-      switch (name) {
-        case 'min-width': return width >= px(value)
-        case 'max-width': return width <= px(value)
-        case 'min-height': return height >= px(value)
-        case 'max-height': return height <= px(value)
-        case 'hover': return value === undefined || value === 'hover'
-        case 'pointer': case 'any-pointer': return value === undefined || value === 'fine'
-        case 'prefers-reduced-motion': return value === 'no-preference'
-        case 'prefers-color-scheme': return value === 'light'
-        case 'orientation': return value === (width >= height ? 'landscape' : 'portrait')
-        default: return false
-      }
-    })
-  })
 
 const memoryHistory = (window: NativeWindow) => {
   const entries: Array<{ url: string; state: unknown }> = [{ url: window.location.href, state: null }]

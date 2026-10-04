@@ -190,6 +190,29 @@ describe('fixes from the first real-GPUI run', () => {
     expect(model().value).toBe('Ada L')
   })
 
+  test('several identical keys GPUI delivers in one task each count', async () => {
+    const Message = defineMessageUnion({ Pressed: { key: Schema.String } })
+    const { app, model } = await run({}, {
+      Model: Schema.Struct({ downs: Schema.Number }), init: { downs: 0 },
+      update: (c, _: typeof Message.Type) => ({ downs: c.downs + 1 }),
+      view: (_, h) => h.div([h.Id('grid'), h.Tabindex(0),
+        h.OnKeyDownPreventDefault((key: string) => key === 'ArrowDown' ? Option.some(Message.Pressed({ key })) : Option.none())], ['grid']),
+    })
+    app.document.getElementById('grid')!.focus()
+    for (const _ of [1, 2, 3]) app.host.dispatch({ eventType: 'windowKeyDown', elementId: 1, key: 'down' } as never)
+    await app.settle()
+    expect(model().downs).toBe(3)
+  })
+
+  test('typing into a field GPUI focused by itself makes it the active element', async () => {
+    const { app } = await run({}, {
+      Model: Counter.Model, init: { count: 0 }, update: c => c,
+      view: (_, h) => h.div([], [h.input([h.Id('a'), h.Placeholder('A')]), h.input([h.Id('b'), h.Placeholder('B')])]),
+    })
+    await app.type('B', 'x')
+    expect(app.document.activeElement?.getAttribute('id')).toBe('b')
+  })
+
   test('a press GPUI handles itself (into a field) still moves the DOM\'s focus', async () => {
     const { app } = await run({}, {
       Model: Counter.Model, init: { count: 0 }, update: c => c,

@@ -31,6 +31,11 @@ export interface Host {
   scrollIntoView(element: NativeElement): void
   scrollOffset(element: NativeElement): [number, number]
   scrollTo(element: NativeElement, x: number, y: number): void
+  /** The text GPUI has selected, and clearing it (GPUI owns selection). */
+  selectedText(): string | null
+  clearSelection(): void
+  /** Runs `callback` after GPUI draws its next frame (requestAnimationFrame). */
+  nextFrame(callback: () => void): void
 }
 
 // EVENTS
@@ -266,6 +271,7 @@ export class NativeNode extends NativeEventTarget {
     else this.childNodes.splice(index, 0, child)
     child.parentNode = this
     if (this.isConnected) this.ownerDocument.host?.inserted(this, child)
+    queueMutation(this, { type: 'childList', addedNodes: [child], previousSibling: this.childNodes[this.childNodes.indexOf(child) - 1] ?? null, nextSibling: before })
     return child
   }
   removeChild<T extends NativeNode>(child: T): T {
@@ -284,9 +290,13 @@ export class NativeNode extends NativeEventTarget {
    *  parent, which GPUI does as a move (no unmount, focus and scroll kept). */
   private detach(child: NativeNode, moving: boolean) {
     const connected = this.isConnected
-    this.childNodes.splice(this.childNodes.indexOf(child), 1)
+    const index = this.childNodes.indexOf(child)
+    const previousSibling = this.childNodes[index - 1] ?? null
+    const nextSibling = this.childNodes[index + 1] ?? null
+    this.childNodes.splice(index, 1)
     child.parentNode = null
     if (connected && !moving) this.ownerDocument.host?.removed(this, child)
+    queueMutation(this, { type: 'childList', removedNodes: [child], previousSibling, nextSibling })
   }
   protected override listenersChanged(type: string, delta: number) {
     this.ownerDocument.host?.listening(this, type, delta)
@@ -301,8 +311,10 @@ export class NativeText extends NativeNode {
   }
   get data() { return this.#data }
   set data(value: string) {
+    const oldValue = this.#data
     this.#data = String(value)
     if (this.isConnected) this.ownerDocument.host?.text(this)
+    queueMutation(this, { type: 'characterData', oldValue })
   }
   get nodeValue() { return this.#data }
   set nodeValue(value: string) { this.data = value }
@@ -331,7 +343,10 @@ const kebab = (name: string) => name.startsWith('--') ? name : name.replace(/[A-
 /** An element's inline style: `style.color = …`, `setProperty('--x', …)`. */
 const inlineStyle = (element: NativeElement) => {
   const declarations = element.inline
-  const changed = () => element.ownerDocument.host?.changed(element, 'style')
+  const changed = () => {
+    element.ownerDocument.host?.changed(element, 'style')
+    queueMutation(element, { type: 'attributes', attributeName: 'style', oldValue: null })
+  }
   const api: Record<string, unknown> = {
     setProperty: (name: string, value: string | null) => {
       if (value === null || value === '') declarations.delete(kebab(name))
@@ -466,18 +481,22 @@ export class NativeElement extends NativeNode {
   setAttribute(name: string, value: string) {
     const key = name.toLowerCase()
     const next = String(value)
-    if (this.attributeMap.get(key) === next) return
+    const oldValue = this.attributeMap.get(key) ?? null
+    if (oldValue === next) return
     this.attributeMap.set(key, next)
     if (key === 'style') this.style.cssText = next
     if (key === 'value' && this.#value === '') this.#value = next
     this.ownerDocument.host?.changed(this, key)
+    queueMutation(this, { type: 'attributes', attributeName: key, oldValue })
   }
   setAttributeNS(_namespace: string | null, name: string, value: string) { this.setAttribute(name, value) }
   removeAttribute(name: string) {
     const key = name.toLowerCase()
+    const oldValue = this.attributeMap.get(key) ?? null
     if (!this.attributeMap.delete(key)) return
     if (key === 'style') this.inline.clear()
     this.ownerDocument.host?.changed(this, key)
+    queueMutation(this, { type: 'attributes', attributeName: key, oldValue })
   }
   removeAttributeNS(_namespace: string | null, name: string) { this.removeAttribute(name) }
   toggleAttribute(name: string, force?: boolean) {
@@ -656,20 +675,31 @@ export class NativeWindow extends NativeEventTarget {
   scrollX = 0
   scrollY = 0
   readonly location = new URL('http://foldkit.native/') as unknown as Location
-  readonly history = {
-    length: 1, state: null as unknown,
-    pushState: () => {}, replaceState: () => {}, back: () => {}, forward: () => {}, go: () => {},
-  }
+  /** In memory: push, replace, back and forward move `location` and fire
+   *  `popstate`, as a single-window app's router expects. */
+  readonly history = memoryHistory(this)
+  /** In memory, for this window's life: a process is a session. */
   readonly sessionStorage = memoryStorage()
-  readonly localStorage = memoryStorage()
   constructor(readonly document: NativeDocument) {
     super()
     document.defaultView = this
   }
+  /** In memory, and it says so: the first write warns once that nothing
+   *  durable backs it yet (FKN-22). FoldKit's own Kanban saves its board
+   *  here, so throwing would break unmodified apps. */
+  readonly localStorage = memoryStorage(() => {
+    if (warnedLocalStorage) return
+    warnedLocalStorage = true
+    console.warn('[foldkit-gpuix] localStorage is in memory only: what an app saves there is gone when the window closes (a durable store is FKN-22)')
+  })
+  /** Width and height queries against the window, hover and a fine pointer
+   *  (a desktop), and no reduced motion or dark scheme preference. Anything
+   *  else doesn't match. Fixed for the window's size at the call. */
   matchMedia(query: string) {
     return {
-      matches: /\(\s*hover\s*:\s*hover\s*\)|\(\s*pointer\s*:\s*fine\s*\)/.test(query), media: query,
+      matches: mediaQueryMatches(query, this.innerWidth, this.innerHeight), media: query, onchange: null,
       addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {},
+      dispatchEvent: () => true,
     }
   }
   getComputedStyle(element: NativeElement) {
@@ -677,18 +707,193 @@ export class NativeWindow extends NativeEventTarget {
   }
   scrollTo() {}
   scroll() {}
-  getSelection() { return null }
-  requestAnimationFrame(callback: (at: number) => void) {
-    return setTimeout(() => callback(performance.now()), 0) as unknown as number
+  /** GPUI's own selection: its text, and clearing it. */
+  getSelection() {
+    const host = () => this.document.host
+    return {
+      get rangeCount() { return (host()?.selectedText() ?? '') === '' ? 0 : 1 },
+      get isCollapsed() { return (host()?.selectedText() ?? '') === '' },
+      get type() { return (host()?.selectedText() ?? '') === '' ? 'None' : 'Range' },
+      toString: () => host()?.selectedText() ?? '',
+      removeAllRanges: () => host()?.clearSelection(),
+      empty: () => host()?.clearSelection(),
+    }
   }
-  cancelAnimationFrame(handle: number) { clearTimeout(handle) }
+  // ANIMATION FRAMES: after GPUI draws its next frame.
+  #frames = new Map<number, (at: number) => void>()
+  #nextFrame = 1
+  requestAnimationFrame(callback: (at: number) => void) {
+    const handle = this.#nextFrame++
+    this.#frames.set(handle, callback)
+    const run = () => {
+      const due = this.#frames.get(handle)
+      if (due === undefined) return
+      this.#frames.delete(handle)
+      due(performance.now())
+    }
+    const host = this.document.host
+    if (host === undefined) setTimeout(run, 16)
+    else host.nextFrame(run)
+    return handle
+  }
+  cancelAnimationFrame(handle: number) { this.#frames.delete(handle) }
+  /** Drops every pending frame callback (the window is going away). */
+  cancelAllFrames() { this.#frames.clear() }
 }
 
-const memoryStorage = () => {
+const mediaQueryMatches = (query: string, width: number, height: number): boolean =>
+  query.split(',').some(part => {
+    const one = part.trim().replace(/^only\s+/, '').replace(/^(screen|all)\s*(and\s*)?/, '')
+    if (one === '') return true
+    return one.split(/\s+and\s+/).every(feature => {
+      const match = /^\(\s*([a-z-]+)\s*(?::\s*([^)]+?))?\s*\)$/.exec(feature.trim())
+      if (match === null) return false
+      const [, name, raw] = match
+      const value = raw?.trim()
+      const px = (text: string | undefined) => (text === undefined ? NaN : parseFloat(text) * (/r?em$/.test(text) ? 16 : 1))
+      switch (name) {
+        case 'min-width': return width >= px(value)
+        case 'max-width': return width <= px(value)
+        case 'min-height': return height >= px(value)
+        case 'max-height': return height <= px(value)
+        case 'hover': return value === undefined || value === 'hover'
+        case 'pointer': case 'any-pointer': return value === undefined || value === 'fine'
+        case 'prefers-reduced-motion': return value === 'no-preference'
+        case 'prefers-color-scheme': return value === 'light'
+        case 'orientation': return value === (width >= height ? 'landscape' : 'portrait')
+        default: return false
+      }
+    })
+  })
+
+const memoryHistory = (window: NativeWindow) => {
+  const entries: Array<{ url: string; state: unknown }> = [{ url: window.location.href, state: null }]
+  let index = 0
+  const go = (delta: number) => {
+    const next = index + delta
+    if (delta === 0 || next < 0 || next >= entries.length) return
+    index = next
+    window.location.href = entries[index]!.url
+    const state = entries[index]!.state
+    // A browser fires popstate after the traversal, in a task.
+    setTimeout(() => window.dispatchEvent(Object.assign(new NativeEvent('popstate'), { state })), 0)
+  }
+  const resolve = (url: string | URL | null | undefined) => (url === null || url === undefined ? window.location.href : new URL(String(url), window.location.href).href)
+  return {
+    get length() { return entries.length },
+    get state() { return entries[index]!.state },
+    scrollRestoration: 'auto' as 'auto' | 'manual',
+    pushState: (state: unknown, _title: string, url?: string | URL | null) => {
+      entries.splice(index + 1, entries.length, { url: resolve(url), state })
+      index++
+      window.location.href = entries[index]!.url
+    },
+    replaceState: (state: unknown, _title: string, url?: string | URL | null) => {
+      entries[index] = { url: resolve(url), state }
+      window.location.href = entries[index]!.url
+    },
+    back: () => go(-1),
+    forward: () => go(1),
+    go: (delta = 0) => go(delta),
+  }
+}
+
+// MUTATION OBSERVERS
+//
+// FoldKit's modal isolation watches the body with one (Dom.showModal keeps
+// everything outside the dialog inert as the page changes), so these behave:
+// childList, attributes (with a filter and old values), characterData, and
+// subtree, delivered together in a microtask, as a browser does.
+
+type MutationInit = {
+  childList?: boolean; attributes?: boolean; characterData?: boolean; subtree?: boolean
+  attributeFilter?: ReadonlyArray<string>; attributeOldValue?: boolean; characterDataOldValue?: boolean
+}
+export type NativeMutationRecord = {
+  type: 'childList' | 'attributes' | 'characterData'
+  target: NativeNode
+  addedNodes: ReadonlyArray<NativeNode>
+  removedNodes: ReadonlyArray<NativeNode>
+  previousSibling: NativeNode | null
+  nextSibling: NativeNode | null
+  attributeName: string | null
+  attributeNamespace: null
+  oldValue: string | null
+}
+type PendingMutation = Pick<NativeMutationRecord, 'type'> & { addedNodes?: ReadonlyArray<NativeNode>; removedNodes?: ReadonlyArray<NativeNode>; previousSibling?: NativeNode | null; nextSibling?: NativeNode | null; attributeName?: string; oldValue?: string | null }
+
+const observers = new Set<NativeMutationObserver>()
+
+const queueMutation = (target: NativeNode, record: PendingMutation) => {
+  if (observers.size === 0) return
+  for (const observer of observers) observer.offer(target, record)
+}
+
+export class NativeMutationObserver {
+  readonly #callback: (records: Array<NativeMutationRecord>, observer: NativeMutationObserver) => void
+  readonly #targets = new Map<NativeNode, MutationInit>()
+  #records: Array<NativeMutationRecord> = []
+  #scheduled = false
+  constructor(callback: (records: Array<NativeMutationRecord>, observer: NativeMutationObserver) => void) {
+    this.#callback = callback
+  }
+  observe(target: NativeNode, options: MutationInit = {}) {
+    const attributes = options.attributes ?? (options.attributeFilter !== undefined || options.attributeOldValue === true)
+    const characterData = options.characterData ?? options.characterDataOldValue === true
+    if (options.childList !== true && !attributes && !characterData) {
+      throw new TypeError("MutationObserver.observe: one of childList, attributes or characterData must be true")
+    }
+    this.#targets.set(target, { ...options, attributes, characterData })
+    observers.add(this)
+  }
+  disconnect() {
+    this.#targets.clear()
+    this.#records = []
+    observers.delete(this)
+  }
+  takeRecords() {
+    const records = this.#records
+    this.#records = []
+    return records
+  }
+  /** @internal A mutation happened at `target`: keep it if it's watched. */
+  offer(target: NativeNode, record: PendingMutation) {
+    for (const [watched, options] of this.#targets) {
+      if (watched !== target && !(options.subtree === true && watched.contains(target))) continue
+      if (record.type === 'childList' && options.childList !== true) continue
+      if (record.type === 'characterData' && options.characterData !== true) continue
+      if (record.type === 'attributes') {
+        if (options.attributes !== true) continue
+        if (options.attributeFilter !== undefined && !options.attributeFilter.includes(record.attributeName ?? '')) continue
+      }
+      const keepOld = record.type === 'attributes' ? options.attributeOldValue === true : record.type === 'characterData' ? options.characterDataOldValue === true : false
+      this.#records.push({
+        type: record.type, target, addedNodes: record.addedNodes ?? [], removedNodes: record.removedNodes ?? [],
+        previousSibling: record.previousSibling ?? null, nextSibling: record.nextSibling ?? null,
+        attributeName: record.attributeName ?? null, attributeNamespace: null, oldValue: keepOld ? record.oldValue ?? null : null,
+      })
+      if (!this.#scheduled) {
+        this.#scheduled = true
+        queueMicrotask(() => {
+          this.#scheduled = false
+          const records = this.takeRecords()
+          if (records.length > 0) this.#callback(records, this)
+        })
+      }
+      return
+    }
+  }
+}
+
+let warnedLocalStorage = false
+const memoryStorage = (onWrite: () => void = () => {}) => {
   const items = new Map<string, string>()
   return {
     getItem: (key: string) => items.get(key) ?? null,
-    setItem: (key: string, value: string) => void items.set(key, String(value)),
+    setItem: (key: string, value: string) => {
+      onWrite()
+      items.set(key, String(value))
+    },
     removeItem: (key: string) => void items.delete(key),
     clear: () => items.clear(),
     key: (index: number) => [...items.keys()][index] ?? null,

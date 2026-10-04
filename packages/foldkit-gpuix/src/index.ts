@@ -30,6 +30,7 @@ import {
   NativeInputEvent,
   NativeKeyboardEvent,
   NativeMouseEvent,
+  NativeMutationObserver,
   NativeNode,
   NativePointerEvent,
   NativeText,
@@ -53,12 +54,6 @@ const tagClass = (tag: string) =>
       return value instanceof NativeElement && value.localName === tag
     }
   }
-class InertObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-  takeRecords() { return [] }
-}
 
 /** Makes `document`, `window` and the DOM classes global, as a browser has
  *  them; returns a function that puts the previous ones back. */
@@ -73,10 +68,14 @@ const installGlobals = (window: NativeWindow) => {
     HTMLInputElement: tagClass('input'), HTMLTextAreaElement: tagClass('textarea'), HTMLButtonElement: tagClass('button'),
     HTMLFormElement: tagClass('form'), HTMLSelectElement: tagClass('select'), HTMLDialogElement: tagClass('dialog'),
     HTMLAnchorElement: tagClass('a'), HTMLImageElement: tagClass('img'), HTMLCanvasElement: tagClass('canvas'),
-    MutationObserver: InertObserver, ResizeObserver: InertObserver, IntersectionObserver: InertObserver,
+    // Behaves (dom.ts). The other two need layout read back every frame,
+    // which a live gpuix window can't afford yet (FKN-29): absent, so feature
+    // detection says so.
+    MutationObserver: NativeMutationObserver, ResizeObserver: undefined, IntersectionObserver: undefined,
     requestAnimationFrame: window.requestAnimationFrame.bind(window),
     cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
     getComputedStyle: window.getComputedStyle.bind(window), matchMedia: window.matchMedia.bind(window),
+    getSelection: window.getSelection.bind(window),
     location: window.location, history: window.history,
     localStorage: window.localStorage, sessionStorage: window.sessionStorage,
   }
@@ -131,6 +130,8 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
   document.body.appendChild(container)
   host.flush()
 
+  const owned: Array<{ dispose: () => void }> = []
+  let detached = false
   return {
     container: container as unknown as HTMLElement,
     document,
@@ -140,18 +141,36 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
     unsupported: appSheet?.unsupported ?? [],
     /** Switch theme at runtime: the tree restyles on the next sync. */
     setTokens,
+    /** Ties a runtime to this window: `detach` disposes it first.
+     *  `native.own(Runtime.embed(Runtime.makeElement({ …, container })))` */
+    own: <T extends { dispose: () => void }>(handle: T): T => {
+      owned.push(handle)
+      return handle
+    },
+    /** Takes it all down, in order: owned runtimes (their Subscriptions,
+     *  Mounts, Commands and listeners stop, and FoldKit empties the
+     *  container), pending animation frames, the native tree and GPUI
+     *  handlers (gpuix's retained count goes to zero), then the globals. */
     detach: () => {
+      if (detached) return
+      detached = true
+      for (const handle of owned.splice(0).reverse()) handle.dispose()
+      window.cancelAllFrames()
       host.detach()
       restore()
     },
   }
 }
 
-export type NativeOptions = WindowOptions & AttachOptions
+export type NativeOptions = WindowOptions & AttachOptions & {
+  /** The window closed: everything's already detached. Without it the
+   *  process exits, as closing a single-window app does. */
+  onClose?: () => void
+}
 
 /** Opens a native window with FoldKit drawn in it. */
 export const mountGpuix = (options: NativeOptions = {}) => {
-  const { css, sheets, tokens, viewport, onSynced, ...windowOptions } = options
+  const { css, sheets, tokens, viewport, onSynced, onClose, ...windowOptions } = options
   const renderer = createNativeRenderer({
     onError: error => console.error('[foldkit-gpuix] native event error', error),
   })
@@ -176,16 +195,17 @@ export const mountGpuix = (options: NativeOptions = {}) => {
       return more
     },
   }
+  const stop = () => {
+    loop.stop()
+    attached.detach()
+  }
   const loop = startFrameLoop(ticking, {
-    onTerminated: () => process.exit(0),
+    onTerminated: () => {
+      stop()
+      if (onClose === undefined) process.exit(0)
+      else onClose()
+    },
     onError: error => console.error('[foldkit-gpuix] frame error', error),
   })
-  return {
-    ...attached,
-    renderer,
-    stop: () => {
-      loop.stop()
-      attached.detach()
-    },
-  }
+  return { ...attached, renderer, stop }
 }

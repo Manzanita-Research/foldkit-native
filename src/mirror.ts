@@ -74,7 +74,10 @@ const KEY_NAMES: Readonly<Record<string, string>> = {
 // of the node's own document. A stopped mirror unregisters, and it and its
 // window can go (patching per mirror kept every window alive, and ran every
 // listener through every mirror ever made).
+type Box = { x: number; y: number; width: number; height: number }
 const trackers = new WeakMap<object, (target: EventTarget, type: string, delta: number) => void>()
+const layouts = new WeakMap<object, (node: Node) => Box | null>()
+const rectsPatched = new WeakSet<object>()
 const originals = new WeakMap<object, { add: EventTarget['addEventListener']; remove: EventTarget['removeEventListener'] }>()
 /** The document a node, document or window belongs to. */
 const documentOf = (target: unknown): object | undefined => {
@@ -107,6 +110,21 @@ const watchListeners = (body: Node) => {
   }
   return found
 }
+/** getBoundingClientRect, answered by the mirror of the element's document
+ *  where GPUI has painted it, and by happy-dom's zeros where not. */
+const watchRects = (body: Node) => {
+  const proto = owner(body, 'getBoundingClientRect') as unknown as Element
+  if (rectsPatched.has(proto)) return
+  rectsPatched.add(proto)
+  const unlaidOut = proto.getBoundingClientRect
+  proto.getBoundingClientRect = function (this: Element) {
+    const document = this.ownerDocument as (Document & { defaultView: { DOMRect: typeof DOMRect } | null }) | null
+    const box = document === null ? null : layouts.get(document)?.(this as unknown as Node) ?? null
+    if (box === null || document?.defaultView == null) return unlaidOut.call(this)
+    return new document.defaultView.DOMRect(box.x, box.y, box.width, box.height)
+  }
+}
+
 /** scrollTop and scrollLeft: a change an app makes is reported to the mirror
  *  of the element's document (which scrolls GPUI to match). */
 const scrollers = new WeakMap<object, (element: Element) => void>()
@@ -592,16 +610,8 @@ export const createMirror = (options: {
       const id = ids.get(node)
       return id === undefined ? null : boundsOf(id)
     }
-    let elementProto = Object.getPrototypeOf(document.body) as Element
-    while (!Object.prototype.hasOwnProperty.call(elementProto, 'getBoundingClientRect')) {
-      elementProto = Object.getPrototypeOf(elementProto)
-    }
-    const unlaidOut = elementProto.getBoundingClientRect
-    const Rect = (window as unknown as { DOMRect: typeof DOMRect }).DOMRect
-    elementProto.getBoundingClientRect = function (this: Element) {
-      const box = boxOf(this as unknown as Node)
-      return box === null ? unlaidOut.call(this) : new Rect(box.x, box.y, box.width, box.height)
-    }
+    watchRects(document.body as unknown as Node)
+    layouts.set(document, boxOf)
     /** Every element GPUI painted under the point, topmost first: children
      *  over parents, later siblings over earlier ones, as GPUI paints them.
      *  `pointer-events: none` ones are skipped, as a browser skips them. */
@@ -825,6 +835,7 @@ export const createMirror = (options: {
     },
     stop: () => {
       trackers.delete(document)
+      layouts.delete(document)
       scrollers.delete(document)
       observer.disconnect()
       themeObserver.disconnect()

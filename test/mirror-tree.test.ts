@@ -358,10 +358,10 @@ describe('many windows in one process', () => {
 
   test('the shared methods are patched once, however many mirrors there are', async () => {
     const first = await open()
-    const methods = ['addEventListener', 'removeEventListener'].map(key => owner(first.box, key)[key])
+    const methods = ['addEventListener', 'removeEventListener', 'getBoundingClientRect'].map(key => owner(first.box, key)[key])
     const scroll = Object.getOwnPropertyDescriptor(owner(first.box, 'scrollTop'), 'scrollTop')!.set
     const second = await open()
-    expect(['addEventListener', 'removeEventListener'].map(key => owner(second.box, key)[key])).toEqual(methods)
+    expect(['addEventListener', 'removeEventListener', 'getBoundingClientRect'].map(key => owner(second.box, key)[key])).toEqual(methods)
     expect(Object.getOwnPropertyDescriptor(owner(second.box, 'scrollTop'), 'scrollTop')!.set).toBe(scroll)
     await first.m.close()
     await second.m.close()
@@ -376,7 +376,9 @@ describe('many windows in one process', () => {
     expect(a.m.nativeOf(a.box as unknown as Node).listeners.has('click')).toBe(true)
     expect(b.m.nativeOf(b.box as unknown as Node).listeners.has('click')).toBe(false)
 
-    // Stopped: no more listener tracking or scrolling from it.
+    // Stopped: no more listener tracking, scrolling or layout answers from it.
+    a.m.gpui.setBounds(a.m.idOf(a.box as unknown as Node), { x: 1, y: 2, width: 30, height: 40 })
+    expect(a.box.getBoundingClientRect().width).toBe(30)
     await a.m.close()
     a.box.addEventListener('mousedown', () => {})
     a.box.setAttribute('data-x', '2')
@@ -384,6 +386,7 @@ describe('many windows in one process', () => {
     expect(a.m.nativeOf(a.box as unknown as Node).listeners.has('mouseDown')).toBe(false)
     a.box.scrollTop = 100
     expect(a.m.gpui.scrollCalls).toEqual([])
+    expect(a.box.getBoundingClientRect().width).toBe(0)
 
     // The other one carries on.
     b.box.scrollTop = 100

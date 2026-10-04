@@ -393,6 +393,10 @@ input:where([type="button"], [type="reset"], [type="submit"]) {
   overflow: hidden;
 }
 
+.absolute {
+  position: absolute;
+}
+
 .fixed {
   position: fixed;
 }

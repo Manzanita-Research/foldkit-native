@@ -12,7 +12,7 @@ export const meta: ExampleMeta = {
   gpui: 'Pointer drags with live drop targets, layered rounded cards with shadows',
   source: 'https://github.com/foldkit/foldkit/tree/main/examples/kanban',
   width: 1000,
-  height: 720,
+  height: 793,
 }
 
 export const start = (container: HTMLElement) =>

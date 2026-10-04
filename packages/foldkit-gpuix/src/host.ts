@@ -442,6 +442,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const node = id === null || id === undefined ? undefined : nodes.get(id)
     setFocus(node instanceof NativeElement ? node : null, true, visible)
   }
+  /** If GPUI moved focus without telling (its editors take focus on press
+   *  and send no focus event), the DOM follows, as a pointer focus. */
+  const reconcileFocus = () => {
+    const id = renderer.getFocusedElementId?.()
+    if (id !== null && id !== undefined && id !== focused?.nativeId && nodes.get(id) instanceof NativeElement) followGpui(false)
+  }
   /** The scope Tab stays inside: an open modal dialog, as a browser's
    *  `showModal` keeps it (`aria-modal` or `data-fn-focus-scope`). */
   const focusScope = (): NativeElement | null => {
@@ -451,17 +457,13 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   }
 
   // KEYS
-  // GPUI may report one keystroke more than once (to the focused element and
-  // to the window); the DOM hears it once, on the focused element.
-  let lastKey: { type: string; key: string; sameTask: boolean } | undefined
+  // Keys come from GPUI's window key events only (no element listens for
+  // keys natively), so each keystroke arrives once. GPUI sends several in
+  // one task when they queue up; each is its own event.
   const key = (event: EventPayload, type: 'keydown' | 'keyup') => {
     const name = event.key === undefined ? '' : KEY_NAMES[event.key] ?? event.key
-    if (lastKey !== undefined && lastKey.sameTask && lastKey.type === type && lastKey.key === name) return
-    const seen = { type, key: name, sameTask: true }
-    lastKey = seen
-    queueMicrotask(() => {
-      seen.sameTask = false
-    })
+    // Keys go where GPUI's focus is, even if it moved there by itself.
+    reconcileFocus()
     keyboardModality = true
     inputAt = performance.now()
     const held = event.modifiers
@@ -550,12 +552,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         // Every press reaches the root (it listens). GPUI may have moved focus
         // itself (its editors take focus on press and send no focus event),
         // so the DOM asks GPUI once the press is handled.
-        if (event.eventType === 'mouseDown' && node === body) {
+        // GPUI commits focus during the press, so this looks after it, on
+        // the press and again on the release (an editor may stop the press
+        // from bubbling).
+        if ((event.eventType === 'mouseDown' || event.eventType === 'mouseUp') && node === body) {
           keyboardModality = false
-          setTimeout(() => {
-            const id = renderer.getFocusedElementId?.()
-            if (id !== null && id !== undefined && id !== focused?.nativeId) followGpui(false)
-          }, 0)
+          setTimeout(reconcileFocus, 0)
         }
         const type = { mouseDown: 'mousedown', mouseUp: 'mouseup', mouseMove: 'mousemove' }[event.eventType]!
         if (!listens(node, type) && !listens(node, type.replace('mouse', 'pointer'))) return
@@ -595,6 +597,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
           return
         }
         nativeValue(element, value)
+        // Typing into a field means GPUI has it focused.
+        if (focused !== element) setFocus(element, true, false)
         element.dispatchEvent(new NativeInputEvent('input', { bubbles: true, data: value }))
         return
       }
@@ -714,6 +718,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (body.nativeId !== 0) return
     mount(body)
     listenNatively(body, 'mouseDown')
+    listenNatively(body, 'mouseUp')
     mutations.setRoot(body.nativeId)
     schedule()
   }

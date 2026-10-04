@@ -65,28 +65,38 @@ export const Scroller = (() => {
 })()
 
 // LISTBOX
+// Escape, from inside the list, marks the highlighted fruit sold out (its
+// option disabled) or back in stock.
 export const Picker = (() => {
   const items: ReadonlyArray<Listbox.Item> = ['Apple', 'Apricot', 'Banana', 'Blueberry', 'Cherry', 'Damson', 'Elderberry', 'Fig', 'Grape', 'Kiwi']
     .map(label => ({ value: label.toLowerCase(), label }))
-  const Model = Schema.Struct({ list: Listbox.Model, fruit: Schema.String })
-  const Message = defineMessageUnion({ Picked: { value: Schema.String }, GotListMessage: { message: Listbox.Message } })
+  const Model = Schema.Struct({ list: Listbox.Model, fruit: Schema.String, soldOut: Schema.Array(Schema.String) })
+  const Message = defineMessageUnion({ Picked: { value: Schema.String }, GotListMessage: { message: Listbox.Message }, ToggledSoldOut: {} })
   type Model = typeof Model.Type
   type Message = typeof Message.Type
   const toList = (message: Listbox.Message) => Message.GotListMessage({ message })
-  const init: Model = { list: Listbox.init({ id: 'fruit' }), fruit: 'apple' }
+  const init: Model = { list: Listbox.init({ id: 'fruit' }), fruit: 'apple', soldOut: [] }
   const update = (model: Model, message: Message): Update.Return<Model, Message> =>
     Message.match<Update.Return<Model, Message>>(message, {
       Picked: ({ value }) => ({ model: { ...model, fruit: value } }),
+      ToggledSoldOut: () => {
+        const value = items[model.list.highlighted]!.value
+        const soldOut = model.soldOut.includes(value) ? model.soldOut.filter(other => other !== value) : [...model.soldOut, value]
+        return { model: { ...model, soldOut } }
+      },
       GotListMessage: ({ message: child }) => {
         const next = Listbox.update(model.list, child)
         return { model: { ...model, list: next.model }, commands: Command.mapMessages(next.commands, toList) }
       },
     })
   const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
-    Listbox.view({
-      model: model.list, label: 'Fruit', items, selected: model.fruit, maxHeight: 120,
-      onSelect: value => Message.Picked({ value }), toParentMessage: toList,
-    }, h),
+    h.div([h.OnKeyDownPreventDefault(key => (key === 'Escape' ? Option.some(Message.ToggledSoldOut()) : Option.none()))], [
+      Listbox.view({
+        model: model.list, label: 'Fruit', selected: model.fruit, maxHeight: 120,
+        items: items.map(item => (model.soldOut.includes(item.value) ? { ...item, disabled: true } : item)),
+        onSelect: value => Message.Picked({ value }), toParentMessage: toList,
+      }, h),
+    ]),
   ])
   return { Model, Message, init, update, view, items }
 })()

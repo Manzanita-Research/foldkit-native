@@ -44,6 +44,7 @@ import {
   NativeMouseEvent,
   type NativeNode,
   NativeText,
+  isDisabled,
   isNaturallyFocusable,
 } from './dom.ts'
 import { type Declared, INHERITED, type Sheet, type State, type Viewport, declarations, declared, fold, resolveVars, textStyle, toStyle } from './sheet.ts'
@@ -63,6 +64,9 @@ const KEY_NAMES: Readonly<Record<string, string>> = {
   delete: 'Delete', up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
   home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown',
 }
+
+/** gpuix events that a disabled control never hears (clicks: see 'click'). */
+const POINTER_PRESSES = new Set(['mouseDown', 'mouseUp', 'auxClick'])
 
 const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number'])
 /** gpuix has no masked editor, so a password field would show the secret.
@@ -307,7 +311,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 
   // PROPS: accessibility, focus order, field values, images.
   const isFocusable = (element: NativeElement) => {
-    if (element.hasAttribute('disabled') || element.closest('[inert]') !== null || isPassword(element)) return false
+    if (isDisabled(element) || element.closest('[inert]') !== null || isPassword(element)) return false
     const own = element.getAttribute('tabindex')
     return own !== null ? !Number.isNaN(Number(own)) : isNaturallyFocusable(element)
   }
@@ -387,11 +391,15 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       props.set('value', element.value)
       const placeholder = element.getAttribute('placeholder')
       if (placeholder !== null) props.set('placeholder', placeholder)
-      if (element.hasAttribute('readonly') || element.hasAttribute('disabled')) props.set('readOnly', true)
+      // GPUI's editor applies an edit as it takes it, so a field that mustn't
+      // change is read-only in GPUI itself, not just in JS.
+      if (isLocked(element)) props.set('readOnly', true)
     }
     return props
   }
   const isField = (element: NativeElement) => nativeType(element) === 'input' || nativeType(element) === 'textarea'
+  /** A field the person can't edit: read-only, or disabled. */
+  const isLocked = (element: NativeElement) => element.hasAttribute('readonly') || isDisabled(element)
   const syncProps = (element: NativeElement) => {
     const id = element.nativeId
     const next = propsOf(element)
@@ -630,7 +638,17 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const followGpui = (visible = true) => {
     const id = renderer.getFocusedElementId?.()
     const node = id === null || id === undefined ? undefined : nodes.get(id)
+    if (node instanceof NativeElement && !isFocusable(node)) return refuseFocus()
     setFocus(node instanceof NativeElement ? node : null, true, visible)
+  }
+  /** GPUI focused something a browser wouldn't: its editors take focus on a
+   *  press even when disabled and told `tabIndex: -1` (on Metal). The DOM
+   *  doesn't follow; focus leaves, and GPUI lets go where it can (a live
+   *  window; gpuix's offscreen renderer has no blur, and the field's
+   *  `readOnly` keeps it unedited). */
+  const refuseFocus = () => {
+    if (focused !== null) setFocus(null, false, false)
+    else renderer.blur?.()
   }
   /** If GPUI moved focus without telling (its editors take focus on press
    *  and send no focus event), the DOM follows, as a pointer focus. */
@@ -753,6 +771,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       ctrlKey: held?.ctrl ?? false, metaKey: held?.cmd ?? false, shiftKey: held?.shift ?? false, altKey: held?.alt ?? false,
     }
     const element = node as NativeElement
+    // A disabled control hears no presses or clicks, as in a browser.
+    if (POINTER_PRESSES.has(event.eventType) && element instanceof NativeElement && disabledControl(element) !== null) return
     switch (event.eventType) {
       case 'click': {
         // GPUI tells every listening ancestor; the DOM bubbles it itself.
@@ -762,6 +782,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         queueMicrotask(() => {
           click.sameTask = false
         })
+        // Not dispatched at all: the ancestors GPUI tells next don't hear it either.
+        if (node instanceof NativeElement && disabledControl(element) !== null) return
         keyboardModality = false
         inputAt = performance.now()
         const mouse = { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }
@@ -801,7 +823,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       case 'keyDown': return key(event, 'keydown')
       case 'keyUp': return key(event, 'keyup')
       case 'focus':
-        if (node instanceof NativeElement) setFocus(node, true)
+        if (node instanceof NativeElement) {
+          if (isFocusable(node)) setFocus(node, true)
+          else refuseFocus()
+        }
         return
       case 'blur':
         // Focus may be moving to another element GPUI reports next.
@@ -812,6 +837,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       case 'change': {
         inputAt = performance.now()
         const value = unnudged(element, event.value ?? '')
+        // An edit GPUI's editor took before it heard the field was disabled
+        // or made read-only (it applies edits at once): the DOM refuses it
+        // and the editor gets the value back.
+        if (isLocked(element)) return value === element.value ? undefined : restoreValue(element, element.value)
         if (onlyAddsTabs(element.value, value)) {
           const before = element.value
           if (typedByTab(element)) return restoreValue(element, before)
@@ -851,6 +880,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     pushValue(element, value)
     sentProps.get(element)?.set('value', value)
     schedule()
+  }
+  /** The disabled form control `element` is (or is inside), if any. */
+  const disabledControl = (element: NativeElement): NativeElement | null => {
+    const control = element.closest('button, input, select, textarea')
+    return control !== null && isDisabled(control) ? control : null
   }
   const focusableAncestor = (element: NativeElement): NativeElement | null => {
     for (let at: NativeElement | null = element; at !== null; at = at.parentElement) if (isFocusable(at)) return at

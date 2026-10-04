@@ -5,7 +5,9 @@ import { Command, type Update } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 
-import { Dialog, Listbox, ScrollArea, Switch, TextField, button, dusk, part, themeStyle, uiCss } from '../src/index.ts'
+import { Option } from 'effect'
+
+import { Dialog, Listbox, ScrollArea, Select, Switch, TextField, button, dusk, part, themeStyle, uiCss } from '../src/index.ts'
 
 const root = <Message>(h: HtmlBuilder<Message>, children: ReadonlyArray<Html>) =>
   h.div([...part(h, 'root', undefined), h.Style(themeStyle(dusk))], [h.div([h.Style({ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '12px' })], children)])
@@ -85,6 +87,31 @@ export const Picker = (() => {
       model: model.list, label: 'Fruit', items, selected: model.fruit, maxHeight: 120,
       onSelect: value => Message.Picked({ value }), toParentMessage: toList,
     }, h),
+  ])
+  return { Model, Message, init, update, view, items }
+})()
+
+// SELECT
+export const Chooser = (() => {
+  const items = Picker.items
+  const Model = Schema.Struct({ fruit: Schema.String, select: Select.Model })
+  const Message = defineMessageUnion({ GotSelectMessage: { message: Select.Message } })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const toSelect = (message: Select.Message) => Message.GotSelectMessage({ message })
+  const init: Model = { fruit: 'banana', select: Select.init({ id: 'fruit' }) }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> => {
+    const next = Select.update(model.select, message.message)
+    return {
+      model: { fruit: Option.getOrElse(Select.chosen(message.message), () => model.fruit), select: next.model },
+      commands: Command.mapMessages(next.commands, toSelect),
+    }
+  }
+  const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
+    button({ label: 'Before', onClick: Message.GotSelectMessage({ message: Select.Message.Ignored() }), attributes: [h.Id('before')] }, h),
+    Select.view({ model: model.select, label: 'Fruit', items, selected: model.fruit, toParentMessage: toSelect, maxHeight: 168 }, h),
+    h.input([h.Id('after'), h.Placeholder('After')]),
+    h.p([h.Id('picked')], [`Picked: ${model.fruit}`]),
   ])
   return { Model, Message, init, update, view, items }
 })()

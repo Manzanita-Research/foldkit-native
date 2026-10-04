@@ -192,3 +192,57 @@ describe('the sheet\'s contract', () => {
     expect(sheet.rules.find(rule => rule.source.startsWith('.md'))?.state).toBe('hover')
   })
 })
+
+describe('containing blocks (taffy positions `absolute` against the parent; CSS doesn\'t)', () => {
+  const css = `.layer { position: absolute; top: 0; right: 0; bottom: 0; left: 0; } .frame { position: relative; }`
+  const nativeParent = (id: string) => app!.gpui.node(app!.document.getElementById(id)!.nativeId).parent
+  const nativeId = (id: string) => app!.document.getElementById(id)!.nativeId
+
+  test('an absolute box under a static parent is drawn under the nearest positioned ancestor, or the root', async () => {
+    await open(css, (state, h) => h.div([h.Id('page')], [
+      h.div([h.Id('frame'), ...(state === 'framed' ? [h.Class('frame')] : [])], [
+        h.div([h.Id('static')], [h.div([h.Class('layer'), h.Id('layer')], ['over'])]),
+      ]),
+      h.button([h.Id('frame-it'), h.OnClick(Message.Set({ state: 'framed' }))], ['frame']),
+      h.button([h.Id('unframe'), h.OnClick(Message.Set({ state: 'a' }))], ['unframe']),
+    ]))
+    // No positioned ancestor: the root (the window), last, so on top.
+    expect(nativeParent('layer')).toBe(app!.document.body.nativeId)
+    expect(app!.gpui.node(app!.document.body.nativeId).children.at(-1)).toBe(nativeId('layer'))
+    expect(app!.gpui.node(nativeId('layer')).style).toMatchObject({ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 })
+    // An ancestor becomes positioned: the box moves under it.
+    await app!.click('frame')
+    expect(nativeParent('layer')).toBe(nativeId('frame'))
+    // And back.
+    await app!.click('unframe')
+    expect(nativeParent('layer')).toBe(app!.document.body.nativeId)
+  })
+
+  test('a box whose parent is positioned stays put; the DOM never changes', async () => {
+    await open(css, (_, h) => h.div([h.Class('frame'), h.Id('frame')], [h.div([h.Class('layer'), h.Id('layer')], ['over'])]))
+    expect(nativeParent('layer')).toBe(nativeId('frame'))
+    expect(app!.document.getElementById('layer')!.parentElement!.getAttribute('id')).toBe('frame')
+  })
+
+  test('removing the static ancestor removes the re-homed box from GPUI too', async () => {
+    await open(css, (state, h) => h.div([], [
+      ...(state === 'a' ? [h.div([h.Id('static')], [h.div([h.Class('layer'), h.Id('layer')], ['over'])])] : []),
+      h.button([h.Id('remove'), h.OnClick(Message.Set({ state: 'gone' }))], ['remove']),
+    ]))
+    const layer = nativeId('layer')
+    await app!.click('remove')
+    expect(() => app!.gpui.node(layer)).toThrow()
+    expect(app!.gpui.retainedCount()).toBe(app!.gpui.reachableCount())
+  })
+
+  test('siblings placed after a re-homed box keep their order', async () => {
+    await open(css, (state, h) => h.div([h.Id('list')], [
+      h.div([h.Id('one')], ['1']),
+      h.div([h.Class('layer'), h.Id('layer')], ['over']),
+      ...(state === 'more' ? [h.div([h.Id('two')], ['2'])] : []),
+      h.button([h.Id('more'), h.OnClick(Message.Set({ state: 'more' }))], ['more']),
+    ]))
+    await app!.click('more')
+    expect(app!.gpui.node(nativeId('list')).children).toEqual([nativeId('one'), nativeId('two'), nativeId('more')])
+  })
+})

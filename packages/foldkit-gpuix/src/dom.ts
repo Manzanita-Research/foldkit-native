@@ -15,6 +15,8 @@
 // inline styles and a flat sheet (sheet.ts).
 
 /** What a document reports to whoever draws it (host.ts). */
+import { Equal } from 'effect'
+
 import { mediaQueryMatches } from './media.ts'
 
 export interface Host {
@@ -155,6 +157,12 @@ const parentTarget = (target: NativeEventTarget): NativeEventTarget | null => {
 
 export class NativeEventTarget {
   readonly listeners = new Map<string, Array<Listener>>()
+  constructor() {
+    // Equal by identity, as a browser's DOM objects are to Effect. Otherwise
+    // Effect's Equal.equals (FoldKit's Dom.advanceFocus uses it) hashes the
+    // whole cyclic document and never returns.
+    Equal.byReferenceUnsafe(this)
+  }
   addEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions) {
     if (callback === null) return
     const capture = typeof options === 'boolean' ? options : options?.capture === true

@@ -14,10 +14,16 @@ if (id === undefined) {
   process.exit(1)
 }
 const example = await loadExample(id)
-const native = mountNative({
-  title: example.meta.title,
-  width: example.meta.width,
-  height: example.meta.height,
-  css: example.css,
-})
-example.start(native.container)
+if (example.meta.renderer === 'gpuix') {
+  const { mountGpuix } = await import('foldkit-gpuix')
+  const native = mountGpuix({ title: example.meta.title, width: example.meta.width, height: example.meta.height, css: example.css })
+  example.start(native.container)
+} else {
+  const native = mountNative({
+    title: example.meta.title,
+    width: example.meta.width,
+    height: example.meta.height,
+    css: example.css,
+  })
+  example.start(native.container)
+}

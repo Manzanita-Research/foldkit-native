@@ -96,19 +96,43 @@ describe('aspect-ratio, from the laid-out width', () => {
     expect(height(tall)).toBe(40)
   })
 
-  test('one pass per width change: the same widths change nothing, a new one corrects again', async () => {
-    const { square, lay, height } = await shapes()
+  test('one pass per layout: the same layout changes nothing, a new one corrects again', async () => {
+    const { square, wide, lay, height } = await shapes()
     lay(square, 300)
+    lay(wide, 160)
     expect(mounted.mirror.afterLayout()).toBe(true)
     expect(mounted.mirror.afterLayout()).toBe(false)
+    // GPUI lays it out narrower (a resize the DOM didn't see).
     lay(square, 200)
+    expect(mounted.mirror.afterLayout()).toBe(false)
+    mounted.mirror.layoutChanged()
     expect(mounted.mirror.afterLayout()).toBe(true)
     expect(height(square)).toBe(200)
   })
 
+  test('a pass reads every bounds at once, and only when something could have moved', async () => {
+    const { square, wide, lay } = await shapes()
+    lay(square, 300)
+    lay(wide, 160)
+    const reads = mounted.gpui.treeReads()
+    mounted.mirror.afterLayout()
+    expect(mounted.gpui.treeReads() - reads).toBe(1)
+    // A repaint (a colour) moves nothing: no read.
+    square.classList.add('red')
+    await mounted.settle()
+    mounted.mirror.afterLayout()
+    expect(mounted.gpui.treeReads() - reads).toBe(1)
+    // A new element can move things: read again.
+    mounted.container.appendChild(mounted.document.createElement('p'))
+    await mounted.settle()
+    mounted.mirror.afterLayout()
+    expect(mounted.gpui.treeReads() - reads).toBe(2)
+  })
+
   test('a restyle keeps the height it was given', async () => {
-    const { square, lay, height } = await shapes()
+    const { square, wide, lay, height } = await shapes()
     lay(square, 120)
+    lay(wide, 160)
     mounted.mirror.afterLayout()
     square.classList.add('red')
     await mounted.settle()

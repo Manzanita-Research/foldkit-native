@@ -368,10 +368,16 @@ export const createMirror = (options: {
   // GPUI's own late copies, after the release, are skipped.
   let hovered: Element | undefined
   const told = new Map<Node, 'mouseEnter' | 'mouseLeave'>()
+  // Every element's bounds, read at once and kept for this layout epoch.
   let painted: { epoch: number; boxes: ReadonlyMap<number, { x: number; y: number; width: number; height: number }> } | undefined
-  const paintedBounds = (): ((id: number) => { x: number; y: number; width: number; height: number } | null) => {
+  const freshBounds = (): ((id: number) => { x: number; y: number; width: number; height: number } | null) => {
     if (options.allBounds === undefined) return id => options.boundsOf!(id)
-    if (painted?.epoch !== layoutEpoch) painted = { epoch: layoutEpoch, boxes: options.allBounds() }
+    const boxes = options.allBounds()
+    painted = { epoch: layoutEpoch, boxes }
+    return id => boxes.get(id) ?? null
+  }
+  const paintedBounds = (): ((id: number) => { x: number; y: number; width: number; height: number } | null) => {
+    if (options.allBounds === undefined || painted?.epoch !== layoutEpoch) return freshBounds()
     const boxes = painted.boxes
     return id => boxes.get(id) ?? null
   }
@@ -688,17 +694,24 @@ export const createMirror = (options: {
   }
   /** One correction pass: each aspect-ratio element whose laid-out width
    *  changed gets its height. True if anything changed (GPUI should lay out
-   *  again); a pass with the same widths changes nothing, so it can't loop. */
+   *  again); a pass with the same widths changes nothing, so it can't loop.
+   *  Free when nothing that can move things changed since the last pass (the
+   *  layout epoch), so a frame that only repaints costs nothing. */
+  let laidOutAt = -1
   const afterLayout = (): boolean => {
-    if (options.boundsOf === undefined) return false
+    if (options.boundsOf === undefined || aspects.size === 0 || laidOutAt === layoutEpoch) return false
+    const epoch = layoutEpoch
+    const boundsOf = freshBounds()
     let changed = false
+    let unlaid = false
     for (const [node, aspect] of aspects) {
       const id = ids.get(node)
       if (id === undefined || !node.isConnected) {
         aspects.delete(node)
         continue
       }
-      const box = options.boundsOf(id)
+      const box = boundsOf(id)
+      if (box === null) unlaid = true
       if (box === null || box.width === aspect.width) continue
       aspect.width = box.width
       aspect.height = Math.round((box.width / aspect.ratio) * 100) / 100
@@ -706,6 +719,8 @@ export const createMirror = (options: {
       changed = true
     }
     if (changed) mutations.flushMutations()
+    // Not laid out yet (the first frame): look again next time.
+    if (!unlaid) laidOutAt = changed ? layoutEpoch : epoch
     return changed
   }
 
@@ -993,6 +1008,11 @@ export const createMirror = (options: {
     /** Call once GPUI has laid out a frame: elements with an aspect-ratio get
      *  their heights. True if it changed anything (lay out again). */
     afterLayout,
+    /** Something moved that the DOM didn't (the window was resized): bounds
+     *  read before are stale. */
+    layoutChanged: () => {
+      layoutEpoch++
+    },
     windowKey: (event: EventPayload) => {
       if (firstOfPair(event, 'window')) toDom((document.activeElement as Node | null) ?? body, event)
     },

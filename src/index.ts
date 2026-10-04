@@ -156,8 +156,15 @@ export const mountNative = (options: NativeOptions = {}) => {
     },
   })
   const tick = renderer.tick.bind(renderer)
+  let windowSize: { width: number; height: number } | undefined
   renderer.tick = () => {
     const running = tick()
+    // A resize moves things the DOM doesn't know about.
+    const size = renderer.getWindowSize?.()
+    if (size !== undefined && (size.width !== windowSize?.width || size.height !== windowSize?.height)) {
+      if (windowSize !== undefined) dom.mirror.layoutChanged()
+      windowSize = size
+    }
     // Heights from laid-out widths (aspect-ratio); the next tick draws them.
     dom.mirror.afterLayout()
     if (flushed !== undefined) {

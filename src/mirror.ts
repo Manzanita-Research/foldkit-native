@@ -185,11 +185,12 @@ export const createMirror = (options: {
     switch (event.eventType) {
       case 'click': {
         // GPUI reports a click to every listening ancestor; the DOM bubbles it
-        // itself, so only the innermost one is dispatched.
+        // itself, so only the innermost one is dispatched. A second click on
+        // the same element is a new click, however quick.
         const now = performance.now()
         // The release that ends a drag isn't a click.
         if (now - dragEndedAt < 150) return
-        if (lastClick !== undefined && now - lastClick.at < 4 && node.contains(lastClick.node)) return
+        if (lastClick !== undefined && now - lastClick.at < 4 && node !== lastClick.node && node.contains(lastClick.node)) return
         lastClick = { node, at: now }
         const type = event.isRightClick ? 'contextmenu' : (event.clickCount ?? 1) > 1 ? 'dblclick' : 'click'
         node.dispatchEvent(new W['MouseEvent']!(type, { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }))

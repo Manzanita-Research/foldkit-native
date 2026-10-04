@@ -278,14 +278,38 @@ const STATES = [
 
 export type StateRule = Readonly<{ state: (typeof STATES)[number][0]; base: string; style: CSSStyleDeclaration }>
 
+/** Substitutes every `var(--x)` and `var(--x, fallback)` in a value with the
+ *  custom property `lookup` finds, or the fallback when it finds none. A
+ *  rule's own declaration isn't cascaded, so nobody else does this for it. */
+export const resolveVars = (value: string, lookup: (name: string) => string, depth = 0): string => {
+  const start = value.indexOf('var(')
+  if (start === -1 || depth > 8) return value
+  let end = start + 4
+  for (let open = 1; end < value.length && open > 0; end++) {
+    if (value[end] === '(') open++
+    else if (value[end] === ')') open--
+  }
+  const inner = value.slice(start + 4, end - 1)
+  const [name = '', ...rest] = splitTopLevel(inner)
+  const own = lookup(name.trim())
+  const replacement = resolveVars(own !== '' ? own : rest.join(', '), lookup, depth + 1)
+  return resolveVars(value.slice(0, start) + replacement + value.slice(end), lookup, depth + 1)
+}
+
 /** The styles `x:hover`, `x:active` and `x:focus-visible` rules would add to an
  *  element, found by matching each rule's selector without the pseudo-class
- *  (the DOM doesn't know where the pointer is; GPUI does, and applies them). */
-export const stateStyles = (element: Element, rules: ReadonlyArray<StateRule>): Partial<Record<StateRule['state'], Style>> => {
+ *  (the DOM doesn't know where the pointer is; GPUI does, and applies them).
+ *  `lookup` finds the element's custom properties, for the rules' var()s. */
+export const stateStyles = (
+  element: Element,
+  rules: ReadonlyArray<StateRule>,
+  lookup: (name: string) => string,
+): Partial<Record<StateRule['state'], Style>> => {
   const states: Partial<Record<StateRule['state'], Style>> = {}
   for (const rule of rules) {
     if (!element.matches(rule.base)) continue
-    states[rule.state] = { ...states[rule.state], ...boxStyle(rule.style), ...textStyle(rule.style) }
+    const resolved: Computed = { getPropertyValue: name => resolveVars(rule.style.getPropertyValue(name), lookup) }
+    states[rule.state] = { ...states[rule.state], ...boxStyle(resolved), ...textStyle(resolved) }
   }
   return states
 }
@@ -293,9 +317,18 @@ export const stateStyles = (element: Element, rules: ReadonlyArray<StateRule>): 
 /** Collects the state rules from every stylesheet in the document. */
 export const collectStateRules = (document: Document): ReadonlyArray<StateRule> => {
   const rules: Array<StateRule> = []
-  for (const sheet of Array.from(document.styleSheets)) {
-    for (const rule of Array.from(sheet.cssRules) as Array<CSSStyleRule>) {
-      if (rule.selectorText === undefined) continue
+  const collect = (list: CSSRuleList) => {
+    for (const rule of Array.from(list) as Array<CSSStyleRule & CSSMediaRule>) {
+      // Tailwind 4 puts every hover: inside `@media (hover: hover)`. A desktop
+      // pointer hovers, so those count, as does any media query that matches.
+      if (rule.selectorText === undefined) {
+        const media = rule.media?.mediaText
+        if (media !== undefined && rule.cssRules !== undefined &&
+          (/\(\s*hover\s*:\s*hover\s*\)/.test(media) || document.defaultView?.matchMedia(media).matches)) {
+          collect(rule.cssRules)
+        }
+        continue
+      }
       for (const selector of rule.selectorText.split(',')) {
         for (const [state, pseudo] of STATES) {
           if (!selector.includes(pseudo)) continue
@@ -304,5 +337,6 @@ export const collectStateRules = (document: Document): ReadonlyArray<StateRule> 
       }
     }
   }
+  for (const sheet of Array.from(document.styleSheets)) collect(sheet.cssRules)
   return rules
 }

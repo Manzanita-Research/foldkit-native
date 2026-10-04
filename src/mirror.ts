@@ -313,6 +313,15 @@ export const createMirror = (options: {
   }
 
   // STYLE
+  /** An element's custom property, inherited ones included: happy-dom's
+   *  computed style lists only the element's own, so walk up to find it. */
+  const customProperty = (element: Element) => (name: string): string => {
+    for (let at: Element | null = element; at !== null; at = at.parentElement) {
+      const value = window.getComputedStyle(at as never).getPropertyValue(name).trim()
+      if (value !== '') return value
+    }
+    return ''
+  }
   const styleOf = (node: Node): StyleDesc => {
     if (node.nodeType === 3) {
       const parent = node.parentElement
@@ -332,7 +341,7 @@ export const createMirror = (options: {
     if (inlineChildren && style['display'] === undefined && element.children.length > 0) {
       Object.assign(style, { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline' })
     }
-    Object.assign(style, stateStyles(element, stateRules))
+    Object.assign(style, stateStyles(element, stateRules, customProperty(element)))
     return style as StyleDesc
   }
 

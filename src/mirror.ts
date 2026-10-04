@@ -229,6 +229,12 @@ export const createMirror = (options: {
         node.dispatchEvent(new W['Event']!('change', init))
         return
       }
+      case 'submit': {
+        // Enter in a field: the browser's implicit submission.
+        const form = (node as HTMLInputElement).form
+        if (form !== null && form !== undefined) form.requestSubmit()
+        return
+      }
       case 'focus': case 'blur':
         node.dispatchEvent(new W['FocusEvent']!(event.eventType, { bubbles: false }))
         node.dispatchEvent(new W['FocusEvent']!(event.eventType === 'focus' ? 'focusin' : 'focusout', { bubbles: true }))
@@ -321,9 +327,29 @@ export const createMirror = (options: {
   }
 
   // TREE
+  // Forms, as a browser runs them: a submit button submits its form with no
+  // click listener of its own, and Enter in a field submits it too (gpuix's
+  // input sends `submit` on Enter). So both listen natively, once each.
+  const formParts = new WeakSet<Node>()
+  const listenForForm = (node: Node) => {
+    if (node.nodeType !== 1 || formParts.has(node)) return
+    const element = node as HTMLInputElement | HTMLButtonElement
+    if (element.form === null || element.form === undefined) return
+    const tag = element.tagName.toLowerCase()
+    const type = (element.getAttribute('type') ?? '').toLowerCase()
+    if ((tag === 'button' && (type === '' || type === 'submit')) || (tag === 'input' && (type === 'submit' || type === 'image'))) {
+      formParts.add(node)
+      track(node, 'click', 1)
+    } else if (tag === 'input' && ['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(type)) {
+      formParts.add(node)
+      track(node, 'submit', 1)
+    }
+  }
+
   const create = (node: Node): number | undefined => {
     const type = nativeType(node)
     if (type === undefined) return undefined
+    listenForForm(node)
     const id = nextId++
     created += 1
     ids.set(node, id)

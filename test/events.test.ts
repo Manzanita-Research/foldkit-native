@@ -198,6 +198,49 @@ describe('pointer', () => {
   })
 })
 
+describe('forms', () => {
+  /** A form with a field and buttons, its submits counted. */
+  const form = async () => {
+    const { container } = await setup()
+    const form = el('form')
+    form.innerHTML = '<input aria-label="zip"><button type="button">Clear</button><button>Go</button>'
+    let submits = 0
+    form.addEventListener('submit', event => {
+      event.preventDefault()
+      submits++
+    })
+    container.appendChild(form)
+    await mounted.settle()
+    const [input, clear, go] = [form.querySelector('input')!, form.querySelectorAll('button')[0]!, form.querySelectorAll('button')[1]!]
+    return { input, clear, go, submits: () => submits }
+  }
+
+  test('a click on a submit button submits its form, with no click listener of its own', async () => {
+    const { go, clear, submits } = await form()
+    expect(mounted.nativeOf(go).listeners.has('click')).toBe(true)
+    expect(mounted.nativeOf(clear).listeners.has('click')).toBe(false)
+    mounted.send(go, { eventType: 'click', x: 1, y: 1, button: 0, clickCount: 1 })
+    expect(submits()).toBe(1)
+  })
+
+  test('Enter in a field submits its form, as a browser does', async () => {
+    const { input, submits } = await form()
+    expect(mounted.nativeOf(input).listeners.has('submit')).toBe(true)
+    mounted.send(input, { eventType: 'submit' } as never)
+    expect(submits()).toBe(1)
+  })
+
+  test('outside a form, buttons and fields stay quiet', async () => {
+    const { container } = await setup()
+    const button = el('button', 'Go')
+    const input = el('input')
+    container.append(button, input)
+    await mounted.settle()
+    expect(mounted.nativeOf(button).listeners.size).toBe(0)
+    expect(mounted.nativeOf(input).listeners.size).toBe(0)
+  })
+})
+
 describe('keys, focus, input', () => {
   test('gpuix key names become DOM KeyboardEvent.key', async () => {
     const { container } = await setup()

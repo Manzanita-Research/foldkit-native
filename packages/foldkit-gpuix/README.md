@@ -12,22 +12,80 @@ scrolling and text editing are GPUI's own.
 import { Runtime } from 'foldkit'
 import { mountGpuix } from 'foldkit-gpuix'
 
-const native = mountGpuix({ title: 'My app', width: 800, height: 600, css })
-native.own(Runtime.embed(Runtime.makeElement({ Model, init, update, view, container: native.container })))
+const app = mountGpuix({ title: 'My app', appId: 'dev.example.notes', width: 800, height: 600, css })
+app.own(Runtime.embed(Runtime.makeElement({ Model, init, update, view, container: app.container })))
 ```
 
-- `own(handle)` ties a runtime to the window. Closing the window (or
-  `stop()`) disposes it first: its Subscriptions, Mounts, Commands and
-  listeners stop, and FoldKit empties the container.
-- Then `detach` frees the rest: pending animation frames, the native tree
-  (gpuix's retained element count goes to zero), GPUI handlers and window key
-  events, and the globals it installed.
-- `onClose` runs once all that's done. Without it the process exits, as
-  closing a single-window app does.
+- `own(handle)` ties a runtime to the window, so closing disposes it: its
+  Subscriptions, Mounts, Commands and listeners stop, and FoldKit empties
+  the container.
 - `attachGpuix(renderer, options)` does the same on a renderer you already
   have: gpuix's offscreen `TestRenderer`, or the fake GPUI in the tests.
+  Its `detach()` takes it all down.
 
 `Runtime.run` works too, but it has no handle, so nothing can dispose it.
+
+## Closing, errors and starting
+
+`app.close()` asks the close handlers, then releases everything the app
+owns: its runtimes, pending animation frames, the native tree (gpuix's
+retained element count goes to zero), GPUI handlers and window key events,
+the globals, the frame loop, and gpuix's automation listener on stdin. It
+resolves `false` if a handler kept the window open.
+
+- **Close handlers**: `onClose(handler)` (or the `onClose` option). They run
+  before anything is taken down, so they can still read the model and save,
+  and closing waits for a promise. `request.preventDefault()` keeps the
+  window open when the app asked (`reason: 'close'`). `close({ force: true })`
+  can't be kept open. A handler that throws is reported and doesn't keep it.
+- **When GPUI's loop ends** (`reason: 'window'`: the person closed it, on
+  Linux and Windows), the handlers run but can't keep it.
+- **`exitOnClose`** (default `true`): the window is the process. Closing it
+  ends the process (exit 0). With `false` the process is the host's:
+  `close()` resolves and `app.closed` settles, and the process goes on.
+- **`onError({ phase, error, context })`** gets what a browser would report
+  rather than throw. A DOM listener's error (`listener`: the event's type
+  and target) and an animation frame's (`animationFrame`) are reported and
+  the next one still runs. Also: a tick of the frame loop (`frame`), an error
+  from GPUI (`native`), a native event the host failed on (`event`: its type
+  and element), a close handler (`close`), the store (`storage`). Without
+  `onError` they go to `console.error`.
+- **Starting**: gpuix loads when a window is mounted, not at import, so a
+  failure to load is caught too. It's a `NativeStartError` with one sentence:
+  no display to open a window on (wayland-client's `NoCompositor`), a
+  missing library (`libxkbcommon.so.0`), or GPUI's own message. With
+  `exitOnClose` that sentence goes to stderr and the process exits 1. With
+  `false` it's thrown.
+
+**gpuix 0.10's limits.** Both are pinned by tests (`test/app.test.ts`), so a
+gpuix upgrade that changes them fails there.
+
+1. gpuix's event callback holds the process open as long as GPUI lives, and
+   gpuix can't close its window or let go of the callback from JavaScript.
+   So with `exitOnClose: false`, after `close()` the window stays on screen,
+   undrawn, until the process ends, and an app-only process doesn't end.
+   That's why `exitOnClose` is `true` by default. Everything the adapter
+   owns is released, and with the fake GPUI an app-only process ends on its
+   own within a second of `close()`.
+2. On macOS, closing the window natively (the red button) ends the
+   process inside GPUI's frame: exit 0, with no JavaScript running. Close
+   handlers don't run then, and nothing can save at close. That's why
+   `localStorage` writes through.
+
+## Durable data
+
+With an `appId`, `localStorage` is a file, `localStorage.json`, in the app's
+data folder: `~/Library/Application Support/<appId>` on macOS,
+`$XDG_DATA_HOME/<appId>` (or `~/.local/share/<appId>`) on Linux,
+`%APPDATA%\<appId>` on Windows. `dataDir` names another folder. Each
+`setItem`, `removeItem` and `clear` writes the whole store before it returns,
+to a temporary file renamed over the old one. So a crash or a SIGTERM loses
+nothing, and there's nothing to flush. A write takes about 0.3 ms for a 10 KB
+value on the Mac mini (`test/storage.test.ts` prints it). A file that isn't a
+store is set aside as `localStorage.json.unreadable`, reported, and the app
+starts empty. A write that fails throws, as a browser's quota error does.
+Two processes of one app share the file, and the last write wins.
+`sessionStorage` stays in memory.
 
 ## Browser APIs: what behaves and what doesn't
 
@@ -40,7 +98,7 @@ what a browser's does, or is absent or says so. None is a silent stand-in.
 | `requestAnimationFrame` | **Behaves.** Runs before GPUI draws its next frame, and what it changes goes into that frame (a 16 ms timer when nothing drives frames); `cancelAnimationFrame` works; `detach` drops pending ones | FoldKit renders in it, and `Render.afterPaint` counts frames |
 | `history`, `location` | **Behaves, in memory.** `pushState`/`replaceState` move `location`; `back`/`forward`/`go` fire `popstate` a task later | A router in one window wants exactly this. There's no address bar |
 | `sessionStorage` | **Behaves, in memory**, for the window's life | A process is a session |
-| `localStorage` | **In memory, and it says so.** The first write warns once on stderr that nothing durable backs it | FoldKit's own Kanban saves its board there, so throwing would break unmodified apps. A durable store is FKN-22 |
+| `localStorage` | **Behaves, in a file** per `appId`, written through on every change (Durable data, above). Without an `appId` it's in memory, and the first write says so once | Pixel Art and Kanban save there. In memory, throwing would break unmodified apps |
 | `getSelection()` | **Behaves.** GPUI's own selection: `toString()`, `rangeCount`, `removeAllRanges()` | GPUI owns text selection |
 | `matchMedia` | **Behaves, per call.** Sizes (`min-width`, `width < …`), `hover`, `pointer: fine` and `orientation`, against the window as it is (`src/media.ts`, shared with the sheet). `prefers-reduced-motion` and `prefers-color-scheme: dark` don't match, and anything else doesn't either. Its listeners never fire, but `resize` does | Re-query on `resize` |
 | `ResizeObserver`, `IntersectionObserver` | **Absent** (`typeof … === 'undefined'`) | Both need layout read back every frame, and a live gpuix window can't afford that yet (FKN-29). @foldkit/ui's virtual list and `Dom`'s element-movement wait use `ResizeObserver` and fail loudly |

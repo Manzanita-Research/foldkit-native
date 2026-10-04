@@ -1,7 +1,9 @@
 // Pixel Art, from FoldKit's examples. FoldKit's entry.ts, with the container
 // passed in (and without devtools, which need a browser). The saved canvas
-// comes in as Flags, read from happy-dom's localStorage as FoldKit reads the
-// browser's; it doesn't outlive the window yet.
+// comes in as Flags, read from localStorage as FoldKit reads the browser's.
+// On the adapter (FOLDKIT_NATIVE_RENDERER=gpuix) that's a file in the app's
+// data folder, so the canvas survives a restart (restart.test.ts); on the
+// mirror it's happy-dom's, in memory.
 import { Runtime } from 'foldkit'
 
 import type { ExampleMeta } from '../support/example.ts'

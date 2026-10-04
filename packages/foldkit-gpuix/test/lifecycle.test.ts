@@ -2,12 +2,15 @@
 // view, Submodels, and taking everything down with `detach`. Then the
 // browser APIs the document stands in for, each of which either behaves or
 // says plainly that it doesn't (the list is in packages/foldkit-gpuix/README.md).
+import type { NativeRenderer } from '@gpuix/native/host'
+import { createRendererState } from '@gpuix/native/host'
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { Effect, Schema } from 'effect'
 import { Command, Mount, Render, Runtime } from 'foldkit'
 import type { HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 
+import { attachGpuix } from '../src/index.ts'
 import { METAL, mountHeadless, openMetal } from './support.ts'
 
 type Headless = ReturnType<typeof mountHeadless>
@@ -61,7 +64,7 @@ const view = (model: Model, h: HtmlBuilder<Message>) =>
     ...(model.shown ? [h.div([h.Id('late'), h.OnMount(Watch())], ['late'])] : []),
   ])
 
-const start = (mounted: Headless) =>
+const start = (mounted: Pick<Headless, 'own' | 'container'>) =>
   mounted.own(Runtime.embed(Runtime.makeElement({
     Model, init: () => ({ model: { shown: false, mounted: 0, found: false } }), update, view,
     container: mounted.container,
@@ -128,6 +131,32 @@ describe('the FoldKit lifecycle on gpuix', () => {
     expect(mounted.gpui.batches.length).toBe(batches)
     // Twice is fine.
     mounted.close()
+  })
+
+  test('100 mount/dispose cycles: no native-node or handler growth', async () => {
+    const first = mountHeadless()
+    const renderer = first.fake.renderer
+    first.close()
+    let mounted: { nodes: number; handlers: number } | undefined
+    for (let cycle = 1; cycle <= 100; cycle++) {
+      log.length = 0
+      const attached = attachGpuix(renderer)
+      start(attached)
+      for (let i = 0; i < 4; i++) {
+        await new Promise(resolve => setTimeout(resolve, 0))
+        attached.host.frame()
+        attached.host.flush()
+        attached.host.drawn()
+      }
+      const now = { nodes: first.gpui.retainedCount(), handlers: createRendererState(renderer).current()!.eventHandlers.size }
+      mounted ??= now
+      expect(now).toEqual(mounted)
+      attached.detach()
+      expect(first.gpui.retainedCount()).toBe(0)
+      expect(createRendererState(renderer).current()).toBeUndefined()
+    }
+    expect(mounted!.nodes).toBeGreaterThan(5)
+    expect(mounted!.handlers).toBeGreaterThan(2)
   })
 
   test("requestAnimationFrame runs before GPUI draws, and stops at detach", async () => {
@@ -257,4 +286,45 @@ describe.skipIf(!METAL)('detach on real GPUI (Metal)', () => {
     expect(log).toEqual(['mounted late', 'released'])
     expect(metal.renderer.getRetainedElementCount()).toBe(0)
   })
+
+  test('100 mount/dispose cycles on one window: no native-node, handler or memory growth', async () => {
+    const { TestRenderer } = await import('@gpuix/native/testing')
+    const size = { width: 320, height: 240 }
+    const renderer = new TestRenderer(size)
+    const native = renderer as unknown as NativeRenderer
+    const heap: Record<number, number> = {}
+    let mounted: { nodes: number; handlers: number } | undefined
+    const started = performance.now()
+    for (let cycle = 1; cycle <= 100; cycle++) {
+      log.length = 0
+      const attached = attachGpuix(native, { viewport: size })
+      attached.own(Runtime.embed(Runtime.makeElement({
+        Model, init: () => ({ model: { shown: true, mounted: 0, found: false } }), update, view, container: attached.container,
+      } as never)))
+      for (let i = 0; i < 4; i++) {
+        await new Promise(resolve => setTimeout(resolve, 0))
+        attached.host.frame()
+        attached.host.flush()
+        renderer.flush()
+        attached.host.drawn()
+        renderer.dispatchNativeEvents()
+      }
+      const now = { nodes: renderer.getRetainedElementCount(), handlers: createRendererState(native).current()!.eventHandlers.size }
+      mounted ??= now
+      expect(now).toEqual(mounted)
+      attached.detach()
+      renderer.flush()
+      expect(log).toEqual(['mounted late', 'released'])
+      expect(renderer.getRetainedElementCount()).toBe(0)
+      expect(createRendererState(native).current()).toBeUndefined()
+      if (cycle === 10 || cycle === 100) {
+        Bun.gc(true)
+        heap[cycle] = process.memoryUsage().heapUsed
+      }
+    }
+    const grew = (heap[100]! - heap[10]!) / 1024 / 1024
+    console.log(`100 mount/dispose cycles on Metal: ${mounted!.nodes} native nodes and ${mounted!.handlers} handlers while mounted, 0 after each; heap ${grew.toFixed(2)} MB from cycle 10 to 100 (after GC); ${((performance.now() - started) / 100).toFixed(1)} ms per cycle`)
+    // The M1 budget: no growth beyond 20 MB residual after GC.
+    expect(grew).toBeLessThan(20)
+  }, 60_000)
 })

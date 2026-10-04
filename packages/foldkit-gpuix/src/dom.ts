@@ -18,6 +18,7 @@
 import { Equal } from 'effect'
 
 import { mediaQueryMatches } from './media.ts'
+import { type NativeStorage, memoryStorage } from './storage.ts'
 
 export interface Host {
   /** `node` (and its subtree) was inserted under `parent`, before `before`. */
@@ -195,8 +196,14 @@ export class NativeEventTarget {
         if (phase === 3 && listener.capture) continue
         if (listener.once) at.removeEventListener(native.type, listener.callback, listener.capture)
         const { callback } = listener
-        if (typeof callback === 'function') callback.call(at, native as unknown as Event)
-        else callback.handleEvent(native as unknown as Event)
+        // As a browser: a listener that throws is reported, and the event
+        // goes on to the next one.
+        try {
+          if (typeof callback === 'function') callback.call(at, native as unknown as Event)
+          else callback.handleEvent(native as unknown as Event)
+        } catch (error) {
+          windowOf(at)?.report('listener', error, { type: native.type, target: describeTarget(at) })
+        }
         if (native.stoppedNow) break
       }
     }
@@ -208,6 +215,13 @@ export class NativeEventTarget {
     return !native.defaultPrevented
   }
 }
+
+const windowOf = (target: NativeEventTarget): NativeWindow | undefined =>
+  target instanceof NativeWindow ? target : (target as { ownerDocument?: NativeDocument }).ownerDocument?.defaultView ?? undefined
+const describeTarget = (target: NativeEventTarget) =>
+  target instanceof NativeElement
+    ? `${target.localName}${target.hasAttribute('id') ? `#${target.getAttribute('id')}` : ''}`
+    : target instanceof NativeWindow ? 'window' : target instanceof NativeDocument ? 'document' : 'node'
 
 // NODES
 
@@ -693,6 +707,11 @@ export class NativeDocument extends NativeNode {
   startViewTransition: undefined
 }
 
+/** Where an error came from: a frame of the loop, a native event, a DOM
+ *  listener, an animation frame, a close handler, or the app's storage. */
+export type ErrorPhase = 'frame' | 'native' | 'event' | 'listener' | 'animationFrame' | 'close' | 'storage'
+export type ErrorReport = Readonly<{ phase: ErrorPhase; error: unknown; context: Readonly<Record<string, unknown>> }>
+
 /** The parts of `window` FoldKit's runtime and @foldkit/ui use. */
 export class NativeWindow extends NativeEventTarget {
   readonly window = this
@@ -714,14 +733,24 @@ export class NativeWindow extends NativeEventTarget {
     super()
     document.defaultView = this
   }
-  /** In memory, and it says so: the first write warns once that nothing
-   *  durable backs it yet (FKN-22). FoldKit's own Kanban saves its board
-   *  here, so throwing would break unmodified apps. */
-  readonly localStorage = memoryStorage(() => {
+  /** A file per app once it has an `appId` (storage.ts, set by attachGpuix).
+   *  Without one it's in memory, and the first write says so once: FoldKit's
+   *  own Kanban saves its board here, so throwing would break unmodified apps. */
+  localStorage: NativeStorage = memoryStorage(() => {
     if (warnedLocalStorage) return
     warnedLocalStorage = true
-    console.warn('[foldkit-gpuix] localStorage is in memory only: what an app saves there is gone when the window closes (a durable store is FKN-22)')
+    console.warn('[foldkit-gpuix] localStorage is in memory only: pass an appId to keep what an app saves there')
   })
+  /** Where errors go that a browser would report rather than throw: a
+   *  listener's, an animation frame's. attachGpuix sets it (`onError`). */
+  onError: (report: ErrorReport) => void = ({ phase, error, context }) => console.error(`[foldkit-gpuix] ${phase} error`, context, error)
+  report(phase: ErrorPhase, error: unknown, context: Record<string, unknown> = {}) {
+    try {
+      this.onError({ phase, error, context })
+    } catch (failed) {
+      console.error('[foldkit-gpuix] onError threw', failed, 'reporting', error)
+    }
+  }
   /** The query against the window as it is (media.ts: sizes, hover, a fine
    *  pointer, orientation, no preferences); anything else doesn't match.
    *  Fixed at the call: its listeners never fire. */
@@ -759,7 +788,11 @@ export class NativeWindow extends NativeEventTarget {
       const due = this.#frames.get(handle)
       if (due === undefined) return
       this.#frames.delete(handle)
-      due(performance.now())
+      try {
+        due(performance.now())
+      } catch (error) {
+        this.report('animationFrame', error, { handle })
+      }
     }
     const host = this.document.host
     if (host === undefined) setTimeout(run, 16)
@@ -891,20 +924,6 @@ export class NativeMutationObserver {
 }
 
 let warnedLocalStorage = false
-const memoryStorage = (onWrite: () => void = () => {}) => {
-  const items = new Map<string, string>()
-  return {
-    getItem: (key: string) => items.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      onWrite()
-      items.set(key, String(value))
-    },
-    removeItem: (key: string) => void items.delete(key),
-    clear: () => items.clear(),
-    key: (index: number) => [...items.keys()][index] ?? null,
-    get length() { return items.size },
-  }
-}
 
 // SELECTORS
 //

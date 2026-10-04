@@ -5,8 +5,8 @@
 // mirror, no CSS engine.
 //
 //   import { mountGpuix } from 'foldkit-gpuix'
-//   const native = mountGpuix({ title: 'My app', css })
-//   Runtime.run(Runtime.makeElement({ Model, init, update, view, container: native.container }))
+//   const app = mountGpuix({ title: 'My app', appId: 'dev.example.app', css })
+//   app.own(Runtime.embed(Runtime.makeElement({ Model, init, update, view, container: app.container })))
 //
 // FoldKit is unchanged. It renders with snabbdom, which writes to the global
 // `document`; here that document's nodes are gpuix host nodes (dom.ts,
@@ -14,11 +14,12 @@
 // selectors look at one element at a time. Focus, Tab order, scrolling and
 // text input are GPUI's own.
 
-import type { WindowOptions } from '@gpuix/native'
-import type { NativeRenderer } from '@gpuix/native/host'
-import { createNativeRenderer, startFrameLoop } from '@gpuix/native/runtime'
+import type { EventPayload, WindowOptions } from '@gpuix/native'
+import { type NativeRenderer, createRendererState } from '@gpuix/native/host'
 
 import {
+  type ErrorPhase,
+  type ErrorReport,
   NativeComment,
   NativeCustomEvent,
   NativeDocument,
@@ -39,8 +40,12 @@ import {
 } from './dom.ts'
 import { type HostTimings, createHost } from './host.ts'
 import { type Sheet, sheetFromCss, sheetFromObject } from './sheet.ts'
+import { NativeStartError, explainStartError, loadGpuix } from './start.ts'
+import { type NativeStorage, dataDirFor, fileStorage } from './storage.ts'
 
-export { type HostTimings, type Sheet, sheetFromCss, sheetFromObject }
+export { type ErrorPhase, type ErrorReport, type HostTimings, type NativeStorage, type Sheet, sheetFromCss, sheetFromObject }
+export { NativeStartError, type StartFailure, explainStartError } from './start.ts'
+export { dataDirFor } from './storage.ts'
 export { NativeDocument, NativeElement } from './dom.ts'
 
 /** Token name → CSS value (numbers are pixels), as `foldkit-native`'s theme. */
@@ -101,6 +106,17 @@ export type AttachOptions = {
   /** Window size in logical pixels, for width media queries and `innerWidth`. */
   viewport?: { width: number; height: number }
   onSynced?: (timings: HostTimings) => void
+  /** Names the app's data folder (`dataDirFor`): `localStorage` is a file
+   *  there, written through on every change (src/storage.ts). Without an
+   *  `appId` or a `dataDir` it's in memory and says so. */
+  appId?: string
+  /** The data folder itself, instead of the platform's one for `appId`. */
+  dataDir?: string
+  /** Errors a browser would report rather than throw, with where they came
+   *  from: a DOM listener's or an animation frame's (the next ones still
+   *  run), the frame loop's, a native event's, a close handler's, the
+   *  store's. Without it they go to `console.error`. */
+  onError?: (report: ErrorReport) => void
 }
 
 /** FoldKit on an already-initialised gpuix renderer: the live window
@@ -112,6 +128,9 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
   const viewport = options.viewport ?? renderer.getWindowSize?.() ?? { width: 1024, height: 768 }
   window.innerWidth = viewport.width
   window.innerHeight = viewport.height
+  if (options.onError !== undefined) window.onError = options.onError
+  const dataDir = options.dataDir ?? (options.appId === undefined ? undefined : dataDirFor(options.appId))
+  if (dataDir !== undefined) window.localStorage = fileStorage(dataDir, (error, context) => window.report('storage', error, context))
   const restore = installGlobals(window)
   const appSheet = options.css === undefined ? undefined : sheetFromCss(options.css)
   const sheets = [...(options.sheets ?? []), ...(appSheet === undefined ? [] : [appSheet])]
@@ -172,52 +191,180 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
   }
 }
 
-export type NativeOptions = WindowOptions & AttachOptions & {
-  /** The window closed: everything's already detached. Without it the
-   *  process exits, as closing a single-window app does. */
-  onClose?: () => void
+/** Why the window is closing: the app called `close()`, or the window went
+ *  (GPUI's loop ended: the person closed it, on Linux and Windows). */
+export type CloseReason = 'close' | 'window'
+
+/** What close handlers get. `preventDefault()` keeps the window open, when
+ *  the app asked (`close()`); a window that already went can't be kept. */
+export class CloseRequest {
+  defaultPrevented = false
+  constructor(readonly reason: CloseReason, readonly vetoable: boolean) {}
+  preventDefault() {
+    if (this.vetoable) this.defaultPrevented = true
+  }
+}
+/** Runs before anything is taken down, so it can still read the model and
+ *  save. It may return a promise: closing waits for it. */
+export type CloseHandler = (request: CloseRequest) => void | Promise<void>
+
+/** gpuix's renderer, as `mountGpuix` drives it. */
+export type WindowRenderer = NativeRenderer & {
+  init(options?: WindowOptions | null): void
+  tick(): boolean
+  requiresTick(): boolean
 }
 
-/** Opens a native window with FoldKit drawn in it. */
+export type NativeOptions = WindowOptions & AttachOptions & {
+  /** The window is this process (the default): closing it ends the process
+   *  (exit 0), and a window that can't open prints why in one sentence and
+   *  ends it (exit 1). With `false` the process is the host's: `close()`
+   *  resolves instead, and a failed start throws a `NativeStartError`.
+   *
+   *  `false` has a limit on gpuix 0.10: GPUI stays alive after `close()`.
+   *  gpuix's event callback holds the process open and its window can't be
+   *  closed from JavaScript, so the window stays on screen, undrawn, until
+   *  the process ends. */
+  exitOnClose?: boolean
+  /** A close handler (`onClose(handler)` adds more). It runs for `close()`
+   *  and when GPUI's loop ends. Not when a person closes the window on
+   *  macOS: there GPUI ends the process inside its frame, with no
+   *  JavaScript running, so nothing may count on saving at close. */
+  onClose?: CloseHandler
+  /** Makes the renderer, given gpuix's event callback (tests: a fake). */
+  createRenderer?: (callback: (error: Error | null, event: EventPayload) => void) => WindowRenderer
+}
+
+/** Opens a native window with FoldKit drawn in it. Returns the app: its
+ *  container, `own()` for its runtimes, and `close()`. */
 export const mountGpuix = (options: NativeOptions = {}) => {
-  const { css, sheets, tokens, viewport, onSynced, onClose, ...windowOptions } = options
-  const renderer = createNativeRenderer({
-    onError: error => console.error('[foldkit-gpuix] native event error', error),
-  })
-  renderer.init(windowOptions)
+  const { css, sheets, tokens, viewport, onSynced, onClose, onError, dataDir, exitOnClose = true, createRenderer, ...windowOptions } = options
+  let attached: ReturnType<typeof attachGpuix> | undefined
+  const report = (phase: ErrorPhase, error: unknown, context: Record<string, unknown> = {}) => {
+    if (attached !== undefined) attached.window.report(phase, error, context)
+    else console.error(`[foldkit-gpuix] ${phase} error`, context, error)
+  }
+
+  // OPEN: gpuix loads now, so a missing library is explained too (start.ts).
+  let renderer: WindowRenderer
+  let gpuix: ReturnType<typeof loadGpuix>
+  const stdinBefore = new Set(process.stdin.listeners('data'))
+  try {
+    gpuix = loadGpuix()
+    const callback = (error: Error | null, event: EventPayload) => {
+      if (error !== null) return report('native', error)
+      try {
+        createRendererState(renderer).dispatch(event)
+      } catch (failed) {
+        report('event', failed, { eventType: event.eventType, elementId: event.elementId })
+      }
+    }
+    renderer = createRenderer?.(callback) ?? new gpuix.native.GpuixRenderer(callback)
+    renderer.init(windowOptions)
+  } catch (error) {
+    const failure = explainStartError(error)
+    if (!exitOnClose) throw failure
+    console.error(failure.message)
+    process.exit(1)
+  }
+  // gpuix's automation (scripts/record.ts, the window tests) talks over
+  // stdin when it isn't a terminal, as gpuix's createNativeRenderer does.
+  if (createRenderer === undefined && process.stdin.isTTY !== true) gpuix.runtime.enableAutomation(renderer as never)
+
   const { width, height } = windowOptions
-  const attached = attachGpuix(renderer, {
+  attached = attachGpuix(renderer, {
     ...(css === undefined ? {} : { css }),
     ...(sheets === undefined ? {} : { sheets }),
     ...(tokens === undefined ? {} : { tokens }),
     ...(onSynced === undefined ? {} : { onSynced }),
+    ...(onError === undefined ? {} : { onError }),
+    ...(dataDir === undefined ? {} : { dataDir }),
+    ...(windowOptions.appId === undefined ? {} : { appId: windowOptions.appId }),
     viewport: viewport ?? { width: width ?? 1024, height: height ?? 768 },
   })
-  if (attached.unsupported.length > 0 && process.env['FOLDKIT_GPUIX_DEBUG'] !== undefined) {
-    console.error(`[foldkit-gpuix] ${attached.unsupported.length} CSS rules not supported:\n  ${attached.unsupported.join('\n  ')}`)
+  const app = attached
+  if (app.unsupported.length > 0 && process.env['FOLDKIT_GPUIX_DEBUG'] !== undefined) {
+    console.error(`[foldkit-gpuix] ${app.unsupported.length} CSS rules not supported:\n  ${app.unsupported.join('\n  ')}`)
   }
-  // Around each tick: animation frames before GPUI may draw, the host's
-  // waiting work after.
+
+  // CLOSE: ask the handlers, then take everything down.
+  const handlers = new Set<CloseHandler>(onClose === undefined ? [] : [onClose])
+  let closing: Promise<boolean> | undefined
+  let done = false
+  const { promise: closed, resolve: resolveClosed } = Promise.withResolvers<void>()
+  const ask = async (request: CloseRequest) => {
+    for (const handler of [...handlers]) {
+      try {
+        await handler(request)
+      } catch (error) {
+        report('close', error, { reason: request.reason })
+      }
+    }
+  }
+  const finish = () => {
+    if (done) return
+    done = true
+    loop.stop()
+    app.detach()
+    // The automation listener gpuix put on stdin, so it can't hold the process.
+    const added = process.stdin.listeners('data').filter(listener => !stdinBefore.has(listener))
+    for (const listener of added) process.stdin.off('data', listener as never)
+    if (added.length > 0 && process.stdin.listenerCount('data') === 0) process.stdin.pause()
+    resolveClosed()
+    if (exitOnClose) process.exit(0)
+  }
+  const close = (options: { force?: boolean } = {}): Promise<boolean> => {
+    if (done) return Promise.resolve(true)
+    // A forced close after one a handler may still keep open.
+    if (closing !== undefined && options.force === true) return closing.then(ok => ok || close(options))
+    closing ??= (async () => {
+      const request = new CloseRequest('close', options.force !== true)
+      await ask(request)
+      if (request.defaultPrevented) {
+        closing = undefined
+        return false
+      }
+      finish()
+      return true
+    })()
+    return closing
+  }
+
+  // FRAMES: around each tick, animation frames before GPUI may draw, the
+  // host's waiting work after.
+  let frames = 0
   const ticking = {
     requiresTick: () => renderer.requiresTick(),
     tick: () => {
-      attached.host.frame()
+      frames++
+      app.host.frame()
       const more = renderer.tick()
-      attached.host.drawn()
+      app.host.drawn()
       return more
     },
   }
-  const stop = () => {
-    loop.stop()
-    attached.detach()
-  }
-  const loop = startFrameLoop(ticking, {
+  const loop = gpuix.runtime.startFrameLoop(ticking, {
+    // The window went: nothing to keep open, but handlers may still save.
     onTerminated: () => {
-      stop()
-      if (onClose === undefined) process.exit(0)
-      else onClose()
+      if (done) return
+      closing = ask(new CloseRequest('window', false)).then(() => (finish(), true))
     },
-    onError: error => console.error('[foldkit-gpuix] frame error', error),
+    onError: error => report('frame', error, { frame: frames }),
   })
-  return { ...attached, renderer, stop }
+  return {
+    ...app,
+    renderer,
+    /** Asks the close handlers (one may `preventDefault()`), then releases
+     *  everything the app owns: its runtimes, animation frames, the native
+     *  tree and handlers, the globals, the frame loop and stdin. Resolves
+     *  `false` if a handler kept the window open. `force` can't be vetoed. */
+    close,
+    /** Adds a close handler; returns a function that removes it. */
+    onClose: (handler: CloseHandler) => {
+      handlers.add(handler)
+      return () => void handlers.delete(handler)
+    },
+    /** Resolves once everything is released (with `exitOnClose: false`). */
+    closed,
+  }
 }

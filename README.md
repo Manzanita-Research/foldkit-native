@@ -62,7 +62,9 @@ app as a Wayland layer surface (bar, dock, overlay) instead of a window.
 
 Needs [Bun](https://bun.sh) and Node's `npm` (for the exact lockfile). On
 Linux, also Wayland, EGL/Vulkan and libxkbcommon on the library path (NixOS:
-put them on `LD_LIBRARY_PATH`). On macOS nothing else: gpuix's Apple silicon
+put them on `LD_LIBRARY_PATH`, or use nixos-config's `nix develop .#render`).
+Without them gpuix says `Cannot find native binding. npm has a bug…`, which
+means a missing system library, not a missing package. On macOS nothing else: gpuix's Apple silicon
 binary draws with Metal. Run it from a terminal in the logged-in desktop
 session (Terminal.app, at the machine or over Screen Sharing) so the window
 appears on that screen.

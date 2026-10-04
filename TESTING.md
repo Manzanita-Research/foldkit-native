@@ -12,6 +12,14 @@ bun test test/*.test.ts           # just the headless layer (any OS, no GPU)
 FOLDKIT_NATIVE_NO_WINDOW=1 bun test   # a Mac without a logged-in desktop: skip real windows
 ```
 
+**On Linux**, any test that loads gpuix (most of them: the mirror's tests
+create gpuix's renderer state) needs libxkbcommon, plus Wayland, EGL and
+Vulkan, on the library path. Without them gpuix fails with a misleading
+`Cannot find native binding. npm has a bug…`: the binary is installed, but a
+library it links against isn't found. On NixOS, run inside a shell that
+provides them (nixos-config's `nix develop .#render`). Checked on m6 under
+headless Sway: 353 pass, 26 skip (the Metal-only tests), 0 fail.
+
 ## What's tested today
 
 | Layer | File | What it proves | Runs on |

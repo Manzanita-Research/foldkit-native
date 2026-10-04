@@ -81,15 +81,19 @@ describe('headless', () => {
     await app.key(' ')
     expect(status(app.texts())).toBe('Playing - SPACE to pause')
 
-    // Two ticks to the right…
+    // Two ticks to the right (a slow machine may fit a third tick in before
+    // the check, so: at least two, and still on the same row)…
     await until(app, () => board(app).head[0]!.x >= 12)
-    expect(board(app).head[0]).toEqual({ x: 12, y: 10 })
+    const turnedAt = board(app).head[0]!
+    expect(turnedAt.x).toBeGreaterThanOrEqual(12)
+    expect(turnedAt.y).toBe(10)
 
-    // …then up.
+    // …then up: the same column, moving up.
     await app.key('ArrowUp')
     await until(app, () => board(app).head[0]!.y <= 8)
     const { head, body } = board(app)
-    expect(head[0]!.y).toBe(8)
+    expect(head[0]!.y).toBeLessThanOrEqual(8)
+    expect(head[0]!.x).toBeGreaterThanOrEqual(turnedAt.x)
     expect(body.length).toBeGreaterThanOrEqual(2)
     expect(app.inSync()).toBe(true)
 

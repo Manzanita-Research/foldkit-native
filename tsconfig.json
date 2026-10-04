@@ -8,8 +8,35 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["bun"]
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "bun"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "foldkit-native": [
+        "./src/index.ts"
+      ],
+      "foldkit-native/*": [
+        "./src/*.ts"
+      ],
+      "foldkit-gpuix": [
+        "./packages/foldkit-gpuix/src/index.ts"
+      ],
+      "@foldkit-native/ui": [
+        "./packages/ui/src/index.ts"
+      ]
+    }
   },
-  "include": ["src", "examples", "scripts", "test"]
+  "include": [
+    "src",
+    "examples",
+    "scripts",
+    "test",
+    "packages"
+  ]
 }

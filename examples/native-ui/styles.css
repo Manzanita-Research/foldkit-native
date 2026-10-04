@@ -1,0 +1,12 @@
+/* The app's own layout. The components' looks come from @foldkit-native/ui's
+   uiCss and its tokens; every selector here looks at one element, which is
+   what FoldKit on gpuix's flat sheet reads. */
+.header { display: flex; flex-direction: column; gap: 2px; padding: 20px 24px 12px; border-bottom: 1px solid var(--fn-color-border); }
+.title { font-size: 22px; font-weight: 700; margin: 0; }
+.subtitle { font-size: 13px; color: var(--fn-color-text-muted); margin: 0; }
+.page { display: flex; flex-direction: column; gap: 20px; padding: 20px 24px 32px; }
+.section { display: flex; flex-direction: column; gap: 12px; padding: 16px; background-color: var(--fn-color-surface); border: 1px solid var(--fn-color-border); border-radius: 12px; }
+.section-title { font-size: 13px; font-weight: 600; color: var(--fn-color-text-muted); margin: 0; text-transform: uppercase; }
+.list-label { font-size: 13px; font-weight: 600; color: var(--fn-color-text-muted); }
+.note { color: var(--fn-color-text-muted); margin: 0; }
+.actions { display: flex; flex-direction: row; }

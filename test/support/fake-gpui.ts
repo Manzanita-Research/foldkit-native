@@ -48,19 +48,37 @@ export const createFakeGpui = () => {
     nodes.delete(id)
   }
 
+  /** Whether GPUI scrolls the element (gpuix: `overflow: scroll`). */
+  const scrolls = (id: number) => {
+    const style = nodes.get(id)?.style ?? {}
+    return style['overflowX'] === 'scroll' || style['overflowY'] === 'scroll'
+  }
   /** As gpuix reports bounds: from the content corner (moved by the left/top
-   *  border and padding), without the borders in the size. */
+   *  border and padding), without the borders in the size, and a scroll
+   *  area's own box moved by its own scroll offset (checked on Metal by
+   *  packages/foldkit-gpuix/test/contract.test.ts). */
   const reported = (id: number) => {
     const box = bounds.get(id)
     if (box === undefined) return null
     const style = (nodes.get(id)?.style ?? {}) as Record<string, number | undefined>
     const [left, top, right, bottom] = ['Left', 'Top', 'Right', 'Bottom'].map(side => style[`border${side}Width`] ?? 0) as [number, number, number, number]
+    const [scrollX, scrollY] = scrolls(id) ? offsets.get(id) ?? [0, 0] : [0, 0]
     return {
-      x: box.x + left + (style['paddingLeft'] ?? 0),
-      y: box.y + top + (style['paddingTop'] ?? 0),
+      x: box.x + left + (style['paddingLeft'] ?? 0) + scrollX,
+      y: box.y + top + (style['paddingTop'] ?? 0) + scrollY,
       width: box.width - left - right,
       height: box.height - top - bottom,
     }
+  }
+  /** How far GPUI lets an element scroll: its children's extent past its own
+   *  box, where both are known (setBounds); unbounded otherwise. */
+  const scrollRange = (id: number): [number, number] => {
+    const own = bounds.get(id)
+    const boxes = (nodes.get(id)?.children ?? []).map(child => bounds.get(child)).filter(box => box !== undefined)
+    if (own === undefined || boxes.length === 0) return [-Infinity, -Infinity]
+    const right = Math.max(...boxes.map(box => box.x + box.width)) - own.x
+    const bottom = Math.max(...boxes.map(box => box.y + box.height)) - own.y
+    return [-Math.max(0, right - own.width), -Math.max(0, bottom - own.height)]
   }
   let treeReads = 0
   type TreeNode = { id: number; bounds?: { x: number; y: number; width: number; height: number }; children?: Array<TreeNode> }
@@ -114,10 +132,13 @@ export const createFakeGpui = () => {
       treeReads++
       return JSON.stringify(root === undefined ? null : automation(root))
     },
-    getScrollOffset: (id: number) => offsets.get(id) ?? null,
+    /** null for an element GPUI doesn't scroll, [0, 0] for one at rest. */
+    getScrollOffset: (id: number) => offsets.get(id) ?? (scrolls(id) ? [0, 0] : null),
+    /** Clamped as GPUI clamps: never past the top, never past the end. */
     scrollTo: (id: number, x: number, y: number) => {
       scrollCalls.push({ id, x, y })
-      offsets.set(id, [x, y])
+      const [minX, minY] = scrollRange(id)
+      offsets.set(id, [Math.min(0, Math.max(minX, x)), Math.min(0, Math.max(minY, y))])
     },
     setWindowKeyEvents: () => {},
   }

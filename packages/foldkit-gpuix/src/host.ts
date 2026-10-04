@@ -45,7 +45,7 @@ import {
   NativeText,
   isNaturallyFocusable,
 } from './dom.ts'
-import { type Declared, INHERITED, type Sheet, type State, declarations, declared, fold, resolveVars, textStyle, toStyle } from './sheet.ts'
+import { type Declared, INHERITED, type Sheet, type State, type Viewport, declarations, declared, fold, resolveVars, textStyle, toStyle } from './sheet.ts'
 
 /** DOM event → the gpuix events that produce it (as the mirror had it). */
 const DOM_TO_NATIVE: Readonly<Record<string, ReadonlyArray<string>>> = {
@@ -80,6 +80,10 @@ export type HostTimings = { syncMs: number; restyled: number; mutations: number;
 export type HostOptions = {
   renderer: NativeRenderer
   sheets: Array<Sheet>
+  /** The window's size now, for `@media`, `vh` and `vw`. */
+  viewport: () => Viewport
+  /** GPUI's window changed size: the host restyles everything after this. */
+  onResize?: (size: Viewport) => void
   onSynced?: (timings: HostTimings) => void
 }
 
@@ -114,6 +118,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const started = performance.now()
     restyled = 0
     pass = new Map()
+    viewport = options.viewport()
     for (const element of dirty) {
       let covered = false
       for (let at = element.parentElement; at !== null && !covered; at = at.parentElement) covered = dirty.has(at)
@@ -134,10 +139,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   // STYLE
   // Per sync pass: each element's declarations and inherited text values.
   let pass = new Map<NativeElement, { declared: Declared; inherited: Map<string, string> }>()
+  let viewport = options.viewport()
   const info = (element: NativeElement): { declared: Declared; inherited: Map<string, string> } => {
     const found = pass.get(element)
     if (found !== undefined) return found
-    const own = declared(element, sheets)
+    const own = declared(element, sheets, viewport)
     const parent = element.parentElement
     const inherited = new Map(parent === null ? [] : info(parent).inherited)
     for (const [name, value] of own.base) if (name.startsWith('--')) inherited.set(name, value)
@@ -154,9 +160,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const resolved = (values: ReadonlyMap<string, string>, inherited: Map<string, string>) => {
     const out = new Map<string, string>()
     const lookup = (name: string) => inherited.get(name) ?? ''
-    for (const [name, value] of values) if (!name.startsWith('--')) out.set(name, resolveVars(value, lookup))
+    for (const [name, value] of values) if (!name.startsWith('--')) out.set(name, viewportUnits(resolveVars(value, lookup)))
     return out
   }
+  /** `100vh` → the window's height in pixels (GPUI has no viewport units). */
+  const viewportUnits = (value: string) =>
+    !/\d(d|s|l)?v(h|w|min|max)\b/.test(value) ? value : value.replace(/(-?[\d.]+)(?:d|s|l)?(vh|vw|vmin|vmax)\b/g, (_, amount: string, unit: string) => {
+      const per = unit === 'vh' ? viewport.height : unit === 'vw' ? viewport.width
+        : unit === 'vmin' ? Math.min(viewport.width, viewport.height) : Math.max(viewport.width, viewport.height)
+      return `${(Number(amount) * per) / 100}px`
+    })
   const diff = (next: StyleDesc, base: StyleDesc): StyleDesc | undefined => {
     const out: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(next)) {
@@ -179,6 +192,24 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       values.set('flex-direction', 'row')
       values.set('flex-wrap', 'wrap')
       values.set('align-items', 'baseline')
+    }
+    // Auto side margins centre a box (Tailwind's mx-auto). GPUI's margins
+    // are lengths only, so the box centres itself in its parent instead, as
+    // wide as it may be, as a block with auto margins is; a block parent
+    // becomes a column, which stacks and stretches its children as a block
+    // does, so that it can.
+    if (!values.has('display') && element.children.some(child => {
+      const margins = fold(info(child).declared, ['base'])
+      return margins.get('margin-left') === 'auto' && margins.get('margin-right') === 'auto'
+    })) {
+      values.set('display', 'flex')
+      values.set('flex-direction', 'column')
+    }
+    if (values.get('margin-left') === 'auto' && values.get('margin-right') === 'auto') {
+      values.delete('margin-left')
+      values.delete('margin-right')
+      if (!values.has('align-self')) values.set('align-self', 'center')
+      if (!values.has('width')) values.set('width', '100%')
     }
     const style = toStyle(values, field) as Record<string, unknown>
     // Hover and press are GPUI's own states, so they need no round trip.
@@ -362,7 +393,18 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     drawWaiters.push(work)
     drawTimer ??= setTimeout(drawn, 34)
   }
+  /** After each frame: did GPUI's window change size? */
+  let size = renderer.getWindowSize?.()
+  const watchSize = () => {
+    const now = renderer.getWindowSize?.()
+    if (now === undefined || size === undefined || (now.width === size.width && now.height === size.height)) return
+    size = now
+    options.onResize?.(now)
+    dirty.add(body)
+    schedule()
+  }
   const drawn = () => {
+    watchSize()
     if (drawTimer !== undefined) clearTimeout(drawTimer)
     drawTimer = undefined
     const waiting = drawWaiters

@@ -14,9 +14,10 @@ import { join } from 'node:path'
 import { type FakeGpui, createFakeGpui } from '../../../test/support/fake-gpui.ts'
 import { type AttachOptions, NativeElement, attachGpuix } from '../src/index.ts'
 
-export const createFocusableFake = () => {
+export const createFocusableFake = (size = { width: 1024, height: 768 }) => {
   const gpui = createFakeGpui()
   let focused: number | null = null
+  let windowSize = size
   const scrolledIntoView: Array<number> = []
   const order = (within?: number): Array<number> => {
     const out: Array<{ id: number; tab: number; at: number }> = []
@@ -57,15 +58,22 @@ export const createFocusableFake = () => {
     scrollIntoView: id => {
       scrolledIntoView.push(id)
     },
+    getWindowSize: () => windowSize,
   }
-  return { gpui, renderer, scrolledIntoView, tabOrder: () => order() }
+  return {
+    gpui, renderer, scrolledIntoView, tabOrder: () => order(),
+    /** The person resizes the window; GPUI reports it from the next frame. */
+    resize: (width: number, height: number) => {
+      windowSize = { width, height }
+    },
+  }
 }
 
 export type Fake = FakeGpui & { tabOrder: () => Array<number>; scrolledIntoView: Array<number> }
 
 /** Mounts FoldKit on gpuix over the fake, for one test. */
 export const mountHeadless = (options: AttachOptions = {}) => {
-  const fake = createFocusableFake()
+  const fake = createFocusableFake(options.viewport)
   const attached = attachGpuix(fake.renderer, options)
   const { document, host } = attached
   const settle = async () => {

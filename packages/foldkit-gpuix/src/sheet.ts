@@ -1,17 +1,22 @@
 // SHEET
 //
-// Styles without a cascade engine. A sheet is a flat list of rules whose
-// selectors look at one element only: its tag, classes, attributes and state
-// (`.button`, `.switch[data-checked]`, `.item:hover`, `input:disabled`). That
-// is what atomic CSS (Tailwind's utilities) and data-attribute styling
-// (Base UI, @foldkit/ui's `data-checked`) mostly are, and it needs no
-// selector matching against ancestors, so a restyle is per element.
+// Styles without a cascade engine. A sheet is a list of rules; a rule's
+// selector is matched against the element and, for descendant and child
+// combinators, its ancestors (`.row[data-selected] .cell`, `.list > li`).
+// That needs no more than the host already does: any attribute change
+// restyles the element's whole subtree, so a child follows its ancestor's
+// state. What a restyle can't follow isn't supported, and `sheetFromCss`
+// reports it as `unsupported`:
+// - sibling combinators (`+`, `~`) and structural pseudo-classes, which
+//   depend on siblings that a change doesn't restyle;
+// - a state on an ancestor (`.group:hover .x`, Tailwind's `group-hover:`);
+// - pseudo-elements (`::before`, `::placeholder`);
+// - media features other than sizes, hover, pointer and orientation.
 //
-// Not supported, and reported by `sheetFromCss` as `unsupported`: descendant
-// and child combinators (`.card .title`, Tailwind's `group-hover:`,
-// `space-y-4`), sibling combinators, `::before`/`::after`, and `@media`
-// queries other than width and hover. Custom properties are, and inherit as
-// in CSS, so themes switch by changing tokens.
+// Custom properties are supported, and inherit as in CSS, so themes switch
+// by changing tokens. `@media` rules are matched against the window as it is
+// now (the host restyles when the window resizes). `@supports` conditions
+// are evaluated against what this sheet can draw.
 //
 // `:hover` and `:active` become GPUI's own state styles (no round trip
 // through the app). `:focus` and `:focus-visible` follow GPUI's focus (host.ts).
@@ -20,6 +25,9 @@ import type { StyleDesc } from '@gpuix/native/host'
 import { boxStyle, px, resolveVars, textStyle } from 'foldkit-native/style'
 
 import { type NativeElement, type Selector, matches, parseSelector } from './dom.ts'
+import { type Viewport, mediaQueryMatches } from './media.ts'
+
+export { type Viewport, mediaQueryMatches }
 
 export type State = 'base' | 'hover' | 'active' | 'focus' | 'focus-visible'
 export type Rule = Readonly<{
@@ -31,6 +39,8 @@ export type Rule = Readonly<{
   declarations: ReadonlyMap<string, string>
   /** `!important` declarations: they beat inline style, as in CSS. */
   important: ReadonlyMap<string, string>
+  /** The `@media` conditions the rule sits in, all of which must hold. */
+  media?: ReadonlyArray<string>
 }>
 export type Sheet = Readonly<{ rules: ReadonlyArray<Rule>; unsupported: ReadonlyArray<string> }>
 
@@ -50,12 +60,17 @@ const ruleSelector = (raw: string): { selector: Selector; state: State } | { uns
       break
     }
   }
-  if (/::|:(before|after|placeholder|first-line|selection)/.test(source)) return { unsupported: 'pseudo-element' }
-  if (/[+~]/.test(source.replace(/\[[^\]]*\]/g, ''))) return { unsupported: 'sibling combinator' }
-  const withoutBrackets = source.replace(/\[[^\]]*\]|\([^)]*\)/g, '')
-  if (/\s|>/.test(withoutBrackets.trim())) return { unsupported: 'descendant combinator' }
-  if (/:(hover|active|focus)/.test(source)) return { unsupported: 'state not on the element itself' }
-  return { selector: parseSelector(source), state }
+  // Escaped characters are part of a name (Tailwind's `.md\:hover\:x`).
+  const plain = source.replace(/\\./g, 'x')
+  if (/::|:(before|after|placeholder|first-line|first-letter|selection|marker)/.test(plain)) return { unsupported: 'pseudo-element' }
+  if (/[+~]/.test(plain.replace(/\[[^\]]*\]|\([^)]*\)/g, ''))) return { unsupported: 'sibling combinator' }
+  if (/:(first|last|nth|only)-(child|of-type)|:empty/.test(plain)) return { unsupported: 'structural pseudo-class' }
+  if (/:(hover|active|focus)/.test(plain)) return { unsupported: 'state on an ancestor' }
+  try {
+    return { selector: parseSelector(source), state }
+  } catch {
+    return { unsupported: 'selector' }
+  }
 }
 
 /** Declarations, `!important` dropped, shorthands expanded to the longhands
@@ -108,21 +123,28 @@ const byImportance = (entries: Iterable<readonly [string, string]>) => {
   return { normal: declarations(normal), important: declarations(important) }
 }
 
-const addRule = (out: Array<Rule>, unsupported: Array<string>, selectors: string, entries: Iterable<readonly [string, string]>) => {
+const addRule = (out: Array<Rule>, unsupported: Array<string>, selectors: string, entries: Iterable<readonly [string, string]>, media: ReadonlyArray<string> = []) => {
   const { normal, important } = byImportance(entries)
   for (const one of splitTopLevel(selectors)) {
     const parsed = ruleSelector(one)
     if ('unsupported' in parsed) unsupported.push(`${one.trim()} (${parsed.unsupported})`)
-    else out.push({ source: one.trim(), selector: parsed.selector, state: parsed.state, specificity: specificityOf(parsed.selector) + (parsed.state === 'base' ? 0 : 100), declarations: normal, important })
+    else {
+      out.push({
+        source: one.trim(), selector: parsed.selector, state: parsed.state,
+        specificity: specificityOf(parsed.selector) + (parsed.state === 'base' ? 0 : 100),
+        declarations: normal, important, ...(media.length === 0 ? {} : { media }),
+      })
+    }
   }
 }
 
-/** A sheet from CSS text. `viewportWidth` decides width media queries. */
-export const sheetFromCss = (css: string, options: { viewportWidth?: number } = {}): Sheet => {
+/** A sheet from CSS text. `@media` rules keep their conditions and are
+ *  matched against the window when an element is styled. */
+export const sheetFromCss = (css: string): Sheet => {
   const rules: Array<Rule> = []
   const unsupported: Array<string> = []
   const source = css.replace(/\/\*[\s\S]*?\*\//g, '')
-  const block = (text: string) => {
+  const block = (text: string, media: ReadonlyArray<string>) => {
     let at = 0
     while (at < text.length) {
       const open = text.indexOf('{', at)
@@ -137,27 +159,65 @@ export const sheetFromCss = (css: string, options: { viewportWidth?: number } = 
       const body = text.slice(open + 1, end - 1)
       at = end
       if (prelude.startsWith('@media')) {
-        const media = mediaMatches(prelude.slice(6), options.viewportWidth ?? 1024)
-        if (media === true) block(body)
-        else if (media === undefined) unsupported.push(`${prelude} (media query)`)
-      } else if (prelude.startsWith('@layer') || prelude.startsWith('@supports')) block(body)
+        const query = prelude.slice(6).trim()
+        if (mediaQueryMatches(query, { width: 1024, height: 768 }) === undefined) unsupported.push(`${prelude} (media query)`)
+        else block(body, [...media, query])
+      } else if (prelude.startsWith('@supports')) {
+        if (supports(prelude.slice(9).trim())) block(body, media)
+      } else if (prelude.startsWith('@layer')) block(body, media)
       else if (prelude.startsWith('@')) continue
-      else addRule(rules, unsupported, prelude, splitDeclarations(body))
+      else addRule(rules, unsupported, prelude, splitDeclarations(body), media)
     }
   }
-  block(source)
+  block(source, [])
   return { rules, unsupported }
 }
 
-/** Whether a media query holds: true or false for hover and widths (fixed
- *  at the window's width for now), undefined for anything else. */
-const mediaMatches = (query: string, width: number): boolean | undefined => {
-  if (/hover\s*:\s*hover|pointer\s*:\s*fine/.test(query)) return true
-  const min = /min-width\s*:\s*([\d.]+(?:px|rem|em))|width\s*>=\s*([\d.]+(?:px|rem|em))/.exec(query)
-  const max = /max-width\s*:\s*([\d.]+(?:px|rem|em))|width\s*<\s*([\d.]+(?:px|rem|em))/.exec(query)
-  if (min === null && max === null) return undefined
-  return (min === null || width >= (px(min[1] ?? min[2]!) ?? 0)) && (max === null || width <= (px(max[1] ?? max[2]!) ?? Infinity))
+/** Whether an `@supports` condition holds for this sheet. A colour holds if
+ *  it's one the style conversion can draw; `selector(…)` if the sheet can
+ *  match it. Any other declaration holds: one the conversion doesn't read is
+ *  ignored where it's used. (Tailwind 4 sniffs for engines without
+ *  `@property` with vendor properties, and this is one: its fallback block of
+ *  `--tw-*` defaults is what borders and shadows need.) */
+const supports = (condition: string): boolean => {
+  const text = condition.trim()
+  const split = (separator: 'and' | 'or') => {
+    const out: Array<string> = []
+    let depth = 0
+    let start = 0
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '(') depth++
+      else if (text[i] === ')') depth--
+      else if (depth === 0 && text.startsWith(` ${separator} `, i)) {
+        out.push(text.slice(start, i))
+        start = i + separator.length + 2
+      }
+    }
+    out.push(text.slice(start))
+    return out.length > 1 ? out : undefined
+  }
+  const or = split('or')
+  if (or !== undefined) return or.some(supports)
+  const and = split('and')
+  if (and !== undefined) return and.every(supports)
+  if (/^not\s/.test(text)) return !supports(text.slice(4))
+  if (text.startsWith('selector(')) return !('unsupported' in ruleSelector(text.slice(9, -1)))
+  if (text.startsWith('(') && text.endsWith(')')) {
+    const inner = text.slice(1, -1).trim()
+    if (inner.startsWith('(') || /^not\s/.test(inner) || inner.startsWith('selector(')) return supports(inner)
+    const colon = inner.indexOf(':')
+    if (colon <= 0) return false
+    const name = inner.slice(0, colon).trim()
+    const value = inner.slice(colon + 1).trim()
+    return /color$/.test(name) ? isColorValue(value) : true
+  }
+  return false
 }
+/** A colour the style conversion can draw: hex, rgb(a), hsl(a), named, and
+ *  oklch/oklab (Tailwind 4's palette); not color-mix() or relative colours. */
+const isColorValue = (value: string) =>
+  /^(#[0-9a-f]{3,8}|(rgba?|hsla?|oklch|oklab)\([^()]*\)|[a-z]+)$/i.test(value.trim()) &&
+  !/^(inherit|initial|unset|revert)$/i.test(value.trim()) && !/\(\s*from\s/.test(value)
 
 const splitDeclarations = (body: string): Array<[string, string]> =>
   splitTopLevel(body, ';').flatMap(part => {
@@ -283,8 +343,9 @@ export type Declared = Readonly<{
  *  order, then inline style, then `!important`. Rules for a state (`:hover`,
  *  `:focus`) keep their place in that order, so the stronger rule wins
  *  whatever state it's for, as in CSS. */
-export const declared = (element: NativeElement, sheets: ReadonlyArray<Sheet>): Declared => {
-  const matching = (sheet: Sheet) => sheet.rules.filter(rule => matches(element, rule.selector, element))
+export const declared = (element: NativeElement, sheets: ReadonlyArray<Sheet>, viewport: Viewport = { width: 1024, height: 768 }): Declared => {
+  const holds = (rule: Rule) => rule.media === undefined || rule.media.every(query => mediaQueryMatches(query, viewport) === true)
+  const matching = (sheet: Sheet) => sheet.rules.filter(rule => holds(rule) && matches(element, rule.selector, element))
   // The user agent's rules come before the app's, whatever their weight.
   const app = sheets.flatMap(matching)
     .map((rule, index) => ({ rule, index }))

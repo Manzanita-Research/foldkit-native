@@ -49,9 +49,9 @@ describe.skipIf(!METAL)('native, Metal', () => {
       app.screenshot('off')
       await app.click(app.document.getElementById('wifi')!)
       bunExpect(app.model().on).toBe(true)
-      await app.keys('space')
+      await app.press('space')
       bunExpect(app.model().on).toBe(false)
-      await app.keys('space')
+      await app.press('space')
       app.screenshot('on')
       bunExpect(app.model().on).toBe(true)
     } finally {

@@ -187,10 +187,25 @@ export const openMetal = async (name: string, size: { width: number; height: num
       renderer.nativeSimulateClick(box.x + box.width / 2, box.y + box.height / 2)
       await settle()
     },
-    /** Keystrokes through GPUI's input pipeline, to whatever GPUI has focused. */
+    /** Keystrokes through GPUI's input pipeline, to whatever GPUI has focused.
+     *  GPUI's simulateKeystrokes sends key-down only (text, arrows, Tab). */
     keys: async (keystrokes: string) => {
       await settle()
       renderer.simulateKeystrokes(keystrokes)
+      await settle()
+    },
+    /** One key, down and then up, as a real keyboard sends it (a button
+     *  activates on Space's key-up, as in a browser). */
+    press: async (key: string) => {
+      // gpuix's wrapper keeps the native test renderer private; its own
+      // single-key helpers focus an element first, which this must not.
+      const native = (renderer as unknown as { native: { simulateKeyDown: (key: string) => void; simulateKeyUp: (key: string) => void } }).native
+      await settle()
+      native.simulateKeyDown(key)
+      renderer.dispatchNativeEvents()
+      await settle()
+      native.simulateKeyUp(key)
+      renderer.dispatchNativeEvents()
       await settle()
     },
     gpuiFocus: (): NativeElement | null => {

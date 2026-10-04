@@ -143,6 +143,92 @@ describe('styles: a flat sheet, no cascade engine', () => {
   })
 })
 
+describe('fixes from the first real-GPUI run', () => {
+  test('an attribute that goes away is cleared in GPUI, and an unchanged one isn\'t resent', async () => {
+    const { app } = await run({}, {
+      Model: Counter.Model, init: { count: 0 }, update: c => ({ count: c.count + 1 }),
+      view: (c, h) => h.div([], [
+        h.button([h.OnClick(Counter.Message.Clicked())], ['next']),
+        h.input([h.Id('field'), ...(c.count === 0 ? [h.AriaLabel('Search'), h.Placeholder('Type…'), h.Readonly(true)] : [h.Disabled(true)])]),
+        h.div([h.Id('stop'), ...(c.count === 0 ? [h.Tabindex(0)] : [])], ['stop']),
+      ]),
+    })
+    const field = () => app.gpui.node(app.document.getElementById('field')!.nativeId).props
+    expect(field()).toMatchObject({ 'aria-label': 'Search', placeholder: 'Type…', readOnly: true, tabIndex: 0 })
+    const before = app.gpui.ops().length
+    await app.click('next')
+    expect(field()['aria-label']).toBe(null)
+    expect(field()['placeholder']).toBe(null)
+    // Disabled: out of the tab order, and read-only in GPUI's editor.
+    expect(field()['tabIndex']).toBe(null)
+    expect(field()['readOnly']).toBe(true)
+    expect(app.gpui.node(app.document.getElementById('stop')!.nativeId).props['tabIndex']).toBe(null)
+    expect(app.gpui.ops().length - before).toBeLessThan(40)
+  })
+
+  test('disabling the focused element moves focus off it', async () => {
+    const { app } = await run({}, {
+      Model: Counter.Model, init: { count: 0 }, update: c => ({ count: c.count + 1 }),
+      view: (c, h) => h.button([h.Id('go'), h.Disabled(c.count > 0), h.OnClick(Counter.Message.Clicked())], ['Go']),
+    })
+    app.document.getElementById('go')!.focus()
+    await app.press('enter')
+    expect(app.document.activeElement).toBe(app.document.body)
+  })
+
+  test('a tab GPUI\'s editor types before Tab moves focus is dropped', async () => {
+    const Message = defineMessageUnion({ Typed: { value: Schema.String } })
+    const { app, model } = await run({}, {
+      Model: Schema.Struct({ value: Schema.String }), init: { value: 'Ada' },
+      update: (_, m: typeof Message.Type) => ({ value: m.value }),
+      view: (c, h) => h.input([h.Placeholder('Name'), h.Value(c.value), h.OnInput((value: string) => Message.Typed({ value }))]),
+    })
+    await app.type('Name', 'Ada\t')
+    expect(model().value).toBe('Ada')
+    expect(app.native('Name').props['value']).toBe('Ada')
+    await app.type('Name', 'Ada L')
+    expect(model().value).toBe('Ada L')
+  })
+
+  test('a press GPUI handles itself (into a field) still moves the DOM\'s focus', async () => {
+    const { app } = await run({}, {
+      Model: Counter.Model, init: { count: 0 }, update: c => c,
+      view: (_, h) => h.div([], [h.input([h.Id('a')]), h.input([h.Id('b')])]),
+    })
+    // GPUI focuses the field on press and says nothing; the root hears the press.
+    app.fake.renderer.focusElement?.(app.document.getElementById('b')!.nativeId)
+    app.host.dispatch({ eventType: 'mouseDown', elementId: app.document.body.nativeId, x: 1, y: 1, button: 0 } as never)
+    await app.settle()
+    expect(app.document.activeElement?.getAttribute('id')).toBe('b')
+  })
+
+  test('the cascade: specificity, then source order, then inline, then !important', async () => {
+    const css = `
+      .a.b { color: #111111; }
+      .b { color: #222222; padding: 4px; }
+      .b { padding: 8px !important; }
+      #x { color: #333333; }
+      .c:hover { color: #444444; }
+      .c[data-on] { color: #555555; }
+    `
+    const { app } = await run({ css }, {
+      Model: Counter.Model, init: { count: 0 }, update: c => c,
+      view: (_, h) => h.div([], [
+        h.div([h.Class('a b'), h.Style({ padding: '2px' })], ['ab']),
+        h.div([h.Class('b'), h.Id('x')], ['x']),
+        h.div([h.Class('c'), h.DataAttribute('on', '')], ['c']),
+      ]),
+    })
+    const text = (label: string) => app.gpui.node(app.gpui.node(app.find(label).nativeId).children[0]!).style['color']
+    expect(text('ab')).toBe('#111111') // two classes beat one, wherever they are
+    expect(app.native('ab').style['paddingTop']).toBe(8) // !important beats inline
+    expect(text('x')).toBe('#333333') // an id beats classes
+    // :hover counts as a class, so .c:hover and .c[data-on] weigh the same and
+    // the later one wins even while hovered, as in CSS: no hover change.
+    expect(app.native('c').style['hover']).toBeUndefined()
+  })
+})
+
 describe('focus: GPUI owns it, the DOM follows', () => {
   const form = (h: any) => h.div([], [
     h.input([h.Id('first'), h.Placeholder('First')]),

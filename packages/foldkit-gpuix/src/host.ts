@@ -240,55 +240,80 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     }
     return undefined
   }
-  const syncProps = (element: NativeElement) => {
-    const id = element.nativeId
+  /** The props last sent per element, so an attribute that goes away is
+   *  cleared in GPUI (sent as null) and an unchanged one isn't resent. */
+  const sentProps = new WeakMap<NativeElement, Map<string, unknown>>()
+  const propsOf = (element: NativeElement): Map<string, unknown> => {
+    const props = new Map<string, unknown>()
     const role = element.getAttribute('role') ?? implicitRole(element)
-    if (role !== undefined) mutations.setCustomProp(id, 'role', role)
+    if (role !== undefined) props.set('role', role)
     const label = labelText(element)
-    if (label !== undefined) mutations.setCustomProp(id, 'aria-label', label)
+    if (label !== undefined) props.set('aria-label', label)
     const description = element.getAttribute('aria-description')
-    if (description !== null) mutations.setCustomProp(id, 'aria-description', description)
+    if (description !== null) props.set('aria-description', description)
     for (const name of ['aria-expanded', 'aria-selected'] as const) {
       const value = element.getAttribute(name)
-      if (value !== null) mutations.setCustomProp(id, name, value === 'true')
+      if (value !== null) props.set(name, value === 'true')
     }
     // gpuix has no checked state for AccessKit yet; say it as the value.
     const checked = element.getAttribute('aria-checked')
-    if (checked !== null) mutations.setCustomProp(id, 'aria-valuetext', checked === 'true' ? 'on' : 'off')
+    if (checked !== null) props.set('aria-valuetext', checked === 'true' ? 'on' : 'off')
     const level = element.getAttribute('aria-level')
-    if (level !== null) mutations.setCustomProp(id, 'aria-level', Number(level))
+    if (level !== null) props.set('aria-level', Number(level))
     const testId = element.getAttribute('data-testid') ?? element.getAttribute('id')
-    if (testId !== null) mutations.setCustomProp(id, 'testId', testId)
-    if (isFocusable(element)) {
-      mutations.setCustomProp(id, 'tabIndex', element.tabIndex)
-      listenNatively(element, 'focus')
-      listenNatively(element, 'blur')
-    }
-    if (element.hasAttribute('autofocus')) mutations.setCustomProp(id, 'autoFocus', true)
+    if (testId !== null) props.set('testId', testId)
+    if (isFocusable(element)) props.set('tabIndex', element.tabIndex)
+    if (element.hasAttribute('autofocus')) props.set('autoFocus', true)
     const motion = element.getAttribute('data-fn-motion')
     if (motion !== null) {
       try {
-        mutations.setCustomProp(id, 'motion', JSON.parse(motion))
+        props.set('motion', JSON.parse(motion))
       } catch {
         // Not JSON: ignored, as CSS ignores an invalid value.
       }
     }
     if (element.localName === 'img') {
-      mutations.setCustomProp(id, 'src', element.getAttribute('src') ?? '')
+      props.set('src', element.getAttribute('src') ?? '')
       const alt = element.getAttribute('alt')
-      if (alt !== null) mutations.setCustomProp(id, 'alt', alt)
+      if (alt !== null) props.set('alt', alt)
     }
-    if (nativeType(element) === 'input' || nativeType(element) === 'textarea') {
-      mutations.setCustomProp(id, 'value', element.value)
+    if (isField(element)) {
+      props.set('value', element.value)
       const placeholder = element.getAttribute('placeholder')
-      if (placeholder !== null) mutations.setCustomProp(id, 'placeholder', placeholder)
-      if (element.hasAttribute('readonly')) mutations.setCustomProp(id, 'readOnly', true)
+      if (placeholder !== null) props.set('placeholder', placeholder)
+      if (element.hasAttribute('readonly') || element.hasAttribute('disabled')) props.set('readOnly', true)
+    }
+    return props
+  }
+  const isField = (element: NativeElement) => nativeType(element) === 'input' || nativeType(element) === 'textarea'
+  const syncProps = (element: NativeElement) => {
+    const id = element.nativeId
+    const next = propsOf(element)
+    const sent = sentProps.get(element) ?? new Map<string, unknown>()
+    for (const [key, value] of next) {
+      if (JSON.stringify(sent.get(key)) !== JSON.stringify(value)) mutations.setCustomProp(id, key, value as never)
+    }
+    for (const key of sent.keys()) if (!next.has(key)) mutations.setCustomProp(id, key, null)
+    sentProps.set(element, next)
+    if (next.has('tabIndex')) {
+      listenNatively(element, 'focus')
+      listenNatively(element, 'blur')
+    } else if (focused === element) {
+      // Disabled (or made unfocusable) while focused: focus leaves it, as in a browser.
+      setFocus(null, false)
+    }
+    if (isField(element)) {
       listenNatively(element, 'change')
       listenNatively(element, 'submit')
     }
     // A button or link activates on click with no listener of its own (a
     // submit button submits its form).
     if (element.localName === 'button' || (element.localName === 'a' && element.hasAttribute('href'))) listenNatively(element, 'click')
+  }
+  /** The field's value as GPUI's editor has it, so it isn't sent back. */
+  const nativeValue = (element: NativeElement, value: string) => {
+    element.setValueFromNative(value)
+    sentProps.get(element)?.set('value', value)
   }
 
   // TREE
@@ -404,7 +429,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (next !== null) {
       valueAtFocus = next.value
       if (!fromGpui && next.nativeId !== 0) renderer.focusElement?.(next.nativeId)
-      if (visible && next.nativeId !== 0) renderer.scrollIntoView?.(next.nativeId)
+      if (visible) reveal(next)
       next.dispatchEvent(new NativeFocusEvent('focus', { relatedTarget: previous }))
       next.dispatchEvent(new NativeFocusEvent('focusin', { bubbles: true, relatedTarget: previous }))
       dirty.add(next)
@@ -412,10 +437,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     schedule()
   }
   /** After GPUI moved focus itself (Tab), the DOM catches up. */
-  const followGpui = () => {
+  const followGpui = (visible = true) => {
     const id = renderer.getFocusedElementId?.()
     const node = id === null || id === undefined ? undefined : nodes.get(id)
-    setFocus(node instanceof NativeElement ? node : null, true, true)
+    setFocus(node instanceof NativeElement ? node : null, true, visible)
   }
   /** The scope Tab stays inside: an open modal dialog, as a browser's
    *  `showModal` keeps it (`aria-modal` or `data-fn-focus-scope`). */
@@ -522,6 +547,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         return
       }
       case 'mouseDown': case 'mouseUp': case 'mouseMove': {
+        // Every press reaches the root (it listens). GPUI may have moved focus
+        // itself (its editors take focus on press and send no focus event),
+        // so the DOM asks GPUI once the press is handled.
+        if (event.eventType === 'mouseDown' && node === body) {
+          keyboardModality = false
+          setTimeout(() => {
+            const id = renderer.getFocusedElementId?.()
+            if (id !== null && id !== undefined && id !== focused?.nativeId) followGpui(false)
+          }, 0)
+        }
         const type = { mouseDown: 'mousedown', mouseUp: 'mouseup', mouseMove: 'mousemove' }[event.eventType]!
         if (!listens(node, type) && !listens(node, type.replace('mouse', 'pointer'))) return
         const detail = type === 'mousemove' ? 0 : event.clickCount ?? 1
@@ -551,8 +586,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         return
       case 'change': {
         inputAt = performance.now()
-        element.setValueFromNative(event.value ?? '')
-        element.dispatchEvent(new NativeInputEvent('input', { bubbles: true, data: event.value ?? '' }))
+        const value = event.value ?? ''
+        // GPUI's editor takes Tab as text before the keydown moves focus; in
+        // a browser, Tab in a field never types a tab.
+        if (value.length === element.value.length + 1 && value.replace('\t', '') === element.value && value.includes('\t')) {
+          mutations.setCustomProp(element.nativeId, 'value', element.value)
+          schedule()
+          return
+        }
+        nativeValue(element, value)
+        element.dispatchEvent(new NativeInputEvent('input', { bubbles: true, data: value }))
         return
       }
       case 'submit': {
@@ -570,6 +613,30 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const focusableAncestor = (element: NativeElement): NativeElement | null => {
     for (let at: NativeElement | null = element; at !== null; at = at.parentElement) if (isFocusable(at)) return at
     return null
+  }
+
+  /** Scrolls the nearest scroll area until `element` shows, from where GPUI
+   *  last painted both (gpuix 0.10's own scrollIntoView left a plain
+   *  scrolling div where it was, on Metal). */
+  const reveal = (element: NativeElement) => {
+    if (element.nativeId === 0) return
+    let area = element.parentElement
+    while (area !== null && (area.nativeId === 0 || !scrollable(area))) area = area.parentElement
+    if (area === null) return
+    const box = renderer.getElementBounds?.(element.nativeId)
+    const view = renderer.getElementBounds?.(area.nativeId)
+    if (box === null || box === undefined || view === null || view === undefined) {
+      renderer.scrollIntoView?.(element.nativeId)
+      return
+    }
+    const [x = 0, y = 0] = renderer.getScrollOffset?.(area.nativeId) ?? [0, 0]
+    let next = y
+    if (box.y < view.y) next = y + (view.y - box.y)
+    else if (box.y + box.height > view.y + view.height) next = y - (box.y + box.height - view.y - view.height)
+    if (next !== y) {
+      renderer.scrollTo?.(area.nativeId, x, Math.min(0, next))
+      area.dispatchEvent(new NativeEvent('scroll'))
+    }
   }
 
   // THE HOST INTERFACE (what the document calls)
@@ -605,7 +672,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     },
     changed: (element, what) => {
       if (what === 'value') {
-        if (element.nativeId !== 0) mutations.setCustomProp(element.nativeId, 'value', element.value)
+        if (element.nativeId !== 0) syncProps(element)
         schedule()
         return
       }
@@ -631,9 +698,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       if (focused === element) setFocus(null, false)
     },
     bounds: element => (element.nativeId === 0 ? null : renderer.getElementBounds?.(element.nativeId)) ?? { x: 0, y: 0, width: 0, height: 0 },
-    scrollIntoView: element => {
-      if (element.nativeId !== 0) renderer.scrollIntoView?.(element.nativeId)
-    },
+    scrollIntoView: element => reveal(element),
     scrollOffset: element => {
       const offset = element.nativeId === 0 ? null : renderer.getScrollOffset?.(element.nativeId)
       return [offset?.[0] ?? 0, offset?.[1] ?? 0]
@@ -648,6 +713,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const mountBody = () => {
     if (body.nativeId !== 0) return
     mount(body)
+    listenNatively(body, 'mouseDown')
     mutations.setRoot(body.nativeId)
     schedule()
   }

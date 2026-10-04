@@ -70,7 +70,7 @@ describe.skipIf(!METAL)('FoldKit on gpuix, Metal', () => {
     app!.screenshot('big-list-light')
     // And from the keyboard: Tab to it, Space.
     toggle.focus()
-    await app!.keys('space')
+    await app!.press('space')
     expect(app!.painted()).toContain('Dark')
   })
 
@@ -88,7 +88,7 @@ describe.skipIf(!METAL)('FoldKit on gpuix, Metal', () => {
     await app!.click(byId('name'))
     await app!.keys('A d a')
     byId('dark').focus()
-    await app!.keys('space')
+    await app!.press('space')
     expect(app!.painted().some(text => text.includes('light'))).toBe(true)
     byId('accent').focus()
     await app!.keys('down down down enter')

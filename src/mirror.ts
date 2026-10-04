@@ -307,7 +307,11 @@ export const createMirror = (options: {
    *  padding) and leave the borders out of the size; this undoes both. */
   const paintedBox = (id: number): Box | null => {
     const box = options.boundsOf?.(id)
-    if (box === null || box === undefined) return null
+    return box === null || box === undefined ? null : borderBox(id, box)
+  }
+  /** A box as gpuix reports it (by boundsOf, or in its automation tree) → the
+   *  element's border box. */
+  const borderBox = (id: number, box: Box): Box => {
     const s = (sentBoxes.get(id) ?? {}) as Record<string, number | undefined>
     const [left, top, right, bottom] = ['Left', 'Top', 'Right', 'Bottom'].map(side => s[`border${side}Width`] ?? 0) as [number, number, number, number]
     return {
@@ -371,15 +375,21 @@ export const createMirror = (options: {
   // Every element's bounds, read at once and kept for this layout epoch.
   let painted: { epoch: number; boxes: ReadonlyMap<number, { x: number; y: number; width: number; height: number }> } | undefined
   const freshBounds = (): ((id: number) => { x: number; y: number; width: number; height: number } | null) => {
-    if (options.allBounds === undefined) return id => options.boundsOf!(id)
+    if (options.allBounds === undefined) return paintedBox
     const boxes = options.allBounds()
     painted = { epoch: layoutEpoch, boxes }
-    return id => boxes.get(id) ?? null
+    return id => {
+      const box = boxes.get(id)
+      return box === undefined ? null : borderBox(id, box)
+    }
   }
   const paintedBounds = (): ((id: number) => { x: number; y: number; width: number; height: number } | null) => {
     if (options.allBounds === undefined || painted?.epoch !== layoutEpoch) return freshBounds()
     const boxes = painted.boxes
-    return id => boxes.get(id) ?? null
+    return id => {
+      const box = boxes.get(id)
+      return box === undefined ? null : borderBox(id, box)
+    }
   }
   const hoverTarget = (x: number, y: number): Element | undefined => {
     const boundsOf = paintedBounds()

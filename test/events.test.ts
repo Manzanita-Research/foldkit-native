@@ -800,6 +800,17 @@ describe('hover during a press', () => {
     expect(mounted.gpui.treeReads() - before).toBe(2)
   })
 
+  test("the hit test uses each element's border box, padding included", async () => {
+    const { cells, seen, at } = await strip()
+    // Padding moves gpuix's reported corner; a point in the padding is still the cell.
+    for (const cell of cells) cell.style.padding = '20px'
+    await mounted.settle()
+    mounted.send(cells[0]!, { eventType: 'mouseDown', ...at(50), button: 0, clickCount: 1 })
+    seen.length = 0
+    mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(105, 5), pressedButton: 0 })
+    expect(seen).toContain('mouseenter@1')
+  })
+
   test('without a press, moves hover nothing: GPUI does that itself', async () => {
     const { cells, seen, at } = await strip()
     mounted.send(cells[0]!, { eventType: 'mouseDown', ...at(50), button: 0, clickCount: 1 })

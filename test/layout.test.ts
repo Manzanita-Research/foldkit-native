@@ -98,6 +98,20 @@ describe('aspect-ratio, from the laid-out width', () => {
     expect(height(tall)).toBe(40)
   })
 
+  test('the height follows the border box GPUI laid out, padding and borders included', async () => {
+    mounted = mountFake({ css: '.framed { aspect-ratio: 1; padding: 10px; border: 2px solid red; }' })
+    await mounted.settle()
+    const framed = mounted.document.createElement('div')
+    framed.className = 'framed'
+    mounted.container.appendChild(framed)
+    await mounted.settle()
+    // gpuix reports it from the content corner without the borders (the fake
+    // does too); the border box is 300 wide.
+    mounted.gpui.setBounds(mounted.idOf(framed), { x: 0, y: 0, width: 300, height: 0 })
+    expect(mounted.mirror.afterLayout()).toBe(true)
+    expect(mounted.nativeOf(framed).style?.['height']).toBe(300)
+  })
+
   test('one pass per layout: the same layout changes nothing, a new one corrects again', async () => {
     const { square, wide, lay, height } = await shapes()
     lay(square, 300)

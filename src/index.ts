@@ -51,6 +51,38 @@ export type NativeOptions = WindowOptions & AttachOptions & {
   onFrame?: (frame: FrameTiming) => void
 }
 
+type Box = { x: number; y: number; width: number; height: number }
+type TreeNode = { id: number; bounds?: Box; children?: Array<TreeNode> }
+
+/** Every element's last painted bounds, from gpuix's automation tree (one
+ *  call, where getElementBounds walks the whole tree for each element). */
+const paintedBounds = (json: string): ReadonlyMap<number, Box> => {
+  const boxes = new Map<number, Box>()
+  const walk = (node: TreeNode) => {
+    if (node.bounds !== undefined) boxes.set(node.id, node.bounds)
+    for (const child of node.children ?? []) walk(child)
+  }
+  const root = JSON.parse(json) as TreeNode | null
+  if (root !== null) walk(root)
+  return boxes
+}
+
+/** A live window answers bounds from its UI thread, and one that isn't
+ *  painting (hidden, or behind a lock screen) doesn't answer for 2 s. Rather
+ *  than stall every frame, bounds are unknown for a while after a miss. */
+const boundsUnlessMissed = (read: () => string) => {
+  let missedAt = -Infinity
+  return (): ReadonlyMap<number, Box> => {
+    if (performance.now() - missedAt < 5000) return new Map()
+    try {
+      return paintedBounds(read())
+    } catch {
+      missedAt = performance.now()
+      return new Map()
+    }
+  }
+}
+
 /** Gives FoldKit a DOM drawn by an already-initialised gpuix renderer: the
  *  live window (`mountNative`) or gpuix's offscreen `TestRenderer` in tests.
  *  Returns the container to hand to FoldKit's `Runtime.makeElement`. */
@@ -77,11 +109,13 @@ export const attachDom = (renderer: NativeRenderer, options: AttachOptions = {})
   const mutations = createMutationQueue(renderer, ids => {
     for (const id of ids) unregisterEventHandlers(eventHandlers, id)
   })
+  const tree = (renderer as { getAutomationTree?: () => string }).getAutomationTree
   const mirror = createMirror({
     window,
     mutations,
     eventHandlers,
     ...(renderer.getElementBounds === undefined ? {} : { boundsOf: (id: number) => renderer.getElementBounds!(id) }),
+    ...(tree === undefined ? {} : { allBounds: boundsUnlessMissed(() => tree.call(renderer)) }),
     ...(renderer.getScrollOffset === undefined ? {} : { scrollOffsetOf: (id: number) => renderer.getScrollOffset!(id) }),
     ...(renderer.scrollTo === undefined ? {} : { scrollTo: (id: number, x: number, y: number) => renderer.scrollTo!(id, x, y) }),
     ...(onSynced === undefined ? {} : { onSynced }),
@@ -138,8 +172,23 @@ export const mountNative = (options: NativeOptions = {}) => {
     },
   })
   const tick = renderer.tick.bind(renderer)
+  let windowSize: { width: number; height: number } | undefined
+  let sizeAskedAt = -Infinity
   renderer.tick = () => {
     const running = tick()
+    // A resize moves things the DOM doesn't know about. (Asking is a round
+    // trip to GPUI's UI thread, so not every frame.)
+    const now = performance.now()
+    if (now - sizeAskedAt > 500) {
+      sizeAskedAt = now
+      const size = renderer.getWindowSize?.()
+      if (size !== undefined && (size.width !== windowSize?.width || size.height !== windowSize?.height)) {
+        if (windowSize !== undefined) dom.mirror.layoutChanged()
+        windowSize = size
+      }
+    }
+    // Heights from laid-out widths (aspect-ratio); the next tick draws them.
+    dom.mirror.afterLayout()
     if (flushed !== undefined) {
       const now = performance.now()
       onFrame?.({

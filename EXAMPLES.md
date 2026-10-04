@@ -34,6 +34,11 @@ The existing **Counter** and **Themes** demos stay in the gallery too.
 - **Map**, **Charting** and **Web Components** mount third-party browser
   libraries (MapLibre, ECharts, custom elements) that need a real browser
   engine.
+- **Pixel Art**'s Export PNG draws on a 2D `<canvas>`, which happy-dom
+  doesn't have, so it ends in FoldKit's "Export Failed" dialog. Its theme
+  Listbox opens with no height: floating-ui caps it at the room left from
+  `clientHeight`, which is 0 without layout read-back for it. The Dialog's
+  dimmed backdrop (`fixed inset-0`) and the inline SVG icons don't draw yet.
 - **UI Showcase** covers every `@foldkit/ui` component. Popovers, menus,
   tooltips and comboboxes need layout read-back (README, roadmap item 2), so it
   waits for that.

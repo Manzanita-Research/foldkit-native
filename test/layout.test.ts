@@ -3,6 +3,8 @@
 // each element (here, the fake GPUI's setBounds).
 import { afterEach, describe, expect, test } from 'bun:test'
 
+import { attachDom } from '../src/index.ts'
+import { createFakeGpui } from './support/fake-gpui.ts'
 import { type Mounted, mountFake } from './support/mount.ts'
 
 let mounted: Mounted
@@ -61,5 +63,120 @@ describe('layout, read back from GPUI', () => {
     expect(document.elementFromPoint(120, 70)).toBe(card)
     expect(document.elementsFromPoint(900, 900)).toEqual([])
     expect(document.elementFromPoint(900, 900)).toBeNull()
+  })
+})
+
+describe('aspect-ratio, from the laid-out width', () => {
+  // gpuix has no aspect-ratio, so the mirror sets the height once GPUI has
+  // laid out the width (the host calls afterLayout after each frame).
+  const shapes = async () => {
+    mounted = mountFake({ css: '.square { aspect-ratio: 1 / 1; } .wide { aspect-ratio: 16 / 9; } .tall { height: 40px; aspect-ratio: 1; } .red { color: red; }' })
+    await mounted.settle()
+    const make = (className: string) => {
+      const div = mounted.document.createElement('div')
+      div.className = className
+      mounted.container.appendChild(div)
+      return div
+    }
+    const [square, wide, tall] = [make('square'), make('wide'), make('tall')]
+    await mounted.settle()
+    const lay = (node: Node, width: number) => mounted.gpui.setBounds(mounted.idOf(node), { x: 0, y: 0, width, height: 0 })
+    const height = (node: Node) => mounted.nativeOf(node).style?.['height']
+    return { square, wide, tall, lay, height }
+  }
+
+  test('an auto height follows the width GPUI laid out, by the ratio', async () => {
+    const { square, wide, tall, lay, height } = await shapes()
+    expect(height(square)).toBeUndefined()
+    lay(square, 300)
+    lay(wide, 160)
+    lay(tall, 100)
+    expect(mounted.mirror.afterLayout()).toBe(true)
+    expect(height(square)).toBe(300)
+    expect(height(wide)).toBe(90)
+    // A set height wins over the ratio, as in CSS.
+    expect(height(tall)).toBe(40)
+  })
+
+  test('the height follows the border box GPUI laid out, padding and borders included', async () => {
+    mounted = mountFake({ css: '.framed { aspect-ratio: 1; padding: 10px; border: 2px solid red; }' })
+    await mounted.settle()
+    const framed = mounted.document.createElement('div')
+    framed.className = 'framed'
+    mounted.container.appendChild(framed)
+    await mounted.settle()
+    // gpuix reports it from the content corner without the borders (the fake
+    // does too); the border box is 300 wide.
+    mounted.gpui.setBounds(mounted.idOf(framed), { x: 0, y: 0, width: 300, height: 0 })
+    expect(mounted.mirror.afterLayout()).toBe(true)
+    expect(mounted.nativeOf(framed).style?.['height']).toBe(300)
+  })
+
+  test('one pass per layout: the same layout changes nothing, a new one corrects again', async () => {
+    const { square, wide, lay, height } = await shapes()
+    lay(square, 300)
+    lay(wide, 160)
+    expect(mounted.mirror.afterLayout()).toBe(true)
+    expect(mounted.mirror.afterLayout()).toBe(false)
+    // GPUI lays it out narrower (a resize the DOM didn't see).
+    lay(square, 200)
+    expect(mounted.mirror.afterLayout()).toBe(false)
+    mounted.mirror.layoutChanged()
+    expect(mounted.mirror.afterLayout()).toBe(true)
+    expect(height(square)).toBe(200)
+  })
+
+  test('a pass reads every bounds at once, and only when something could have moved', async () => {
+    const { square, wide, lay } = await shapes()
+    lay(square, 300)
+    lay(wide, 160)
+    const reads = mounted.gpui.treeReads()
+    mounted.mirror.afterLayout()
+    expect(mounted.gpui.treeReads() - reads).toBe(1)
+    // A repaint (a colour) moves nothing: no read.
+    square.classList.add('red')
+    await mounted.settle()
+    mounted.mirror.afterLayout()
+    expect(mounted.gpui.treeReads() - reads).toBe(1)
+    // A new element can move things: read again.
+    mounted.container.appendChild(mounted.document.createElement('p'))
+    await mounted.settle()
+    mounted.mirror.afterLayout()
+    expect(mounted.gpui.treeReads() - reads).toBe(2)
+  })
+
+  test('a restyle keeps the height it was given', async () => {
+    const { square, wide, lay, height } = await shapes()
+    lay(square, 120)
+    lay(wide, 160)
+    mounted.mirror.afterLayout()
+    square.classList.add('red')
+    await mounted.settle()
+    expect(height(square)).toBe(120)
+    expect(mounted.mirror.afterLayout()).toBe(false)
+  })
+})
+
+describe('a window that answers no bounds', () => {
+  // A live window that isn't painting (hidden, behind a lock screen) answers
+  // gpuix's bounds query with a 2 s timeout. The mirror mustn't stall on it
+  // every frame: after a miss, bounds are unknown for a while.
+  test('a missed bounds read is not retried at once, and nothing throws', async () => {
+    const gpui = createFakeGpui()
+    let reads = 0
+    ;(gpui.renderer as { getAutomationTree: () => string }).getAutomationTree = () => {
+      reads++
+      throw new Error('Timed out after 2 seconds waiting for the automation bounds query')
+    }
+    const dom = attachDom(gpui.renderer, { css: '.square { aspect-ratio: 1; }' })
+    const square = dom.window.document.createElement('div')
+    square.className = 'square'
+    dom.container.appendChild(square as unknown as HTMLElement)
+    for (let i = 0; i < 3; i++) await new Promise(resolve => setTimeout(resolve, 0))
+    for (let frame = 0; frame < 10; frame++) expect(dom.mirror.afterLayout()).toBe(false)
+    expect(reads).toBe(1)
+    dom.detach()
+    await dom.window.happyDOM.abort()
+    dom.window.close()
   })
 })

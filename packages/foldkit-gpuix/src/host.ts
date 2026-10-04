@@ -18,7 +18,9 @@
 //   `scrollIntoView` is GPUI's.
 // - Text input. `<input>` and `<textarea>` are GPUI's own editors; typing
 //   fires `input` per change and `change` when the field loses focus.
-// - Layout read-back. `getBoundingClientRect` is where GPUI painted it.
+// - Layout read-back. `getBoundingClientRect` and `elementsFromPoint` are
+//   where GPUI last painted things, read once per frame at most and never
+//   waited for (layout.ts).
 
 import type { EventPayload } from '@gpuix/native'
 import {
@@ -47,6 +49,7 @@ import {
   isDisabled,
   isNaturallyFocusable,
 } from './dom.ts'
+import { type Box, createGuard, createLayout } from './layout.ts'
 import { type Declared, INHERITED, type Sheet, type State, type Viewport, declarations, declared, fold, resolveVars, textStyle, toStyle } from './sheet.ts'
 
 /** DOM event → the gpuix events that produce it (as the mirror had it). */
@@ -102,6 +105,8 @@ export type HostOptions = {
   /** GPUI's window changed size: the host restyles everything after this. */
   onResize?: (size: Viewport) => void
   onSynced?: (timings: HostTimings) => void
+  /** The clock geometry queries are timed by (tests). */
+  now?: () => number
 }
 
 export const createHost = (document: NativeDocument, options: HostOptions) => {
@@ -149,6 +154,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (wanted !== undefined && isFocusable(wanted)) setFocus(wanted, false)
     const pending = mutations.pending
     mutations.flushMutations()
+    if (pending > 0) layout.moved()
     options.onSynced?.({ syncMs: performance.now() - started, restyled, mutations: pending, ...(inputAt === undefined ? {} : { inputAt }) })
     inputAt = undefined
   }
@@ -446,6 +452,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       listenNatively(element, 'change')
       listenNatively(element, 'submit')
     }
+    // GPUI scrolls by itself (the wheel): the layout reads again after.
+    if (scrollable(element)) listenNatively(element, 'scroll')
     // A button or link activates on click with no listener of its own (a
     // submit button submits its form).
     if (element.localName === 'button' || (element.localName === 'a' && element.hasAttribute('href'))) listenNatively(element, 'click')
@@ -493,10 +501,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     drawWaiters.push(work)
     drawTimer ??= setTimeout(drawn, 34)
   }
-  /** After each frame: did GPUI's window change size? */
+  /** After each frame: did GPUI's window change size? (A query GPUI may not
+   *  answer: guarded, as layout reads are.) */
   let size = renderer.getWindowSize?.()
   const watchSize = () => {
-    const now = renderer.getWindowSize?.()
+    const now = renderer.getWindowSize === undefined ? undefined : guard.ask('size', () => renderer.getWindowSize!())
     if (now === undefined || size === undefined || (now.width === size.width && now.height === size.height)) return
     size = now
     options.onResize?.(now)
@@ -521,6 +530,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (scheduled) sync()
   }
   const drawn = () => {
+    layout.drew()
     watchSize()
     if (drawTimer !== undefined) clearTimeout(drawTimer)
     drawTimer = undefined
@@ -747,6 +757,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     // Keys go where GPUI's focus is, even if it moved there by itself.
     reconcileFocus()
     inputAt = performance.now()
+    guard.input()
     const held = event.modifiers
     if (held?.cmd !== true && held?.ctrl !== true && held?.alt !== true) keyboardModality = true
     const target = focused ?? body
@@ -777,16 +788,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   /** A focused scroll area scrolls with the keys, as a browser's does. */
   const scrollWithKeys = (target: NativeElement, name: string) => {
     if (target.nativeId === 0 || !scrollable(target)) return
-    const [x, y] = renderer.getScrollOffset?.(target.nativeId) ?? [0, 0]
-    const height = renderer.getElementBounds?.(target.nativeId)?.height ?? 400
+    const [x, y] = offsetOf(target)
+    const height = boundsOf(target)?.height ?? 400
     const step: Record<string, number> = {
       ArrowDown: -40, ArrowUp: 40, PageDown: -height * 0.9, PageUp: height * 0.9, ' ': -height * 0.9,
       Home: Infinity, End: -Infinity,
     }
     const by = step[name]
     if (by === undefined) return
-    const next = by === Infinity ? 0 : by === -Infinity ? -1e7 : Math.min(0, (y ?? 0) + by)
-    renderer.scrollTo?.(target.nativeId, x ?? 0, next)
+    const next = by === Infinity ? 0 : by === -Infinity ? -1e7 : Math.min(0, y + by)
+    scrollTo(target, x, next)
     target.dispatchEvent(new NativeEvent('scroll'))
   }
   const scrollable = (element: NativeElement) => {
@@ -797,6 +808,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   // GPUI EVENTS → DOM EVENTS
   let lastClick: { node: NativeNode; sameTask: boolean } | undefined
   const fromNative = (node: NativeNode, event: EventPayload) => {
+    guard.input()
     const held = event.modifiers
     const init = {
       bubbles: true, cancelable: true, clientX: event.x ?? 0, clientY: event.y ?? 0,
@@ -896,6 +908,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         return
       }
       case 'scroll':
+        layout.moved()
         element.dispatchEvent(new NativeEvent('scroll'))
         return
       default:
@@ -928,26 +941,84 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     return null
   }
 
-  /** The border box where GPUI last painted `element`, as
-   *  `getBoundingClientRect` has it. gpuix 0.10 reports a box from the
-   *  content corner (moved by the left and top border and padding, the size
-   *  without the borders), and a scroll area's own box moved by its own scroll
-   *  offset (scrolled 100 down, it says the area is 100 higher than it's
-   *  drawn). Both are undone here. */
-  const boundsOf = (element: NativeElement) => {
-    if (element.nativeId === 0) return null
-    const box = renderer.getElementBounds?.(element.nativeId) ?? null
-    if (box === null) return null
+  // GEOMETRY: where GPUI last painted things (layout.ts). Every query GPUI
+  // may not answer goes through the guard, and nothing waits for a paint.
+  const guard = createGuard(options.now)
+  /** Scroll offsets as GPUI last gave them (or as the host last set them). */
+  const offsets = new WeakMap<NativeElement, [number, number]>()
+  const offsetOf = (element: NativeElement): [number, number] => {
+    if (element.nativeId === 0) return [0, 0]
+    const read = renderer.getScrollOffset === undefined ? undefined : guard.ask('scroll', () => renderer.getScrollOffset!(element.nativeId))
+    if (read !== undefined) offsets.set(element, [read?.[0] ?? 0, read?.[1] ?? 0])
+    return offsets.get(element) ?? [0, 0]
+  }
+  const scrollTo = (element: NativeElement, x: number, y: number) => {
+    renderer.scrollTo?.(element.nativeId, x, y)
+    offsets.set(element, [x, y])
+    layout.moved()
+  }
+  /** gpuix 0.10 reports a box from the content corner (moved by the left and
+   *  top border and padding, the size without the borders), and a scroll
+   *  area's own box moved by its own scroll offset (scrolled 100 down, it
+   *  says the area is 100 higher than it's drawn). Both are undone here. A
+   *  single-line input's box is moved down by its top border and half of
+   *  its top padding less its bottom padding (its editor shares the vertical
+   *  padding out evenly), not by the whole top padding (Metal). */
+  const borderBox = (id: number, box: Box): Box => {
+    const element = nodes.get(id)
+    if (!(element instanceof NativeElement)) return box
     const style = (sentStyles.get(element) ?? {}) as Record<string, unknown>
     const px = (key: string) => (typeof style[key] === 'number' ? style[key] as number : 0)
-    const [left, top] = [px('borderLeftWidth') + px('paddingLeft'), px('borderTopWidth') + px('paddingTop')]
-    const [scrollX = 0, scrollY = 0] = scrollable(element) ? renderer.getScrollOffset?.(element.nativeId) ?? [0, 0] : [0, 0]
+    const left = px('borderLeftWidth') + px('paddingLeft')
+    const top = px('borderTopWidth') + (nativeType(element) === 'input' ? (px('paddingTop') - px('paddingBottom')) / 2 : px('paddingTop'))
+    const [scrollX, scrollY] = scrollable(element) ? offsetOf(element) : [0, 0]
     return {
       x: box.x - left - scrollX,
       y: box.y - top - scrollY,
       width: box.width + px('borderLeftWidth') + px('borderRightWidth'),
       height: box.height + px('borderTopWidth') + px('borderBottomWidth'),
     }
+  }
+  const layout = createLayout({
+    guard,
+    ...(options.now === undefined ? {} : { now: options.now }),
+    // Every renderer gpuix has (the live window's, the offscreen one) has it;
+    // NativeRenderer's type leaves it out.
+    tree: treeOf(renderer),
+    borderBox,
+    clips: id => {
+      const element = nodes.get(id)
+      if (!(element instanceof NativeElement)) return false
+      const values = info(element).declared.base
+      return ['overflow', 'overflow-x', 'overflow-y'].some(name => /^(hidden|scroll|auto|clip)$/.test(values.get(name) ?? ''))
+    },
+  })
+  /** The border box where GPUI last painted `element`, as
+   *  `getBoundingClientRect` has it; null if it wasn't in that layout. */
+  const boundsOf = (element: NativeElement) => (element.nativeId === 0 ? null : layout.box(element.nativeId))
+  /** Whether a browser's hit test can land on `element`: nothing under
+   *  `display: none`, and `visibility` and `pointer-events` as inherited. */
+  const hittable = (element: NativeElement) => {
+    let visibility: string | undefined
+    let pointer: string | undefined
+    for (let at: NativeElement | null = element; at !== null; at = at.parentElement) {
+      const values = info(at).declared.base
+      if (values.get('display') === 'none') return false
+      if (visibility === undefined || visibility === 'inherit') visibility = values.get('visibility')
+      if (pointer === undefined || pointer === 'inherit') pointer = values.get('pointer-events')
+    }
+    return visibility !== 'hidden' && visibility !== 'collapse' && pointer !== 'none'
+  }
+  /** `document.elementsFromPoint`: every element GPUI last painted under the
+   *  point, topmost first (layout.ts has the paint order), then `<html>`. */
+  const elementsAt = (x: number, y: number): Array<NativeElement> => {
+    const out: Array<NativeElement> = []
+    for (const id of layout.at(x, y)) {
+      const node = nodes.get(id)
+      if (node instanceof NativeElement && hittable(node)) out.push(node)
+    }
+    if (out.length > 0) out.push(document.documentElement)
+    return out
   }
 
   /** Scrolls the nearest scroll area until `element` shows, from where GPUI
@@ -960,16 +1031,17 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (area === null) return
     const box = boundsOf(element)
     const view = boundsOf(area)
-    if (box === null || box === undefined || view === null || view === undefined) {
+    if (box === null || view === null) {
       renderer.scrollIntoView?.(element.nativeId)
+      layout.moved()
       return
     }
-    const [x = 0, y = 0] = renderer.getScrollOffset?.(area.nativeId) ?? [0, 0]
+    const [x, y] = offsetOf(area)
     let next = y
     if (box.y < view.y) next = y + (view.y - box.y)
     else if (box.y + box.height > view.y + view.height) next = y - (box.y + box.height - view.y - view.height)
     if (next !== y) {
-      renderer.scrollTo?.(area.nativeId, x, Math.min(0, next))
+      scrollTo(area, x, Math.min(0, next))
       area.dispatchEvent(new NativeEvent('scroll'))
     }
   }
@@ -1038,14 +1110,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     },
     focusVisible: () => focusVisible,
     bounds: element => boundsOf(element) ?? { x: 0, y: 0, width: 0, height: 0 },
+    elementsFromPoint: (x, y) => elementsAt(x, y),
     scrollIntoView: element => reveal(element),
-    scrollOffset: element => {
-      const offset = element.nativeId === 0 ? null : renderer.getScrollOffset?.(element.nativeId)
-      return [offset?.[0] ?? 0, offset?.[1] ?? 0]
-    },
+    scrollOffset: element => offsetOf(element),
     scrollTo: (element, x, y) => {
       if (element.nativeId === 0) return
-      renderer.scrollTo?.(element.nativeId, x, y)
+      scrollTo(element, x, y)
       setTimeout(() => element.dispatchEvent(new NativeEvent('scroll')), 0)
     },
     selectedText: () => renderer.getSelectedText?.() ?? null,
@@ -1069,6 +1139,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     mutations.appendChild(body.nativeId, sentinel)
     registerEventHandler(eventHandlers, sentinel, 'mouseDownOutside', event => {
       keyboardModality = false
+      guard.input()
       // Seen after GPUI dispatched the press, so its focus is committed.
       press(event.x, event.y)
     })
@@ -1125,6 +1196,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       schedule()
     },
     nodeFor: (id: number) => nodes.get(id),
+    /** GPUI's layout changed where the host can't see it (the fake's
+     *  `setBounds`, in tests): it's read again when next asked for. */
+    relayout: () => layout.moved(),
+    /** GPUI's geometry queries: how many, how long, how many missed (tests). */
+    geometry: () => ({ ...guard.stats, reads: layout.reads, holding: guard.holding }),
     /** Sends a gpuix event as GPUI would (tests and automation). */
     dispatch: (event: EventPayload) => state.dispatch(event),
     focused: () => focused,
@@ -1173,6 +1249,11 @@ const opaque = (colour: string) => {
   if (alpha === undefined) return true
   const amount = alpha.trim()
   return amount.endsWith('%') ? Number(amount.slice(0, -1)) >= 100 : Number(amount) >= 1
+}
+
+const treeOf = (renderer: NativeRenderer) => {
+  const reader = renderer as { getAutomationTree?: () => string }
+  return reader.getAutomationTree === undefined ? undefined : () => reader.getAutomationTree!()
 }
 
 /** The role a browser gives an element without one, for AccessKit. */

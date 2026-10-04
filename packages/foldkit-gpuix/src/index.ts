@@ -117,6 +117,8 @@ export type AttachOptions = {
    *  run), the frame loop's, a native event's, a close handler's, the
    *  store's. Without it they go to `console.error`. */
   onError?: (report: ErrorReport) => void
+  /** The clock GPUI's geometry queries are timed by (tests). */
+  now?: () => number
 }
 
 /** FoldKit on an already-initialised gpuix renderer: the live window
@@ -144,6 +146,7 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
       window.dispatchEvent(new NativeEvent('resize'))
     },
     ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
+    ...(options.now === undefined ? {} : { now: options.now }),
   })
 
   const setTokens = (tokens: Tokens) => {
@@ -233,12 +236,14 @@ export type NativeOptions = WindowOptions & AttachOptions & {
   onClose?: CloseHandler
   /** Makes the renderer, given gpuix's event callback (tests: a fake). */
   createRenderer?: (callback: (error: Error | null, event: EventPayload) => void) => WindowRenderer
+  /** After each frame: how long the adapter and GPUI took on it, in ms. */
+  onFrame?: (ms: number) => void
 }
 
 /** Opens a native window with FoldKit drawn in it. Returns the app: its
  *  container, `own()` for its runtimes, and `close()`. */
 export const mountGpuix = (options: NativeOptions = {}) => {
-  const { css, sheets, tokens, viewport, onSynced, onClose, onError, dataDir, exitOnClose = true, createRenderer, ...windowOptions } = options
+  const { css, sheets, tokens, viewport, onSynced, onClose, onError, dataDir, exitOnClose = true, createRenderer, onFrame, now, ...windowOptions } = options
   let attached: ReturnType<typeof attachGpuix> | undefined
   const report = (phase: ErrorPhase, error: unknown, context: Record<string, unknown> = {}) => {
     if (attached !== undefined) attached.window.report(phase, error, context)
@@ -279,6 +284,7 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     ...(onSynced === undefined ? {} : { onSynced }),
     ...(onError === undefined ? {} : { onError }),
     ...(dataDir === undefined ? {} : { dataDir }),
+    ...(now === undefined ? {} : { now }),
     ...(windowOptions.appId === undefined ? {} : { appId: windowOptions.appId }),
     viewport: viewport ?? { width: width ?? 1024, height: height ?? 768 },
   })
@@ -337,9 +343,11 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     requiresTick: () => renderer.requiresTick(),
     tick: () => {
       frames++
+      const started = performance.now()
       app.host.frame()
       const more = renderer.tick()
       app.host.drawn()
+      onFrame?.(performance.now() - started)
       return more
     },
   }

@@ -144,6 +144,7 @@ so. Otherwise it depends on, and does not copy code from:
 | [happy-dom](https://github.com/capricorn86/happy-dom) | MIT | The DOM FoldKit renders into |
 | [Effect](https://effect.website) | MIT | FoldKit's runtime (peer dependency) |
 | [Tailwind CSS](https://tailwindcss.com) and [Lightning CSS](https://lightningcss.dev) | MIT, MPL-2.0 | Building the examples' CSS (dev only) |
+| [clsx](https://github.com/lukeed/clsx), [fractional-indexing](https://github.com/rocicorp/fractional-indexing) | MIT, CC0-1.0 | Used by FoldKit's example apps (dev only) |
 
 All are compatible with MIT. If you distribute a compiled binary that embeds
 gpuix's native library, include its Apache-2.0 licence and notices with it.

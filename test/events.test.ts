@@ -173,6 +173,23 @@ describe('pointer', () => {
     expect(seen).toHaveLength(2)
   })
 
+  test('a click in the first moments after startup counts (no drag has ended yet)', async () => {
+    const { container } = await setup()
+    const button = el('button', 'Go')
+    const seen = record(button, ['click'])
+    container.appendChild(button)
+    await mounted.settle()
+    // performance.now() counts from process start: early on, it's small.
+    const now = performance.now
+    performance.now = () => 10
+    try {
+      mounted.send(button, { eventType: 'click', x: 1, y: 1, button: 0, clickCount: 1 })
+    } finally {
+      performance.now = now
+    }
+    expect(seen).toHaveLength(1)
+  })
+
   test('mouse down, up and move reach the DOM only where listened', async () => {
     const { container } = await setup()
     const node = el('div', 'x')

@@ -189,7 +189,8 @@ export const createMirror = (options: {
     }
     return found
   }
-  let dragEndedAt = 0
+  // When the last drag ended: never, so a click right after startup counts.
+  let dragEndedAt = -Infinity
   const toDom = (node: Node, event: EventPayload) => {
     const init = { bubbles: true, cancelable: true, clientX: event.x ?? 0, clientY: event.y ?? 0 }
     if (event.eventType === 'click' || event.eventType === 'mouseUp' || event.eventType === 'keyDown') {

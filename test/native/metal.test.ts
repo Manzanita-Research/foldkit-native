@@ -195,16 +195,19 @@ describe.skipIf(!metal)('Metal, offscreen', () => {
     expect(overHot.chipHover).toBeGreaterThan(0)
   })
 
-  test('a selectable note inside a clickable card: a drag selects its text, a click reaches the card', async () => {
+  test('a selectable note inside a clickable card: a drag selects its text, and clicks reach the card', async () => {
     const { renderer, clicks, centre } = await clickableCard()
     const { box, x, y } = centre('.note')
     renderer.clearSelection()
     expect(renderer.dragSelect(box.x + 1, y, box.x + box.width - 1, y)).toContain('Selectable')
     renderer.clearSelection()
     renderer.flush()
+    // The drag pressed and released on the card, so it was a click too, as
+    // in a browser; then a plain click.
+    expect(clicks).toHaveLength(1)
     renderer.nativeSimulateClick(x, y)
     renderer.flush()
-    expect(clicks).toHaveLength(1)
+    expect(clicks).toHaveLength(2)
   })
 
   /** An input and a tabindex div with :focus-visible colours, focused through

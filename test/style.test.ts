@@ -2,7 +2,7 @@
 // the mirror copies out of the computed style and how tokens resolve.
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import { fontFamily, px } from '../src/style.ts'
+import { fontFamily, px, translation } from '../src/style.ts'
 import { setTokens, token, tokensToCss } from '../src/theme.ts'
 import { type Mounted, mountFake } from './support/mount.ts'
 
@@ -60,6 +60,25 @@ describe('box', () => {
       gap: 8, paddingTop: 4, paddingRight: 6, paddingBottom: 4, paddingLeft: 6, marginTop: 2,
       width: '50%', height: 120, minWidth: 10, flexGrow: 1, flexShrink: 0,
     })
+  })
+
+  test("a translate on a positioned element moves it (GPUI has no transforms): FoldKit's drag ghost", async () => {
+    const ghost = await styleOf('position: fixed; top: 0; left: 0; transform: translate3d(420px, 160px, 0); pointer-events: none;')
+    expect(ghost.box).toMatchObject({ position: 'fixed', left: 420, top: 160, pointerEvents: 'none' })
+    expect((await styleOf('position: absolute; top: 10px; left: 5px; transform: translateY(-4px);')).box).toMatchObject({ top: 6, left: 5 })
+    expect((await styleOf('position: relative; translate: 2px 3px;')).box).toMatchObject({ left: 2, top: 3 })
+    // Not positioned, or not a translation: left alone.
+    expect((await styleOf('transform: translate(5px, 5px);')).box.left).toBeUndefined()
+    expect((await styleOf('position: absolute; transform: rotate(2deg);')).box.left).toBeUndefined()
+    expect(translation('translate(50%, 0)')).toBeUndefined()
+    expect(translation('translateX(1rem)')).toEqual({ x: 16, y: 0 })
+  })
+
+  test('overflow, the shorthand (happy-dom leaves its longhands empty): sr-only clips', async () => {
+    expect((await styleOf('overflow: hidden;')).box).toMatchObject({ overflowX: 'hidden', overflowY: 'hidden' })
+    expect((await styleOf('overflow: hidden auto;')).box).toMatchObject({ overflowX: 'hidden', overflowY: 'auto' })
+    expect((await styleOf('overflow-y: auto;')).box).toMatchObject({ overflowY: 'auto' })
+    expect((await styleOf('overflow: visible;')).box.overflowX).toBeUndefined()
   })
 
   test('grid columns become a track count', async () => {

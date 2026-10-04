@@ -80,6 +80,10 @@ service; the recorded demo (below) uses the real one.
   reproduction is still missing.
 - The fake-vs-real check compares tree structure, text and element count. It
   doesn't compare styles, because GPUI keeps styles in its own form.
+- `nativeSimulateClick` presses and releases in one GPUI tick, before an app
+  has reacted to the press: FoldKit's DragAndDrop attaches its document
+  `pointerup` listener after `pointerdown`, so it misses that release. A real
+  click spans frames; tests press, wait a frame, then release.
 - gpuix's test renderer and automation channel can only press with a click
   count of 1, so no test makes GPUI itself produce a double click. The
   headless tests send the payload GPUI sends for one (`clickCount: 2`).

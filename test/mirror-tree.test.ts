@@ -176,6 +176,24 @@ describe('text and attributes', () => {
     expect(mounted.inSync()).toBe(true)
   })
 
+  test('text that starts empty and gets content (an aria-live announcement) appears, and goes when emptied', async () => {
+    const { container } = await setup()
+    const live = el('div', '', { 'aria-live': 'assertive' })
+    live.appendChild(mounted.document.createTextNode(''))
+    container.appendChild(live)
+    await mounted.settle()
+    expect(mounted.nativeOf(live).children).toEqual([])
+    live.firstChild!.textContent = 'Picked up Fix bug.'
+    await mounted.settle()
+    expect(labels(live)).toEqual(['Picked up Fix bug.'])
+    expect(mounted.inSync()).toBe(true)
+    live.firstChild!.textContent = ''
+    await mounted.settle()
+    expect(mounted.nativeOf(live).children).toEqual([])
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+  })
+
   test('text-transform is applied to the text itself', async () => {
     const { container } = await setup('.loud { text-transform: uppercase; } .quiet { text-transform: lowercase; }')
     container.append(el('p', 'Hello', { class: 'loud' }), el('p', 'Hello', { class: 'quiet' }))
@@ -183,6 +201,8 @@ describe('text and attributes', () => {
     const [loud, quiet] = Array.from(container.children)
     expect(mounted.gpui.node(mounted.nativeOf(loud!).children[0]!).text).toBe('HELLO')
     expect(mounted.gpui.node(mounted.nativeOf(quiet!).children[0]!).text).toBe('hello')
+    // …and the sync check expects the transformed text too.
+    expect(mounted.inSync()).toBe(true)
   })
 
   test('a class change restyles the element and the text inside it', async () => {
@@ -338,10 +358,10 @@ describe('many windows in one process', () => {
 
   test('the shared methods are patched once, however many mirrors there are', async () => {
     const first = await open()
-    const methods = ['addEventListener', 'removeEventListener'].map(key => owner(first.box, key)[key])
+    const methods = ['addEventListener', 'removeEventListener', 'getBoundingClientRect'].map(key => owner(first.box, key)[key])
     const scroll = Object.getOwnPropertyDescriptor(owner(first.box, 'scrollTop'), 'scrollTop')!.set
     const second = await open()
-    expect(['addEventListener', 'removeEventListener'].map(key => owner(second.box, key)[key])).toEqual(methods)
+    expect(['addEventListener', 'removeEventListener', 'getBoundingClientRect'].map(key => owner(second.box, key)[key])).toEqual(methods)
     expect(Object.getOwnPropertyDescriptor(owner(second.box, 'scrollTop'), 'scrollTop')!.set).toBe(scroll)
     await first.m.close()
     await second.m.close()
@@ -356,7 +376,9 @@ describe('many windows in one process', () => {
     expect(a.m.nativeOf(a.box as unknown as Node).listeners.has('click')).toBe(true)
     expect(b.m.nativeOf(b.box as unknown as Node).listeners.has('click')).toBe(false)
 
-    // Stopped: no more listener tracking or scrolling from it.
+    // Stopped: no more listener tracking, scrolling or layout answers from it.
+    a.m.gpui.setBounds(a.m.idOf(a.box as unknown as Node), { x: 1, y: 2, width: 30, height: 40 })
+    expect(a.box.getBoundingClientRect().width).toBe(30)
     await a.m.close()
     a.box.addEventListener('mousedown', () => {})
     a.box.setAttribute('data-x', '2')
@@ -364,6 +386,7 @@ describe('many windows in one process', () => {
     expect(a.m.nativeOf(a.box as unknown as Node).listeners.has('mouseDown')).toBe(false)
     a.box.scrollTop = 100
     expect(a.m.gpui.scrollCalls).toEqual([])
+    expect(a.box.getBoundingClientRect().width).toBe(0)
 
     // The other one carries on.
     b.box.scrollTop = 100

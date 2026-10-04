@@ -80,7 +80,9 @@ test or a note in the PR, and add it to "Not yet" above.
 
 The ported examples are FoldKit's, from
 [github.com/foldkit/foldkit](https://github.com/foldkit/foldkit/tree/main/examples)
-at commit `0ec94a1` (FoldKit 0.165.0, the version this repo pins), MIT
-licensed, © 2025 Devin Jameson: [examples/FOLDKIT-LICENSE](examples/FOLDKIT-LICENSE).
+at commit `0b2a4fd`, the commit npm's FoldKit 0.165.0 (the version this repo
+pins) was published from; Weather came from the later canary `0ec94a1` and
+runs unchanged. MIT licensed, © 2025 Devin Jameson:
+[examples/FOLDKIT-LICENSE](examples/FOLDKIT-LICENSE).
 Each ported file keeps a header naming its source. FoldKit Native's own code is
 MIT too ([LICENSE](LICENSE)).

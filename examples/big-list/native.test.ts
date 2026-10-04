@@ -114,6 +114,23 @@ describe('headless', () => {
     expect(app.mounted.nativeOf(rows(app.document)[1]!).style['hover']).toEqual({ backgroundColor: '#f0f2f7' })
     expect(app.inSync()).toBe(true)
   })
+
+  // FKN-12: the switch's track and knob paint fills, and GPUI let a filled
+  // child block the hit, so only a click on the label toggled the theme.
+  test('a click on the switch\'s track or knob toggles the theme too', async () => {
+    app = await openHeadless('big-list')
+    const theme = () => app.document.querySelector('.app')!.getAttribute('data-theme')
+    const track = app.document.querySelector('.theme-switch-track')!
+    const knob = app.document.querySelector('.theme-switch-knob')!
+    for (const part of [track, knob]) expect(app.mounted.nativeOf(part).style).toMatchObject({ pointerEvents: 'none' })
+    await app.click(track)
+    expect(theme()).toBe('light')
+    await app.click(knob)
+    expect(theme()).toBe('dark')
+    // The switch itself keeps its hits, and its pointer cursor.
+    expect(app.mounted.nativeOf(app.document.querySelector('.theme-switch')!).style['pointerEvents']).toBeUndefined()
+    expect(app.inSync()).toBe(true)
+  })
 })
 
 describe.skipIf(!METAL)('Metal, offscreen', () => {
@@ -155,6 +172,17 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     await app.click('Dark theme')
     expect(app.document.querySelector('.app')!.getAttribute('data-theme')).toBe('light')
     app.screenshot('light')
+  })
+
+  test("the switch's track and knob take the click, through GPUI's hit test", async () => {
+    app = await openMetal('big-list')
+    const theme = () => app.document.querySelector('.app')!.getAttribute('data-theme')
+    await app.click(app.document.querySelector('.theme-switch-track')!)
+    expect(theme()).toBe('light')
+    app.screenshot('switch-track')
+    await app.click(app.document.querySelector('.theme-switch-knob')!)
+    expect(theme()).toBe('dark')
+    app.screenshot('switch-knob')
   })
 
   test('a wheel scrolls the list natively and FoldKit renders the rows it reaches', async () => {

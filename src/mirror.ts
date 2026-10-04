@@ -58,6 +58,10 @@ const POINTER_AND_MOUSE: Readonly<Record<string, readonly [string, string]>> = {
   mouseDown: ['pointerdown', 'mousedown'], mouseMove: ['pointermove', 'mousemove'], mouseUp: ['pointerup', 'mouseup'],
 }
 
+/** The native events that make an element a target for the pointer: its
+ *  children let hits through to it (see CLICK-THROUGH). */
+const POINTER_NATIVES: ReadonlyArray<string> = ['click', 'auxClick', 'mouseDown', 'mouseUp', 'mouseMove', 'mouseEnter', 'mouseLeave']
+
 /** A held press element: unseen, out of the layout, never under the pointer. */
 const HELD = { position: 'absolute', opacity: 0, pointerEvents: 'none' } as const
 
@@ -209,7 +213,10 @@ export const createMirror = (options: {
       const before = counts.get(native) ?? 0
       counts.set(native, Math.max(0, before + delta))
       const id = ids.get(node)
-      if (id !== undefined && (before === 0) !== (counts.get(native) === 0)) syncListener(id, native, before === 0)
+      if (id !== undefined && (before === 0) !== (counts.get(native) === 0)) {
+        syncListener(id, native, before === 0)
+        recheckPointers(node, true)
+      }
     }
   }
   const track = (target: EventTarget, type: string, delta: number) => {
@@ -608,13 +615,95 @@ export const createMirror = (options: {
     mutations.setEventListener(id, native, on)
   }
 
+  // CLICK-THROUGH
+  // gpuix lets an element that paints a fill block hits to everything behind
+  // it, its own ancestors included, where a browser bubbles a click on a child
+  // up to its parent: a coloured switch track swallowed the switch's click. So
+  // a child of an element listening for the pointer, with no listeners of its
+  // own, lets hits through (gpuix's pointerEvents 'none'), and they land on the
+  // listener. It only stops blocking: its own :hover still works. Not for a
+  // positioned child (it can sit outside its parent, over something else), a
+  // scroller (it needs the wheel), or one whose CSS sets pointer-events.
+  /** Each element's pointer-events, as CSS has it: its own `none`, another
+   *  value it `set`, or none set, either `passable` (a div that may let hits
+   *  through) or `other` (a field, image, positioned box or scroller). */
+  const pointerKinds = new Map<number, 'none' | 'set' | 'passable' | 'other'>()
+  /** pointer-events: none from CSS, its own or inherited (happy-dom doesn't
+   *  inherit it, a browser does). */
+  const cssNone = new Set<number>()
+  /** Elements letting hits through to the listener they're in. */
+  const through = new Set<number>()
+  /** Whether GPUI sends `node` any of `natives` (or any event at all). */
+  const listensFor = (node: Node, natives?: ReadonlyArray<string>) => {
+    const counts = listened.get(node)
+    if (counts === undefined) return false
+    return natives === undefined ? Array.from(counts.values()).some(count => count > 0) : natives.some(native => (counts.get(native) ?? 0) > 0)
+  }
+  /** Works out (and records) whether an element lets hits through, from its
+   *  kind and its parent's. The body is no target: it always listens for a release. */
+  const letsThrough = (node: Node, id: number): boolean => {
+    const kind = pointerKinds.get(id)
+    const parent = node.parentNode
+    const parentId = parent === null ? undefined : ids.get(parent)
+    const none = kind === 'none' || (kind !== 'set' && parentId !== undefined && cssNone.has(parentId))
+    const passes = !none && kind === 'passable' && !listensFor(node) &&
+      parent !== null && parent !== body && parentId !== undefined &&
+      (through.has(parentId) || listensFor(parent, POINTER_NATIVES))
+    if (none) cssNone.add(id)
+    else cssNone.delete(id)
+    if (passes) through.add(id)
+    else through.delete(id)
+    return none || passes
+  }
+  /** Elements whose listeners or parent changed, to look at again. */
+  const pointerChanged = new Map<Node, boolean>()
+  const recheckPointers = (node: Node, children: boolean) => {
+    if (pointerChanged.size === 0) {
+      queueMicrotask(() => {
+        if (applyPointers()) mutations.flushMutations()
+      })
+    }
+    pointerChanged.set(node, (pointerChanged.get(node) ?? false) || children)
+  }
+  /** Re-decides each changed element from what was last sent (no restyle),
+   *  and its children only if they could change: one listener coming or going
+   *  costs its element and its children. True if anything was sent. */
+  const applyPointers = (): boolean => {
+    let sent = false
+    const visit = (node: Node, children: boolean) => {
+      const id = ids.get(node)
+      const last = id === undefined ? undefined : sentBoxes.get(id)
+      if (id === undefined || last === undefined || !pointerKinds.has(id) || (pressed?.held === true && pressed.id === id)) return
+      const was = cssNone.has(id) || through.has(id)
+      const wasThrough = through.has(id)
+      const now = letsThrough(node, id)
+      if (now !== (last['pointerEvents'] === 'none')) {
+        const next: Record<string, unknown> = { ...last }
+        if (now) next['pointerEvents'] = 'none'
+        else delete next['pointerEvents']
+        // Nothing moves (see LAYOUT EPOCH), so straight to GPUI.
+        sentBoxes.set(id, next as StyleDesc)
+        mutations.setStyle(id, next as StyleDesc)
+        sent = true
+      }
+      if (children || was !== now || wasThrough !== through.has(id)) {
+        for (const child of Array.from(node.childNodes)) visit(child, false)
+      }
+    }
+    const changed = Array.from(pointerChanged)
+    pointerChanged.clear()
+    for (const [node, children] of changed) if (node.isConnected) visit(node, children)
+    return sent
+  }
+
   // LAYOUT EPOCH
   // Bumped by any change that can move things: structure, text, and styles
-  // other than paint (colours, shadows, opacity). A drag that only recolours
-  // cells leaves it alone, so bounds read once stay good (HOVER DURING A PRESS).
+  // other than paint (colours, shadows, opacity) and hit testing. A drag that
+  // only recolours cells leaves it alone, so bounds read once stay good (HOVER
+  // DURING A PRESS).
   let layoutEpoch = 0
   const layoutShapes = new Map<number, string>()
-  const PAINT_ONLY = new Set(['backgroundColor', 'background', 'color', 'opacity', 'boxShadow', 'borderColor', 'cursor'])
+  const PAINT_ONLY = new Set(['backgroundColor', 'background', 'color', 'opacity', 'boxShadow', 'borderColor', 'cursor', 'pointerEvents'])
   const setStyle = (id: number, style: StyleDesc) => {
     sentBoxes.set(id, style)
     const shape = JSON.stringify(style, (key, value) => PAINT_ONLY.has(key) ? undefined : value)
@@ -678,6 +767,14 @@ export const createMirror = (options: {
       style['width'] = '100%'
     }
     Object.assign(style, stateStyles(element, stateRules, customProperty(element)))
+    const id = ids.get(node)
+    if (id !== undefined) {
+      const pointer = computed.getPropertyValue('pointer-events').trim()
+      const scrolls = [style['overflowX'], style['overflowY']].some(overflow => overflow === 'scroll')
+      pointerKinds.set(id, pointer === 'none' ? 'none' : pointer !== '' ? 'set'
+        : nativeType(node) === 'div' && style['position'] !== 'absolute' && style['position'] !== 'fixed' && !scrolls ? 'passable' : 'other')
+      if (letsThrough(node, id)) style['pointerEvents'] = 'none'
+    }
     const aspect = aspectOf(computed)
     if (aspect === undefined) aspects.delete(node)
     else {
@@ -888,6 +985,9 @@ export const createMirror = (options: {
       nodes.delete(id)
       nativeChildren.delete(id)
       sentBoxes.delete(id)
+      pointerKinds.delete(id)
+      cssNone.delete(id)
+      through.delete(id)
       unregisterEventHandlers(eventHandlers, id)
     }
     for (const child of Array.from(node.childNodes)) forget(child)
@@ -901,10 +1001,15 @@ export const createMirror = (options: {
     if (nativeType(parent) !== 'div') return syncProps(parentId, parent)
     const current = nativeChildren.get(parentId) ?? []
     const desired: Array<number> = []
+    const before = new Set(current)
     for (const child of Array.from(parent.childNodes)) {
       // Text emptied since it was drawn isn't drawn any more.
-      const id = nativeType(child) === undefined ? undefined : ids.get(child) ?? create(child)
+      const drawn = nativeType(child) !== undefined
+      const known = drawn ? ids.get(child) : undefined
+      const id = known ?? (drawn ? create(child) : undefined)
       if (id !== undefined) desired.push(id)
+      // Moved here from another parent: whether it lets hits through can change.
+      if (known !== undefined && !before.has(known)) recheckPointers(child, false)
       if (pressed?.held === true && pressed.node === child) {
         // Back in the DOM: no longer held, and drawn as it is again.
         pressed.held = false
@@ -984,6 +1089,7 @@ export const createMirror = (options: {
     for (const parent of parents) syncChildren(parent)
     // Class and style changes cascade to descendants (and their text).
     for (const node of styled) if (ids.has(node)) restyle(node)
+    applyPointers()
     const pending = mutations.pending
     mutations.flushMutations()
     options.onSynced?.({

@@ -36,6 +36,17 @@ describe('layout, read back from GPUI', () => {
     expect([rect.top, rect.left, rect.right, rect.bottom]).toEqual([60, 110, 290, 100])
   })
 
+  test("gpuix's bounds start at the content corner and leave the borders out: the painted box comes back", async () => {
+    const { card } = await board()
+    card.setAttribute('style', 'padding: 5px 7px 9px 11px; border-style: solid; border-width: 1px 2px 3px 4px; border-color: black')
+    await mounted.settle()
+    // Measured on Metal: this box, laid out at (110, 60, 180, 40), is reported as (125, 66, 174, 36).
+    expect(mounted.gpui.renderer.getElementBounds!(mounted.idOf(card))).toEqual({ x: 125, y: 66, width: 174, height: 36 })
+    const rect = card.getBoundingClientRect()
+    expect([rect.x, rect.y, rect.width, rect.height]).toEqual([110, 60, 180, 40])
+    expect(mounted.document.elementFromPoint(111, 61)).toBe(card) // inside its border and padding
+  })
+
   test("an element GPUI hasn't laid out is all zeros, as before", async () => {
     const { document } = await board()
     const loose = document.createElement('div')

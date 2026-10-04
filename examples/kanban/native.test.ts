@@ -175,9 +175,11 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
   test('a drag through GPUI: press a card, move across, release over another column', async () => {
     app = await openMetal('kanban')
     const card = app.bounds(RESEARCH)
-    const target = column('In Progress')
+    // Released over the top of In Progress's first card: above its middle, so
+    // the card goes in first.
+    const first = app.bounds('Build the DragAndDrop component')
     const [startX, startY] = [card.x + 20, card.y + card.height / 2]
-    const [endX, endY] = [target.x + 80, target.y + 90]
+    const [endX, endY] = [first.x + 20, first.y + 2]
 
     app.renderer.nativeSimulateMouseDown(startX, startY, 0)
     await nextFrame()

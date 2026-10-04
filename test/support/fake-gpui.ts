@@ -86,7 +86,20 @@ export const createFakeGpui = () => {
       }
       return freed
     },
-    getElementBounds: (id: number) => bounds.get(id) ?? null,
+    // As gpuix reports bounds: from the content corner (moved by the left/top
+    // border and padding), without the borders in the size.
+    getElementBounds: (id: number) => {
+      const box = bounds.get(id)
+      if (box === undefined) return null
+      const style = (nodes.get(id)?.style ?? {}) as Record<string, number | undefined>
+      const [left, top, right, bottom] = ['Left', 'Top', 'Right', 'Bottom'].map(side => style[`border${side}Width`] ?? 0) as [number, number, number, number]
+      return {
+        x: box.x + left + (style['paddingLeft'] ?? 0),
+        y: box.y + top + (style['paddingTop'] ?? 0),
+        width: box.width - left - right,
+        height: box.height - top - bottom,
+      }
+    },
     getScrollOffset: (id: number) => offsets.get(id) ?? null,
     scrollTo: (id: number, x: number, y: number) => {
       scrollCalls.push({ id, x, y })
@@ -116,7 +129,7 @@ export const createFakeGpui = () => {
     /** Every op sent, batch by batch. */
     batches,
     ops: () => batches.flat(),
-    /** Where "GPUI painted" an element, for drag and drop hit tests. */
+    /** Where "GPUI painted" an element (its border box), for hit tests. */
     setBounds: (id: number, box: { x: number; y: number; width: number; height: number }) => bounds.set(id, box),
     /** Scrolls an element "in GPUI", as a wheel would: gpuix's negative offsets. */
     setScrollOffset: (id: number, x: number, y: number) => offsets.set(id, [x, y]),

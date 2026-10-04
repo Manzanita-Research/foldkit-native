@@ -163,7 +163,8 @@ export const createMirror = (options: {
   mutations: MutationQueue
   eventHandlers: EventHandlerMap
   onSynced?: (timings: MirrorTimings) => void
-  /** Where GPUI last painted an element, in window coordinates. */
+  /** Where GPUI last laid out an element, in window coordinates, as gpuix
+   *  reports it (see `paintedBox`). */
   boundsOf?: (id: number) => { x: number; y: number; width: number; height: number } | null
   /** GPUI's scroll offset for a scroller, gpuix's way: `[x, y]`, negative
    *  when scrolled down or right. */
@@ -287,13 +288,30 @@ export const createMirror = (options: {
     else if (over !== undefined) over.dispatchEvent(dragEvent('dragleave', init))
     source.dispatchEvent(dragEvent('dragend', init))
   }
+  /** The padding and borders sent to GPUI for each element, by id. */
+  const sentBoxes = new Map<number, StyleDesc>()
+  /** Where GPUI painted an element: its border box. gpuix's bounds start at
+   *  the content corner (moved right and down by the left/top border and
+   *  padding) and leave the borders out of the size; this undoes both. */
+  const paintedBox = (id: number): Box | null => {
+    const box = options.boundsOf?.(id)
+    if (box === null || box === undefined) return null
+    const s = (sentBoxes.get(id) ?? {}) as Record<string, number | undefined>
+    const [left, top, right, bottom] = ['Left', 'Top', 'Right', 'Bottom'].map(side => s[`border${side}Width`] ?? 0) as [number, number, number, number]
+    return {
+      x: box.x - left - (s['paddingLeft'] ?? 0),
+      y: box.y - top - (s['paddingTop'] ?? 0),
+      width: box.width + left + right,
+      height: box.height + top + bottom,
+    }
+  }
   /** The drop zone under the pointer. The captured events all name the drag
    *  source, so zones are found by where GPUI painted them. */
   const zoneAt = (x: number, y: number): Node | undefined => {
     let found: Node | undefined
     for (const [id, node] of nodes) {
       if (!(listens(node, 'dragover') || listens(node, 'drop'))) continue
-      const box = options.boundsOf?.(id)
+      const box = paintedBox(id)
       if (box && x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height) {
         if (found === undefined || found.contains(node)) found = node
       }
@@ -566,7 +584,9 @@ export const createMirror = (options: {
       return
     }
     const element = node as Element
-    mutations.setStyle(id, styleOf(node))
+    const style = styleOf(node)
+    sentBoxes.set(id, style)
+    mutations.setStyle(id, style)
     // Accessibility travels as gpuix's universal props.
     for (const name of ['role', 'aria-label', 'aria-description', 'aria-expanded', 'aria-selected', 'aria-level']) {
       const value = element.getAttribute(name)
@@ -604,11 +624,10 @@ export const createMirror = (options: {
   // answers getBoundingClientRect and document.elementsFromPoint, which
   // FoldKit's DragAndDrop uses to find the drop target under the pointer.
   // (Scroll offsets and ResizeObserver are still zero: README, roadmap 2.)
-  const boundsOf = options.boundsOf
-  if (boundsOf !== undefined) {
+  if (options.boundsOf !== undefined) {
     const boxOf = (node: Node) => {
       const id = ids.get(node)
-      return id === undefined ? null : boundsOf(id)
+      return id === undefined ? null : paintedBox(id)
     }
     watchRects(document.body as unknown as Node)
     layouts.set(document, boxOf)
@@ -704,6 +723,7 @@ export const createMirror = (options: {
       ids.delete(node)
       nodes.delete(id)
       nativeChildren.delete(id)
+      sentBoxes.delete(id)
       unregisterEventHandlers(eventHandlers, id)
     }
     for (const child of Array.from(node.childNodes)) forget(child)
@@ -734,6 +754,7 @@ export const createMirror = (options: {
       if (pressed?.id === id && node !== undefined && node.parentNode === null) {
         pressed.held = true
         if (debug) process.stderr.write(`foldkit-native: hold ${id}\n`)
+        sentBoxes.set(id, HELD)
         mutations.setStyle(id, HELD)
         continue
       }

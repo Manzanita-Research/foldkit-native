@@ -535,6 +535,59 @@ describe('pointer events, and listeners on document', () => {
     expect(mounted.nativeOf(body).listeners.has('mouseUp')).toBe(true)
   })
 
+  test('a pressed element hears the whole gesture (GPUI sends it only there)', async () => {
+    const { container } = await setup()
+    const card = el('div', 'card')
+    card.addEventListener('pointerdown', () => {})
+    container.appendChild(card)
+    await mounted.settle()
+    expect([...mounted.nativeOf(card).listeners].sort()).toEqual(['mouseDown', 'mouseMove', 'mouseUp'])
+  })
+
+  test('removed mid-gesture, the pressed element is held, unseen, until the release', async () => {
+    const { container, document, gpui } = await setup()
+    const card = el('div', 'card')
+    const onDown = () => {}
+    card.addEventListener('pointerdown', onDown)
+    container.appendChild(card)
+    await mounted.settle()
+    const id = mounted.idOf(card)
+    const seen = record(document, ['pointermove', 'pointerup'])
+    mounted.send(card, { eventType: 'mouseDown', x: 10, y: 10, button: 0 })
+    // The app lifts the card out of its list, and snabbdom drops its listeners.
+    card.removeEventListener('pointerdown', onDown)
+    card.remove()
+    await mounted.settle()
+    expect(gpui.node(id).style).toEqual({ position: 'absolute', opacity: 0 })
+    expect(gpui.node(id).listeners.has('mouseMove')).toBe(true)
+    expect(mounted.inSync()).toBe(false) // the held twin, until the release
+    mounted.send(id, { eventType: 'mouseMove', x: 300, y: 40, pressedButton: 0 })
+    mounted.send(id, { eventType: 'mouseUp', x: 300, y: 40, button: 0 })
+    expect(names(seen)).toEqual(['pointermove', 'pointerup'])
+    expect((seen[0] as PointerEvent).clientX).toBe(300)
+    await mounted.settle()
+    expect(() => gpui.node(id)).toThrow()
+    expect(mounted.inSync()).toBe(true)
+  })
+
+  test('a pressed element that stays keeps its listeners until the release, then drops them', async () => {
+    const { container } = await setup()
+    const card = el('div', 'card')
+    const onDown = () => {}
+    card.addEventListener('pointerdown', onDown)
+    container.appendChild(card)
+    await mounted.settle()
+    mounted.send(card, { eventType: 'mouseDown', x: 10, y: 10, button: 0 })
+    card.removeEventListener('pointerdown', onDown)
+    card.setAttribute('data-x', '1')
+    await mounted.settle()
+    expect(mounted.nativeOf(card).listeners.has('mouseUp')).toBe(true)
+    mounted.send(card, { eventType: 'mouseUp', x: 10, y: 10, button: 0 })
+    card.setAttribute('data-x', '2')
+    await mounted.settle()
+    expect([...mounted.nativeOf(card).listeners]).toEqual([])
+  })
+
   test("an event that bubbled up from an element isn't dispatched again at the body", async () => {
     const { container, document } = await setup()
     const card = el('div', 'card')

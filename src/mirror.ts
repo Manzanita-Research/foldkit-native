@@ -27,7 +27,11 @@ type EventHandlerMap = Parameters<typeof registerEventHandler>[0]
  *  drop has no GPUI equivalent here, so it is built from mouse events. */
 const DOM_TO_NATIVE: Readonly<Record<string, ReadonlyArray<string>>> = {
   click: ['click'], contextmenu: ['click'], dblclick: ['click'], auxclick: ['auxClick'],
-  mousedown: ['mouseDown'], mouseup: ['mouseUp'], pointerdown: ['mouseDown'], pointerup: ['mouseUp'],
+  mouseup: ['mouseUp'], pointerup: ['mouseUp'],
+  // GPUI sends a press's moves and release only to the pressed element (like
+  // pointer capture), so whatever hears the press hears the whole gesture,
+  // and a drag tracked by listeners on document gets it from there.
+  mousedown: ['mouseDown', 'mouseMove', 'mouseUp'], pointerdown: ['mouseDown', 'mouseMove', 'mouseUp'],
   mouseenter: ['mouseEnter'], mouseleave: ['mouseLeave'], mouseover: ['mouseEnter'], mouseout: ['mouseLeave'],
   mousemove: ['mouseMove'], pointermove: ['mouseMove'],
   keydown: ['keyDown'], keyup: ['keyUp'], focus: ['focus'], blur: ['blur'], focusin: ['focus'], focusout: ['blur'],
@@ -41,14 +45,19 @@ const DOM_TO_NATIVE: Readonly<Record<string, ReadonlyArray<string>>> = {
 }
 
 /** Pointer and mouse listeners above the body (on `document`, `window` or
- *  `<html>`) have no native element of their own. The body, the native root,
- *  listens for them instead and dispatches there, so the event bubbles up. */
+ *  `<html>`) have no native element of their own. Every element GPUI sends the
+ *  event to dispatches it for them, so it bubbles up: above all the pressed
+ *  element during a press. The body, the native root, listens too, though
+ *  gpuix doesn't send its root mouse events yet. */
 const ROOT_TYPES = new Set(['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup'])
 
 /** A GPUI mouse event → the DOM pointer and mouse events a browser fires for it, in order. */
 const POINTER_AND_MOUSE: Readonly<Record<string, readonly [string, string]>> = {
   mouseDown: ['pointerdown', 'mousedown'], mouseMove: ['pointermove', 'mousemove'], mouseUp: ['pointerup', 'mouseup'],
 }
+
+/** What GPUI sends the pressed element after the press. */
+const GESTURE: ReadonlyArray<string> = ['mouseMove', 'mouseUp']
 
 /** gpuix key names → DOM `KeyboardEvent.key`. */
 const KEY_NAMES: Readonly<Record<string, string>> = {
@@ -253,10 +262,32 @@ export const createMirror = (options: {
   }
   // When the last drag ended: never, so a click right after startup counts.
   let dragEndedAt = -Infinity
-  // GPUI sends a mouse event to every listening element under the pointer,
-  // innermost first, the body last. One dispatched lower down has already
-  // bubbled past the body, so the body's copy isn't dispatched again.
-  let bubbled: { types: Set<string>; at: number; sameTask: boolean } | undefined
+  // GPUI can send one mouse event to several listening elements under the
+  // pointer, innermost first. The innermost one's dispatch has already
+  // bubbled through the others, so their copies aren't dispatched again.
+  let bubbled: { node: Node; types: Set<string>; at: number; sameTask: boolean } | undefined
+  // The element GPUI sends the current press's moves and release to. If the
+  // app removes it mid-gesture (a drag that lifts the item out of its list),
+  // its native twin is held, unseen and out of the layout, until the release,
+  // or GPUI would have nowhere to send the rest of the gesture.
+  let pressed: { id: number; node: Node; held: boolean } | undefined
+  const releasePressed = () => {
+    const done = pressed
+    pressed = undefined
+    if (done === undefined) return
+    if (!done.held) {
+      // Listeners removed mid-gesture stop now.
+      for (const native of GESTURE) {
+        if ((listened.get(done.node)?.get(native) ?? 0) === 0) syncListener(done.id, native, false)
+      }
+      return
+    }
+    queueMicrotask(() => {
+      forget(done.node)
+      mutations.destroyElement(done.id)
+      mutations.flushMutations()
+    })
+  }
   const toDom = (node: Node, event: EventPayload) => {
     // GPUI's modifiers ride on every key and mouse event (cmd is the platform
     // key: ⌘ on macOS, so `metaKey`, as a browser has it).
@@ -267,6 +298,12 @@ export const createMirror = (options: {
     }
     if (event.eventType === 'click' || event.eventType === 'mouseUp' || event.eventType === 'keyDown') {
       inputAt = performance.now()
+    }
+    if (event.eventType === 'mouseDown' && (pressed === undefined || !pressed.node.contains(node))) {
+      // The innermost element GPUI hit is the one it captures the gesture for.
+      if (pressed?.held === true) releasePressed()
+      const id = ids.get(node)
+      if (id !== undefined) pressed = { id, node, held: false }
     }
     switch (event.eventType) {
       case 'mouseDown':
@@ -295,6 +332,7 @@ export const createMirror = (options: {
           inputAt = performance.now()
           dragEndedAt = inputAt
           endDrag(zoneAt(event.x ?? 0, event.y ?? 0), init)
+          releasePressed()
           return
         }
         break
@@ -329,32 +367,32 @@ export const createMirror = (options: {
         return
       }
       case 'mouseDown': case 'mouseUp': case 'mouseMove': {
-        const root = node === body
-        const now = performance.now()
-        const recent = bubbled !== undefined && (bubbled.sameTask || now - bubbled.at < 4) ? bubbled.types : undefined
         // A press and its release carry the click count, as `detail` does in a
         // browser. The window is the screen: screen coordinates are window ones.
         const mouse = {
           ...init, screenX: init.clientX, screenY: init.clientY, button: event.button ?? 0,
           detail: event.eventType === 'mouseMove' ? 0 : event.clickCount ?? 1,
         }
+        // A held press element is out of the DOM: what's above it still hears the gesture.
+        const at = node.isConnected ? node : body
         for (const type of POINTER_AND_MOUSE[event.eventType]!) {
-          if (!(listens(node, type) || (root && (above.get(type) ?? 0) > 0))) continue
-          if (root && recent?.has(type)) continue
-          if (!root) {
-            if (recent === undefined) {
-              const next = { types: new Set<string>(), at: now, sameTask: true }
-              bubbled = next
-              queueMicrotask(() => {
-                next.sameTask = false
-              })
-            }
-            bubbled!.types.add(type)
+          if (!((at === node && listens(node, type)) || (above.get(type) ?? 0) > 0)) continue
+          const now = performance.now()
+          const recent = bubbled !== undefined && (bubbled.sameTask || now - bubbled.at < 4) ? bubbled : undefined
+          if (recent !== undefined && recent.types.has(type) && at !== recent.node && at.contains(recent.node)) continue
+          if (recent?.node !== at) {
+            const next = { node: at, types: new Set<string>(), at: now, sameTask: true }
+            bubbled = next
+            queueMicrotask(() => {
+              next.sameTask = false
+            })
           }
-          node.dispatchEvent(type.startsWith('pointer')
+          bubbled!.types.add(type)
+          at.dispatchEvent(type.startsWith('pointer')
             ? new W['PointerEvent']!(type, { ...mouse, pointerId: 1, pointerType: 'mouse', isPrimary: true })
             : new W['MouseEvent']!(type, mouse))
         }
+        if (event.eventType === 'mouseUp') releasePressed()
         return
       }
       case 'mouseEnter': case 'mouseLeave': {
@@ -396,6 +434,9 @@ export const createMirror = (options: {
   }
 
   const syncListener = (id: number, native: string, on: boolean) => {
+    // Removing an element drops its listeners (snabbdom does it on destroy);
+    // the pressed one keeps hearing the gesture until the release.
+    if (!on && pressed?.id === id && GESTURE.includes(native)) return
     if (debug) process.stderr.write(`foldkit-native: listen ${id} ${native} ${on}\n`)
     if (on) registerEventHandler(eventHandlers, id, native, event => {
       if (debug) process.stderr.write(`foldkit-native: event ${id} ${event.eventType}\n`)
@@ -640,11 +681,22 @@ export const createMirror = (options: {
     for (const child of Array.from(parent.childNodes)) {
       const id = ids.get(child) ?? create(child)
       if (id !== undefined) desired.push(id)
+      if (pressed?.held === true && pressed.node === child) {
+        // Back in the DOM: no longer held, and drawn as it is again.
+        pressed.held = false
+        syncProps(pressed.id, child)
+      }
     }
     const keep = new Set(desired)
     for (const id of current) {
       if (keep.has(id)) continue
       const node = nodes.get(id)
+      if (pressed?.id === id && node !== undefined && node.parentNode === null) {
+        pressed.held = true
+        if (debug) process.stderr.write(`foldkit-native: hold ${id}\n`)
+        mutations.setStyle(id, { position: 'absolute', opacity: 0 })
+        continue
+      }
       if (node !== undefined && node.parentNode === null) forget(node)
       if (node === undefined || !ids.has(node)) mutations.destroyElement(id)
     }
@@ -673,8 +725,9 @@ export const createMirror = (options: {
 
   // The body is the native root; FoldKit's view replaces its container inside it.
   const body = document.body as unknown as Node
-  // The body always hears a release: one anywhere ends a drag that missed
-  // every drop zone (its source may not hear it).
+  // The body always listens for a release: one anywhere ends a drag that
+  // missed every drop zone. (gpuix doesn't send its root mouse events yet; the
+  // pressed element hears its own release, so drags end there.)
   countNatives(body, ['mouseUp'], 1)
   const rootId = create(body)!
   mutations.setRoot(rootId)

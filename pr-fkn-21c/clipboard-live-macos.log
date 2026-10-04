@@ -1,0 +1,9 @@
+fkn-heavy: waiting for FKN-29 to finish
+fkn-heavy: waiting for FKN-29 to finish
+PASS paste from the system clipboard
+PASS typing after the paste
+PASS copy to the system clipboard: "from the system x"
+PASS undo: ["from the system "]
+PASS redo
+PASS cut to the system clipboard: "from the system x"
+{"platform":"darwin","results":[{"step":"paste from the system clipboard","ok":true},{"step":"typing after the paste","ok":true},{"step":"copy to the system clipboard","ok":true,"detail":"\"from the system x\""},{"step":"undo","ok":true,"detail":"[\"from the system \"]"},{"step":"redo","ok":true},{"step":"cut to the system clipboard","ok":true,"detail":"\"from the system x\""}]}

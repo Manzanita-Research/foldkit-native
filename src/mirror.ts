@@ -192,7 +192,13 @@ export const createMirror = (options: {
   // When the last drag ended: never, so a click right after startup counts.
   let dragEndedAt = -Infinity
   const toDom = (node: Node, event: EventPayload) => {
-    const init = { bubbles: true, cancelable: true, clientX: event.x ?? 0, clientY: event.y ?? 0 }
+    // GPUI's modifiers ride on every key and mouse event (cmd is the platform
+    // key: ⌘ on macOS, so `metaKey`, as a browser has it).
+    const held = event.modifiers
+    const init = {
+      bubbles: true, cancelable: true, clientX: event.x ?? 0, clientY: event.y ?? 0,
+      ctrlKey: held?.ctrl ?? false, metaKey: held?.cmd ?? false, shiftKey: held?.shift ?? false, altKey: held?.alt ?? false,
+    }
     if (event.eventType === 'click' || event.eventType === 'mouseUp' || event.eventType === 'keyDown') {
       inputAt = performance.now()
     }

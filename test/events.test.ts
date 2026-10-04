@@ -316,6 +316,23 @@ describe('keys, focus, input', () => {
       'Home', 'End', 'PageUp', 'PageDown', 'a', 'Z', '7'])
   })
 
+  test('GPUI modifiers become ctrlKey, metaKey, shiftKey and altKey, on keys and mice', async () => {
+    const { container } = await setup()
+    const node = el('div', 'x')
+    container.appendChild(node)
+    await mounted.settle()
+    const seen = record(node, ['keydown', 'mousedown']) as Array<KeyboardEvent | MouseEvent>
+    const held = (event: KeyboardEvent | MouseEvent) =>
+      [event.ctrlKey && 'ctrl', event.metaKey && 'meta', event.shiftKey && 'shift', event.altKey && 'alt'].filter(Boolean).join('-')
+    const none = { shift: false, ctrl: false, alt: false, cmd: false }
+    mounted.send(node, { eventType: 'keyDown', key: 'z', modifiers: { ...none, cmd: true } })
+    mounted.send(node, { eventType: 'keyDown', key: 'z', modifiers: { ...none, ctrl: true, shift: true } })
+    mounted.send(node, { eventType: 'keyDown', key: 'y', modifiers: { ...none, alt: true } })
+    mounted.send(node, { eventType: 'keyDown', key: 'b' })
+    mounted.send(node, { eventType: 'mouseDown', x: 1, y: 1, button: 0, modifiers: { ...none, shift: true } })
+    expect(seen.map(held)).toEqual(['meta', 'ctrl-shift', 'alt', '', 'shift'])
+  })
+
   test('window keys go to the focused element, or the body', async () => {
     const { container, document, mirror } = await setup()
     const input = el('input') as HTMLInputElement

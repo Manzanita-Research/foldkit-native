@@ -3,6 +3,7 @@
 // launcher and the tests all find examples this way, so adding one never
 // touches a shared list.
 
+import type { WindowOptions } from '@gpuix/native'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -26,6 +27,9 @@ export type ExampleMeta = Readonly<{
   /** What draws it: the DOM mirror (the default), or FoldKit on gpuix
    *  (packages/foldkit-gpuix), which has no DOM engine. */
   renderer?: 'mirror' | 'gpuix'
+  /** More of gpuix's window options, on FoldKit on gpuix: a layer-shell
+   *  surface (Layer bar's), a fixed size. Width and height above still count. */
+  window?: WindowOptions
 }>
 
 export type ExampleApp = Readonly<{

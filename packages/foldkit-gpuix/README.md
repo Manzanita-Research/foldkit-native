@@ -70,6 +70,25 @@ between the app and the machine.
 - **Password fields are refused** (see Text fields, below): gpuix has no
   masked input, so a secret would show as it's typed.
 
+## A bar on a screen edge (layer shell)
+
+`bar(options)` is the window options for a bar, a dock or a panel: spread
+it into `mountGpuix`.
+
+```ts
+const app = mountGpuix({ ...bar({ appId: 'dev.example.bar', edge: 'top', thickness: 36 }), css })
+```
+
+On Wayland it's a wlr-layer-shell surface (gpuix's `layerShell`), anchored
+to `edge` and stretched along it, `thickness` across, with an exclusive zone
+of its thickness so other windows keep clear (`exclusive: false` lets them
+overlap it). It takes the keyboard when clicked (`keyboard: 'on-demand'`),
+so its buttons work from the keyboard too. `namespace` and `appId` are what
+compositor rules match. Everywhere else gpuix ignores `layerShell`, and it's
+a fixed window of the bar's shape (`fallbackLength` long). `isLayerShell()`
+says which. `examples/layer-bar` is one, tested on Metal as the window and
+in a headless sway as the surface (`examples/layer-bar/layer.test.ts`).
+
 ## Closing, errors and starting
 
 `app.close()` asks the close handlers, then releases everything the app

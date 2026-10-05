@@ -1,0 +1,15 @@
+/* The bar's own layout. The buttons' looks come from @foldkit-native/ui's
+   uiCss and its tokens; every selector here looks at one element or a
+   descendant, which is what FoldKit on gpuix's flat sheet reads. */
+.bar[data-ui="root"] {
+  flex-direction: row; align-items: center; justify-content: space-between; gap: 12px;
+  height: 100%; padding: 0 8px 0 14px;
+  background-color: var(--fn-color-surface); border-bottom: 1px solid var(--fn-color-border);
+  font-size: 13px;
+}
+.bar-start { display: flex; flex-direction: row; align-items: center; flex: 1; min-width: 0; }
+.bar-name { font-weight: 600; }
+.bar-middle { display: flex; flex-direction: row; justify-content: center; }
+.bar-clock { font-weight: 600; }
+.bar-end { display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: 6px; flex: 1; min-width: 0; }
+.bar-end [data-ui="button"] { height: 28px; padding: 0 10px; font-size: 13px; }

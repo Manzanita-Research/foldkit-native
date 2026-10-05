@@ -23,6 +23,7 @@ if (renderer === 'gpuix') {
   // puts it somewhere else (the tests use a scratch folder).
   const dataDir = process.env['FOLDKIT_NATIVE_DATA_DIR']
   const native = mountGpuix({
+    ...example.meta.window,
     title: example.meta.title, width: example.meta.width, height: example.meta.height, css: example.css,
     appId: `dev.foldkit-native.${id}`, ...(dataDir === undefined ? {} : { dataDir }),
   })

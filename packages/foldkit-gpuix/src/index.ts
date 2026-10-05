@@ -52,6 +52,7 @@ export { dataDirFor } from './storage.ts'
 export { NativeDocument, NativeElement } from './dom.ts'
 export { PASSWORD_UNSUPPORTED } from './host.ts'
 export { SECRET_AUTOCOMPLETE, isSecretField, redactTree, redactingRenderer, secretValues } from './automation.ts'
+export { type BarOptions, type Edge, bar, isLayerShell } from './layer-shell.ts'
 
 /** Token name → CSS value (numbers are pixels), as `foldkit-native`'s theme. */
 export type Tokens = Readonly<Record<string, string | number>>

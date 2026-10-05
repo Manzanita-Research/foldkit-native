@@ -46,8 +46,9 @@ These are a reading, not a gate (the gate is the baseline):
 
 | Budget | m6, Linux |
 |---|---|
-| warm first paint p95 ≤ 1 s | 1.2 to 1.4 s from spawn (bun start-up and module loading included): over |
-| click/key → frame p95 ≤ 50 ms | counter 41 ms, Big List 37 ms (p95 48), Pixel Art 126 to 135 ms (opening its Listbox, and Escape): Pixel Art over |
-| theme switch ≤ 100 ms | Big List 59 ms (p95 66): within |
-| RSS ≤ 350 MB small app, ≤ 500 MB 10k-record app | counter 368 MB (over: Linux counts GPU driver mappings), Big List 415 MB: within |
-| scrolling frame p95 ≤ 16.7 ms | not measurable: gpuix gives automation no frame times. A wheel step → the next row on screen is 28 ms median (p95 41) |
+| warm first paint p95 ≤ 1 s | 1.2 s (counter), 1.36 s (Big List), 1.5 s (Pixel Art), from spawn: bun start-up and module loading included. Over |
+| click/key → frame p95 ≤ 50 ms | counter 43 ms, Big List key 43 ms, Pixel Art key (Escape) 97 ms and click (opening its Listbox) 168 ms. Pixel Art is over |
+| theme switch ≤ 100 ms | Big List 66 ms (p95 71). Within |
+| RSS ≤ 350 MB small app, ≤ 500 MB 10k-record app | counter 368 MB (over: Linux counts the GPU driver's mappings), Big List 417 MB, Pixel Art 450 MB. Within for the big apps |
+| scrolling frame p95 ≤ 16.7 ms | not measurable: gpuix gives automation no frame times. A wheel step → the next row on screen is 33 ms median (p95 41) |
+| idle CPU | 2.0% of a core in all three: a 60 Hz timer-driven frame loop, about twice as busy for a few seconds after any interaction |

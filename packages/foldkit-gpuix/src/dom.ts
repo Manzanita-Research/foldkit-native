@@ -17,6 +17,7 @@
 /** What a document reports to whoever draws it (host.ts). */
 import { Equal } from 'effect'
 
+import { windowFetch } from './fetch.ts'
 import { mediaQueryMatches } from './media.ts'
 import { type NativeStorage, memoryStorage } from './storage.ts'
 
@@ -731,6 +732,9 @@ export class NativeWindow extends NativeEventTarget {
   scrollX = 0
   scrollY = 0
   readonly location = new URL('http://foldkit.native/') as unknown as Location
+  /** Host HTTP transport, with string URLs relative to this window's location.
+   *  No browser cookie jar or CORS policy is emulated. */
+  readonly fetch = windowFetch(this.location)
   /** In memory: push, replace, back and forward move `location` and fire
    *  `popstate`, as a single-window app's router expects. */
   readonly history = memoryHistory(this)

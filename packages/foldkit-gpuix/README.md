@@ -6,6 +6,11 @@ small document whose nodes are gpuix host nodes (`src/dom.ts`), and the host
 (`src/host.ts`) turns GPUI's input back into DOM events. Focus, Tab order,
 scrolling and text editing are GPUI's own.
 
+- [CAPABILITIES.md](CAPABILITIES.md): what works, what's approximated and
+  what's refused, each row held by a test.
+- [MIGRATING.md](MIGRATING.md): moving a FoldKit app from the web.
+- [EVENTS.md](EVENTS.md): how GPUI's input becomes DOM events.
+
 ## Use
 
 ```ts

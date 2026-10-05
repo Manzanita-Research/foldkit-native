@@ -5,7 +5,7 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { Option, Schema } from 'effect'
 import { defineMessageUnion } from 'foldkit/message'
 
-import { sheetFromCss } from '../src/index.ts'
+import { NativeElement, PASSWORD_UNSUPPORTED, sheetFromCss } from '../src/index.ts'
 import { type Headless, mountHeadless } from './support.ts'
 
 let app: Headless | undefined
@@ -171,23 +171,80 @@ describe('fixes from the first real-GPUI run', () => {
     expect(app.gpui.ops().length - before).toBeLessThan(40)
   })
 
-  test('a password field is refused: drawn empty and read-only, the secret never sent', async () => {
+  test('a password field throws as it\'s mounted, naming the gap, before any of it reaches GPUI', async () => {
+    app = mountHeadless()
+    const { document } = app
+    const container = app.container as unknown as NativeElement
+    const form = document.createElement('div')
+    const secret = document.createElement('input')
+    secret.setAttribute('type', 'password')
+    secret.value = 'hunter2'
+    form.append(secret)
+    await app.settle()
+    const ops = app.gpui.ops().length
+    expect(() => container.append(form)).toThrow(PASSWORD_UNSUPPORTED)
+    expect(PASSWORD_UNSUPPORTED).toContain('<input type="password">')
+    expect(PASSWORD_UNSUPPORTED).toContain('no masked input')
+    // Refused before the document changed: nothing inserted, nothing drawn.
+    expect(form.parentNode).toBe(null)
+    await app.settle()
+    expect(app.gpui.ops().slice(ops).filter(op => op[0] === 'createElement')).toEqual([])
+    expect(JSON.stringify(app.gpui.batches)).not.toContain('hunter2')
+    // A mounted field turned into one throws too.
+    const plain = document.createElement('input')
+    container.append(plain)
+    await app.settle()
+    expect(() => plain.setAttribute('type', 'password')).toThrow(PASSWORD_UNSUPPORTED)
+    expect(plain.getAttribute('type')).toBe(null)
+    // Off the document, it's only a DOM: nothing to draw, nothing to refuse.
+    expect(() => document.createElement('input').setAttribute('type', 'password')).not.toThrow()
+  })
+
+  test('a FoldKit view that adds a password field crashes with that message', async () => {
+    app = mountHeadless()
+    const { Runtime } = await import('foldkit')
+    const reported: Array<string> = []
     const quiet = spyOn(console, 'error').mockImplementation(() => {})
     try {
-      const { app } = await run({}, {
-        Model: Counter.Model, init: { count: 0 }, update: c => c,
-        view: (_, h) => h.div([], [h.input([h.Id('secret'), h.Type('password'), h.Value('hunter2')]), h.input([h.Id('plain')])]),
-      })
-      const field = app.gpui.node(app.document.getElementById('secret')!.nativeId)
-      expect(field.type).toBe('input')
-      expect(field.props).toMatchObject({ value: '', readOnly: true, tabIndex: -1 })
-      expect(String(field.props['placeholder'])).toContain('Password fields')
-      expect(JSON.stringify(app.gpui.batches)).not.toContain('hunter2')
-      expect(app.fake.tabOrder()).toEqual([app.document.getElementById('plain')!.nativeId])
-      expect(quiet).toHaveBeenCalledTimes(1)
+      Runtime.run(Runtime.makeElement({
+        Model: Counter.Model, init: () => ({ model: { count: 0 } }), update: (c: { count: number }) => ({ model: { count: c.count + 1 } }),
+        view: (c: { count: number }, h: any) => h.div([], [
+          h.button([h.OnClick(Counter.Message.Clicked())], ['Sign in']),
+          ...(c.count > 0 ? [h.input([h.Id('secret'), h.Type('password')])] : []),
+        ]),
+        container: app.container,
+        crash: {
+          view: ({ error }: { error: Error }, h: any) => h.p([h.Id('crashed')], [error.message]),
+          report: ({ error }: { error: Error }) => reported.push(error.message),
+        },
+      } as never))
+      await app.settle()
+      await app.click('Sign in')
     } finally {
       quiet.mockRestore()
     }
+    expect(reported).toEqual([PASSWORD_UNSUPPORTED])
+    expect(app.texts()).toEqual([PASSWORD_UNSUPPORTED])
+  })
+
+  test('in the first render, FoldKit reports the crash (its crash view can\'t draw: FoldKit has detached the container by then)', async () => {
+    app = mountHeadless()
+    const { Runtime } = await import('foldkit')
+    const reported: Array<string> = []
+    const quiet = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      Runtime.run(Runtime.makeElement({
+        Model: Counter.Model, init: () => ({ model: { count: 0 } }), update: (c: never) => ({ model: c }),
+        view: (_: never, h: any) => h.div([], [h.input([h.Id('secret'), h.Type('password')])]),
+        container: app.container,
+        crash: { view: (_: never, h: any) => h.p([], ['crashed']), report: ({ error }: { error: Error }) => reported.push(error.message) },
+      } as never))
+      await app.settle()
+    } finally {
+      quiet.mockRestore()
+    }
+    expect(reported).toEqual([PASSWORD_UNSUPPORTED])
+    expect(app.document.getElementById('secret')).toBe(null)
   })
 
   test('disabling the focused element moves focus off it', async () => {
@@ -503,6 +560,23 @@ describe(':focus-visible by input modality, as browsers judge it', () => {
 })
 
 describe('keys and the browser\'s default actions', () => {
+  test('a window keyup goes to the focused element and bubbles, with its modifiers; no element, the body', async () => {
+    await run({}, {
+      Model: Counter.Model, init: { count: 0 }, update: c => c,
+      view: (_, h) => h.div([], [h.button([h.Id('go')], ['Go'])]),
+    })
+    const seen: Array<string> = []
+    app!.document.addEventListener('keyup', event => {
+      const key = event as KeyboardEvent
+      seen.push(`${key.type} ${key.key} shift=${key.shiftKey} @${(key.target as Element).getAttribute('id') ?? (key.target as Element).localName}`)
+    })
+    app!.document.getElementById('go')!.focus()
+    app!.host.dispatch({ eventType: 'windowKeyUp', key: 'a', modifiers: { shift: true }, elementId: 1 } as never)
+    app!.document.getElementById('go')!.blur()
+    app!.host.dispatch({ eventType: 'windowKeyUp', key: 'escape', elementId: 1 } as never)
+    expect(seen).toEqual(['keyup a shift=true @go', 'keyup Escape shift=false @body'])
+  })
+
   test('keys go to the focused element and bubble; Enter and Space click a button', async () => {
     const { model } = await run({}, {
       Model: Counter.Model, init: { count: 0 }, update: c => ({ count: c.count + 1 }),

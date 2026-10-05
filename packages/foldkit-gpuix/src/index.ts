@@ -47,6 +47,7 @@ export { type ErrorPhase, type ErrorReport, type HostTimings, type NativeStorage
 export { NativeStartError, type StartFailure, explainStartError } from './start.ts'
 export { dataDirFor } from './storage.ts'
 export { NativeDocument, NativeElement } from './dom.ts'
+export { PASSWORD_UNSUPPORTED } from './host.ts'
 
 /** Token name → CSS value (numbers are pixels), as `foldkit-native`'s theme. */
 export type Tokens = Readonly<Record<string, string | number>>

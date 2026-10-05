@@ -77,13 +77,19 @@ const KEY_NAMES: Readonly<Record<string, string>> = {
 const POINTER_PRESSES = new Set(['mouseDown', 'mouseUp', 'auxClick'])
 
 const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number'])
-/** gpuix has no masked editor, so a password field would show the secret.
- *  It's drawn as an empty, read-only field that says so, and never takes
- *  focus or text (an upstream ask for gpuix). */
+/** gpuix has no masked editor, so a password field would show the secret as
+ *  it's typed. Rather than draw one, the document refuses it: inserting one,
+ *  or making a field one, throws (an upstream ask for gpuix). */
 const isPassword = (element: NativeElement) =>
   element.localName === 'input' && (element.getAttribute('type') ?? '').toLowerCase() === 'password'
-const PASSWORD_REFUSED = 'Password fields aren’t supported here yet'
-let warnedPassword = false
+export const PASSWORD_UNSUPPORTED = `FoldKit on gpuix: <input type="password"> isn't supported. gpuix has no masked input, ` +
+  `so the secret would show as it's typed; it needs one first (M0 memo, gpuix ask 1).`
+/** Throws if `node` is, or holds, a password field: before any of it reaches GPUI. */
+const refusePasswords = (node: NativeNode) => {
+  if (!(node instanceof NativeElement)) return
+  if (isPassword(node)) throw new Error(PASSWORD_UNSUPPORTED)
+  for (const child of node.children) refusePasswords(child)
+}
 
 /** Which gpuix element draws a DOM element. `data-fn-anchored` makes an
  *  `anchored` one: GPUI places its content beside its parent (a popover's
@@ -381,7 +387,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 
   // PROPS: accessibility, focus order, field values, images.
   const isFocusable = (element: NativeElement) => {
-    if (isDisabled(element) || element.closest('[inert]') !== null || isPassword(element)) return false
+    if (isDisabled(element) || element.closest('[inert]') !== null) return false
     const own = element.getAttribute('tabindex')
     return own !== null ? !Number.isNaN(Number(own)) : isNaturallyFocusable(element)
   }
@@ -422,7 +428,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (level !== null) props.set('aria-level', Number(level))
     const testId = element.getAttribute('data-testid') ?? element.getAttribute('id')
     if (testId !== null) props.set('testId', testId)
-    if (isFocusable(element) && !isPassword(element)) props.set('tabIndex', element.tabIndex)
+    if (isFocusable(element)) props.set('tabIndex', element.tabIndex)
     // GPUI's editors are tab stops unless told not to be (a disabled field
     // took focus by Tab on Metal).
     else if (isField(element)) props.set('tabIndex', -1)
@@ -449,15 +455,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       const alt = element.getAttribute('alt')
       if (alt !== null) props.set('alt', alt)
     }
-    if (isPassword(element)) {
-      if (!warnedPassword) {
-        warnedPassword = true
-        console.error('[foldkit-gpuix] <input type="password"> is not supported: gpuix has no masked input, so it is drawn empty and read-only')
-      }
-      props.set('value', '')
-      props.set('placeholder', PASSWORD_REFUSED)
-      props.set('readOnly', true)
-    } else if (isField(element)) {
+    if (isField(element)) {
       props.set('value', element.value)
       const placeholder = element.getAttribute('placeholder')
       if (placeholder !== null) props.set('placeholder', placeholder)
@@ -1220,6 +1218,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 
   // THE HOST INTERFACE (what the document calls)
   const host: Host = {
+    admit: (node, name, value) => {
+      if (name === undefined) refusePasswords(node)
+      else if (name === 'type' && node instanceof NativeElement && node.localName === 'input' && value?.toLowerCase() === 'password') {
+        throw new Error(PASSWORD_UNSUPPORTED)
+      }
+    },
     inserted: (parent, node) => {
       if (parent.nativeId === 0 && parent !== body && !(parent instanceof NativeDocument)) {
         // Inserted under a part GPUI doesn't draw (html, head): the body's subtree is all it draws.
@@ -1337,6 +1341,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 
   const mountBody = () => {
     if (body.nativeId !== 0) return
+    refusePasswords(body)
     mount(body)
     mountSentinel()
     mutations.setRoot(body.nativeId)

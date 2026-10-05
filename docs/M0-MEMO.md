@@ -34,7 +34,7 @@ thread (thr_jrys2u6ybd, Claude Opus 5.5, on the Mac mini).
 | FKN-17 (M0.2) | #19 | FKN-11's adapter on main, with the last Metal reds fixed: a click into a field, Shift-Tab, Tab typing tabs, controlled values, a scrolled list's box, disabled fields as tab stops. The fake-vs-real contract test. Space activates once, on its release, in a real window |
 | FKN-16 (M0.1) | #20 | Lifecycle: `own()` + `detach()` dispose the FoldKit runtime, free the native tree (gpuix's retained count goes to **0** on Metal), and restore globals. Closing the window no longer kills the process blindly. Every stubbed browser API now behaves or says it doesn't |
 | FKN-18 (M0.3) | #21 | The style sheet's contract, gate by gate. Descendant and child combinators fix Big List's selected-row cells. Live `@media` on resize, real `@supports`, `vh`/`vw`, and auto margins fix the Form's centring |
-| FKN-19 (M0.4) | #22, #23 | Containing blocks (the dialog centres) and a browser's tab order. A Select on gpuix's anchored element. FoldKit's own `Dom` Commands run natively. Password fields are refused rather than shown in plain text |
+| FKN-19 (M0.4) | #22, #23 | Containing blocks (the dialog centres) and a browser's tab order. A Select on gpuix's anchored element. FoldKit's own `Dom` Commands run natively. Password fields are refused rather than shown in plain text (since FKN-21, mounting one throws) |
 | FKN-20 (M0.5) | this PR | The measurements, this memo, and a fix the measurements found: `requestAnimationFrame` now runs before GPUI draws, as in a browser |
 
 All three gaps you saw in FKN-11's screenshots are fixed, with before/after
@@ -110,7 +110,7 @@ silent stand-in. The adapter's README has the full tables.
 |---|---|
 | FoldKit itself | Unmodified. `Runtime.embed` + `own()`; Mounts, Submodels, `Render.afterCommit`, crash view, Commands, Subscriptions all run. The 7 FoldKit examples render the same number of text nodes as on the mirror (`versus-mirror.test.ts`), and Big List and the Form were checked on Metal |
 | Focus and keyboard | GPUI's focus, the document's tab order (a browser's: positive tab indexes first), focus traps for `aria-modal`. Enter and Space activate, Space on its release. `:focus` / `:focus-visible` follow input modality. A click into a field focuses it |
-| Text fields | GPUI's editors; `input` per change, `change` on blur; controlled values work, including refusing a keystroke. Tab never types. **Password: refused** (no masked input in gpuix) |
+| Text fields | GPUI's editors; `input` per change, `change` on blur; controlled values work, including refusing a keystroke. Tab never types. Disabled and read-only fields take no edits. Clipboard and undo are GPUI's (checked in a live window on macOS; Linux is FKN-26). **Password: mounting one throws**, naming the gap (no masked input in gpuix) |
 | Scrolling | GPUI's. `scrollTop`, `scrollIntoView` (only the nearest scroll area), keys on a focused scroll area, and `getBoundingClientRect` give the border box where it's drawn |
 | Styles | No cascade engine. Rules with descendant and child combinators (ancestors at rest), specificity, `!important`, custom properties and inherited text. Live `@media`, evaluated `@supports`, `vh`/`vw`, auto margins. **Missing:** sibling combinators and structural pseudo-classes (`space-y-*`), ancestor states (`group-hover:`), pseudo-elements, `z-index`. Unsupported rules are listed per app |
 | Layout | GPUI (taffy). Absolutely and fixed positioned boxes go under their CSS containing block. A `fixed` box scrolls with the page (the root scrolls) |
@@ -144,7 +144,7 @@ Each is worked around in the adapter today, and each workaround has a test
 that will fail loudly if gpuix changes underneath it.
 
 1. **A masked input** (`type: password`, or a `mask` prop on `input`).
-   Without it we refuse password fields.
+   Without it, mounting a password field throws.
 2. **Editor events.** A click into an `input`/`textarea` sends no mouse or
    focus event, even to listeners on the field itself. We listen for
    `mouseDownOutside` on a zero-size sentinel. An `onFocus` when an editor
@@ -169,8 +169,14 @@ that will fail loudly if gpuix changes underneath it.
    and automation `keystrokes` send key-down only, live as well as offscreen.
 9. **Layout and styles.** Auto margins (`margin: auto`), `aspectRatio`, and
    a `focusVisible` style state like `hover`/`active` (we restyle on focus
-   instead, which costs a round trip). And Linux frame read-back, for real-GPU
-   tests on Wayland.
+   instead, which costs a round trip). A box shadow clipped to outside the
+   box, as CSS has it: GPUI paints it under the whole box, so we fill a
+   transparent box with its backdrop's colour. And Linux frame read-back, for
+   real-GPU tests on Wayland.
+10. **Disabled editors and AccessKit** (FKN-21). An editor told `tabIndex: -1`
+   and `readOnly` still takes focus on a press; we refuse it in the DOM and
+   blur. And a disabled state for AccessKit, so disabled controls are
+   announced as disabled.
 
 ## Risks
 

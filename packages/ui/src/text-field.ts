@@ -22,6 +22,7 @@ export type ViewConfig<Message> = Readonly<{
   description?: string
   /** Shown instead of the description, and marks the field invalid. */
   error?: string
+  /** 'password' throws on FoldKit on gpuix, which has no masked input yet. */
   type?: 'text' | 'email' | 'password' | 'search' | 'url' | 'tel'
   attributes?: ReadonlyArray<Attribute<Message>>
 }>

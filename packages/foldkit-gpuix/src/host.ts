@@ -1009,7 +1009,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         keyboardModality = false
         inputAt = performance.now()
         const mouse = { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }
-        pointerFocus(element)
+        settlePress(false)
+        if (!pressPrevented) pointerFocus(element)
         // GPUI clicks what was pressed, wherever the release was. A browser
         // clicks what the press and the release have in common: a press
         // dragged off a button and let go elsewhere doesn't click it.
@@ -1042,8 +1043,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         const button = right ? 2 : event.button ?? 1
         const mouse = { ...init, button, detail: event.clickCount ?? 1 }
         const at = pressedAt(element)
+        settlePress(false)
         if (right) {
-          pointerFocus(element)
+          if (!pressPrevented) pointerFocus(element)
           at.dispatchEvent(new NativeMouseEvent('contextmenu', { ...mouse, buttons: BUTTONS[button] ?? 0 }))
         }
         queueMicrotask(() => {
@@ -1059,6 +1061,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       case 'keyDown': return key(event, 'keydown')
       case 'keyUp': return key(event, 'keyup')
       case 'focus':
+        // During a press, its mousedown decides (settlePress follows GPUI).
+        if (pendingPress !== undefined) return
         if (node instanceof NativeElement) {
           if (isFocusable(node)) setFocus(node, true)
           else refuseFocus()
@@ -1067,6 +1071,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       case 'blur':
         // Focus may be moving to another element GPUI reports next.
         queueMicrotask(() => {
+          if (pendingPress !== undefined) return
           if (focused === node && (renderer.getFocusedElementId?.() ?? null) !== node.nativeId) setFocus(null, true)
         })
         return
@@ -1145,6 +1150,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   /** GPUI sends one press to every listening element under the pointer,
    *  innermost first; the innermost one's dispatch already bubbled. */
   let lastPointer: { node: NativeElement; type: string; sameTask: boolean } | undefined
+  let compatSuppressed = false
   /** What GPUI sends the pressed element after the press. */
   const GESTURE: ReadonlyArray<string> = ['mouseMove', 'mouseUp']
   const POINTER_AND_MOUSE: Readonly<Record<string, readonly [string, string]>> = {
@@ -1201,13 +1207,18 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       : event.pressedButton == null ? 0 : BUTTONS[event.pressedButton] ?? 0
     const mouse = { ...init, screenX: init.clientX, screenY: init.clientY, button, buttons, detail: type === 'mouseMove' ? 0 : event.clickCount ?? 1 }
     const [pointerType, mouseType] = POINTER_AND_MOUSE[type]!
-    over.dispatchEvent(new NativePointerEvent(pointerType, pointerInit(mouse)))
+    const proceed = over.dispatchEvent(new NativePointerEvent(pointerType, pointerInit(mouse)))
+    // A prevented pointerdown means no compatibility mouse events (mousedown,
+    // its moves, mouseup) until the release; the click still comes.
+    if (type === 'mouseDown') compatSuppressed = !proceed
     // The capture ends with the release, before its compatibility mouse event.
     if (type === 'mouseUp' && (captured !== undefined || pendingCapture != null)) {
       pendingCapture = null
       processCapture(init)
     }
-    over.dispatchEvent(new NativeMouseEvent(mouseType, mouse))
+    const mouseProceeds = compatSuppressed || over.dispatchEvent(new NativeMouseEvent(mouseType, mouse))
+    if (type === 'mouseDown') settlePress(!mouseProceeds)
+    if (type === 'mouseUp') compatSuppressed = false
     if (type === 'mouseUp' && capturing) release(init)
   }
   /** The press is over: a held element goes, listeners dropped during the
@@ -1671,15 +1682,49 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         pointerAt = { x: event.x, y: event.y }
         pressDown = under(event.x, event.y)
       }
-      // Seen after GPUI dispatched the press, so its focus is committed.
-      press(event.x, event.y)
+      // Its focus waits for its mousedown, if one comes in this task.
+      const pending = { previous: focused, x: event.x, y: event.y }
+      pendingPress = pending
+      pressPrevented = false
+      queueMicrotask(() => {
+        if (pendingPress === pending) settlePress(false)
+      })
     })
     mutations.setEventListener(sentinel, 'mouseDownOutside', true)
+  }
+  /** FOCUS ON PRESS: in a browser, focus moves as the default action of
+   *  `mousedown`, after it's dispatched and before the release, and not at
+   *  all if it was prevented. GPUI moves its own focus as it takes the press,
+   *  before any element hears it. So the press waits (`pendingPress`) until
+   *  its mousedown has been dispatched (or until its click, or the end of the
+   *  task, when nothing listens for presses); then, unless prevented, the
+   *  DOM follows GPUI and focuses the nearest focusable element under the
+   *  press. Prevented, GPUI's focus goes back where it was. */
+  let pendingPress: { previous: NativeElement | null; x: number | undefined; y: number | undefined } | undefined
+  let pressPrevented = false
+  const settlePress = (prevented: boolean) => {
+    const pending = pendingPress
+    pendingPress = undefined
+    if (pending === undefined) return
+    pressPrevented = prevented
+    if (prevented) {
+      const was = pending.previous
+      const id = renderer.getFocusedElementId?.() ?? null
+      if (id !== (was?.nativeId ?? null)) {
+        if (was !== null && was.nativeId !== 0) renderer.focusElement?.(was.nativeId)
+        else renderer.blur?.()
+      }
+      return
+    }
+    press(pending.x, pending.y)
+    // Not laid out yet (no pressDown): the click focuses instead.
+    const focusable = pressDown === undefined ? null : focusableAncestor(pressDown)
+    if (focusable !== null && focusable !== focused) setFocus(focusable, false, false)
   }
   /** A press anywhere. If GPUI moved focus, the DOM follows. If it didn't and
    *  the press was outside the focused element, focus leaves it, as a
    *  browser's does (a press on another focusable element then focuses that
-   *  one, from its click). */
+   *  one: settlePress). */
   const press = (x?: number, y?: number) => {
     const id = renderer.getFocusedElementId?.() ?? null
     const node = id === null ? undefined : nodes.get(id)

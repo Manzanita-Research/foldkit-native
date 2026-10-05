@@ -95,6 +95,36 @@ starts empty. A write that fails throws, as a browser's quota error does.
 Two processes of one app share the file, and the last write wins.
 `sessionStorage` stays in memory.
 
+## HTTP transport
+
+`app.window.fetch(input, init)` uses the host Bun/Node fetch transport. String
+URLs resolve against that window's current `location.href` (including history
+changes); absolute URL objects and host `Request` objects pass through intact.
+The function can be extracted without binding. Responses, redirects, bodies,
+headers, abort signals and errors are the host's, not synthetic DOM objects.
+Invalid string URLs reject the returned promise.
+
+This is native HTTP, not a browser network sandbox: it does not emulate CORS,
+a browser cookie jar or document cookies. Authentication and cookie handling
+remain subject to the host transport; setting `credentials` does not create
+a browser session. The process-global `fetch` remains the host's unchanged
+function. Requires a Bun/Node runtime with built-in fetch.
+
+## HTTP transport
+
+`app.window.fetch(input, init)` uses the host Bun/Node fetch transport. String
+URLs resolve against that window's current `location.href` (including history
+changes); absolute URL objects and host `Request` objects pass through intact.
+The function can be extracted without binding. Responses, redirects, bodies,
+headers, abort signals and errors are the host's, not synthetic DOM objects.
+Invalid string URLs reject the returned promise.
+
+This is native HTTP, not a browser network sandbox: it does not emulate CORS,
+a browser cookie jar or document cookies. Authentication and cookie handling
+remain subject to the host transport; setting `credentials` does not create
+a browser session. The process-global `fetch` remains the host's unchanged
+function. Requires a Bun/Node runtime with built-in fetch.
+
 ## Browser APIs: what behaves and what doesn't
 
 FoldKit and @foldkit/ui feature-detect some of these. Each one either does

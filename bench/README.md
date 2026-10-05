@@ -22,12 +22,15 @@ A baseline is only comparable to the same hardware and OS. The committed ones:
 
 | File | Class | Recorded on |
 |---|---|---|
+| `baseline.macos-ci.json` | `macos-ci` | the `nightly` workflow on `blacksmith-6vcpu-macos-15` (Metal), run by hand with record ticked |
 | `baseline.linux-m6.json` | `linux-m6` | jemarchy-m6 (an AMD Ryzen mini PC, Phoenix1 iGPU on Mesa, Linux, headless sway; load average about 1.5 from other threads) |
-| `baseline.macos-mini.json` | `macos-mini` | the Mac mini (M1, 8 GB, Metal, macOS; other threads running). Counter and Big List only: Pixel Art's theme list doesn't paint its items on the adapter on macOS yet (FKN-25), so it can't be measured by painted text |
+| `baseline.macos-mini.json` | `macos-mini` | the Mac mini (M1, 8 GB, Metal, macOS; other threads running). Pixel Art waits on the retained tree, as on CI: its Listbox's items aren't in macOS's painted text (FKN-25 checks whether they paint) |
 
 Add another class with `--record --class <name>` on that hardware and commit
 the file. The CI runner is its own class (`macos-ci`): record it by running the
-`nightly` workflow with `record` ticked, and commit what it uploads.
+`nightly` workflow with `record` ticked, and commit what it uploads. The
+workflow runs every night (about 10 minutes of Blacksmith macOS) and fails
+when a median is 25% worse than that baseline; the table is in the job summary.
 
 ## What's measured
 
@@ -40,6 +43,18 @@ keep a +25% on a 5 ms number from failing the run.
 
 "On screen" is GPUI's last painted frame where gpuix reports it (macOS) and
 the retained tree where it doesn't (Linux; up to a frame early).
+
+## Metal (the macos-ci baseline)
+
+| App | first paint | click → frame | key → frame | theme switch | scroll step → frame | RSS | idle CPU |
+|---|---|---|---|---|---|---|---|
+| counter | 383 ms | 6.7 ms | – | – | – | 185 MB | 1.5 % |
+| big-list | 514 ms | – | 23.9 ms | 14.8 ms | 21.7 ms | 257 MB | 2.0 % |
+| pixel-art | 587 ms | **81.8 ms** (p95 111) | 44.6 ms (p95 55) | – | – | 311 MB | 1.5 % |
+
+Against the budgets: all within except Pixel Art's click → frame (opening its
+Listbox restyles many elements; gpuix's `applyBatch` takes about 10 ms for one
+style op in a live window), which is over the 50 ms budget on both platforms.
 
 ## Budgets from the task, against the first Linux numbers
 

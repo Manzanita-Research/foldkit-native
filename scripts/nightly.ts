@@ -106,11 +106,16 @@ const once = async (app: App, run: number): Promise<{ samples: Samples; signal: 
     const lines = async () => texts(window, signal)
     const appears = async (text: string, timeoutMs = 5000, gone = false) => {
       for (const until = performance.now() + timeoutMs; (await lines()).some(line => line.includes(text)) === gone;) {
-        if (performance.now() > until) throw new Error(`${app.id}: "${text}" never ${gone ? 'left' : 'was on screen'}`)
+        if (performance.now() > until) {
+          const seen = (await lines()).slice(0, 25).join(' | ')
+          throw new Error(`${app.id}: "${text}" never ${gone ? 'left' : 'was on screen'} (${signal} text: ${seen})`)
+        }
       }
     }
     await window.getByText(app.ready).waitFor({ timeoutMs: 15_000 })
-    if ((await texts(window, 'getPaintedText')).length > 0) signal = 'getPaintedText'
+    // Pixel Art's Listbox opens in an anchored overlay that macOS's painted text
+    // doesn't list, so it always waits on the retained tree.
+    if (app.id !== 'pixel-art' && (await texts(window, 'getPaintedText')).length > 0) signal = 'getPaintedText'
     await appears(app.ready, 15_000)
     record('first', performance.now() - started)
     await settle(800)

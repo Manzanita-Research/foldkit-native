@@ -32,6 +32,11 @@ export const createFakeGpui = () => {
   /** Scroll offsets, gpuix's way: negative when scrolled down or right. */
   const offsets = new Map<number, [number, number]>()
   const scrollCalls: Array<{ id: number; x: number; y: number }> = []
+  /** A virtual list's anchor (its top row, and how far into it), as GPUI's
+   *  scrollToItem sets it, clamped to its rows; the viewport's height from
+   *  setBounds. */
+  const anchors = new Map<number, [number, number]>()
+  const itemScrolls: Array<{ id: number; index: number; offset: number }> = []
 
   const node = (id: number) => {
     const found = nodes.get(id)
@@ -153,7 +158,13 @@ export const createFakeGpui = () => {
       offsets.set(id, [Math.min(0, Math.max(minX, x)), Math.min(0, Math.max(minY, y))])
     },
     setWindowKeyEvents: () => {},
-  }
+    scrollToItem: (id: number, index: number, offset?: number | null) => {
+      itemScrolls.push({ id, index, offset: offset ?? 0 })
+      const count = Number(node(id).props['itemCount'] ?? 0)
+      anchors.set(id, [Math.max(0, Math.min(count - 1, index)), offset ?? 0])
+    },
+    getListScrollTop: (id: number) => (nodes.get(id)?.type === 'virtual-list' ? [...(anchors.get(id) ?? [0, 0]), bounds.get(id)?.height ?? 0] : null),
+  } as NativeRenderer & { getAutomationTree: () => string }
 
   const shape = (id: number): Shape => {
     const { type, text, children } = node(id)
@@ -184,6 +195,8 @@ export const createFakeGpui = () => {
     setScrollOffset: (id: number, x: number, y: number) => offsets.set(id, [x, y]),
     /** Every `scrollTo` the mirror asked GPUI for. */
     scrollCalls,
+    /** Every scrollToItem a virtual list was asked for. */
+    itemScrolls,
   }
 }
 

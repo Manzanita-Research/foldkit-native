@@ -330,6 +330,32 @@ instead of guessing:
 - a selector it can't read at all (`a!`, an unclosed quote), which
   `querySelector` throws a SyntaxError for, as a browser does.
 
+## GPUI's own elements: anchored and virtual-list
+
+A data attribute makes an element one of GPUI's own instead of a `div`,
+decided when it's created:
+
+- **`data-fn-anchored`** (gpuix's options as JSON: `side`, `align`, `gap`):
+  GPUI places it beside its parent, flips it to fit the window and paints it
+  over everything. `@foldkit-native/ui`'s Select and Popover use it.
+- **`data-fn-virtual-list`** (JSON: `itemCount`, `estimatedItemHeight`,
+  `windowStart`): GPUI's list. Its children are the rows from `windowStart`
+  on, the window the app renders. GPUI lays out and paints only the rows
+  near its viewport, and scrolls by row. To the document it's a scroll area:
+  - `scrollTop` is its top row times the estimated height, plus how far into
+    that row (gpuix's `getListScrollTop`). Setting it scrolls to that row.
+  - GPUI scrolling it (the wheel, or a row revealed) fires `scroll`, and a
+    `visiblerange` `CustomEvent` with `{ start, end }`. Both arrive as it
+    paints, a frame late.
+  - `scrollIntoView` on a row scrolls the list to the row's index, placed as
+    `block` says. `nearest` is judged from the list's anchor.
+  - **Limits:** the list itself has no box in GPUI's layout, so its
+    `getBoundingClientRect` is zeros (its parent has one). It has no hover
+    or press style (its rows can). Rows don't stretch across it, so give
+    them a width. Scrolling past the rendered rows paints nothing there until
+    the app renders more, which it does on the next `scroll`.
+    `@foldkit-native/ui`'s VirtualList handles all of this.
+
 ## gpuix behaviours the host works around
 
 Each one was seen on Metal and is pinned by a test. They're drafted as

@@ -54,8 +54,8 @@ export const headless = async <M, Msg>(app: App<M, Msg>, theme: ThemeName = 'dus
 }
 
 /** On Metal; screenshots are `ui-<name>[-paper]-<step>.png`. */
-export const metal = async <M, Msg>(name: string, app: App<M, Msg>, theme: ThemeName = 'dusk') => {
-  const mounted = await openMetal(theme === 'dusk' ? `ui-${name}` : `ui-${name}-${theme}`, { width: 480, height: 360 }, { css })
+export const metal = async <M, Msg>(name: string, app: App<M, Msg>, theme: ThemeName = 'dusk', size = { width: 480, height: 360 }) => {
+  const mounted = await openMetal(theme === 'dusk' ? `ui-${name}` : `ui-${name}-${theme}`, size, { css })
   const model = await start(mounted.container, app, THEMES[theme])
   await mounted.settle()
   return { ...mounted, model }

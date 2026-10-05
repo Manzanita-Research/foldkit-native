@@ -454,6 +454,21 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         mutations.setText(child.nativeId, textOf(child))
       }
     }
+    const parent = element.parentElement
+    if (nativeType(element) === 'anchored') roundAnchored(element)
+    else if (parent !== null && nativeType(parent) === 'anchored') roundAnchored(parent)
+  }
+  /** gpuix paints an anchored element's own box, black wherever its content
+   *  doesn't cover it, even with a transparent background (Metal: a rounded
+   *  popup had black corners). So it takes its content's corner radii. */
+  const RADII = ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius'] as const
+  const roundAnchored = (anchored: NativeElement) => {
+    const content = anchored.firstElementChild
+    const from = (content === null ? {} : sentStyles.get(content) ?? {}) as Record<string, unknown>
+    const style = Object.fromEntries(RADII.filter(name => typeof from[name] === 'number').map(name => [name, from[name]])) as StyleDesc
+    if (JSON.stringify(style) === JSON.stringify(sentStyles.get(anchored) ?? {})) return
+    sentStyles.set(anchored, style)
+    mutations.setStyle(anchored.nativeId, style)
   }
 
   // PROPS: accessibility, focus order, field values, images.
@@ -1398,17 +1413,23 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   /** gpuix 0.10 reports a box from the content corner (moved by the left and
    *  top border and padding, the size without the borders), and a scroll
    *  area's own box moved by its own scroll offset (scrolled 100 down, it
-   *  says the area is 100 higher than it's drawn). Both are undone here. A
-   *  single-line input's box is moved down by its top border and half of
-   *  its top padding less its bottom padding (its editor shares the vertical
-   *  padding out evenly), not by the whole top padding (Metal). */
+   *  says the area is 100 higher than it's drawn). Both are undone here.
+   *  The corner moves back as the content is aligned: by half the padding
+   *  on an axis whose content is centred (`justify-content` on the main
+   *  axis, `align-items` across it; `space-around` too), by all of it at
+   *  the end (Metal: a centred button with 16 px side padding read 16 px
+   *  left of where it's drawn). A single-line input centres its editor
+   *  vertically, whatever its style. */
   const borderBox = (id: number, box: Box): Box => {
     const element = nodes.get(id)
     if (!(element instanceof NativeElement)) return box
     const style = (sentStyles.get(element) ?? {}) as Record<string, unknown>
     const px = (key: string) => (typeof style[key] === 'number' ? style[key] as number : 0)
-    const left = px('borderLeftWidth') + px('paddingLeft')
-    const top = px('borderTopWidth') + (nativeType(element) === 'input' ? (px('paddingTop') - px('paddingBottom')) / 2 : px('paddingTop'))
+    const column = style['flexDirection'] === 'column' || style['flexDirection'] === 'column-reverse'
+    const alongX = alignment(column ? style['alignItems'] : style['justifyContent'])
+    const alongY = nativeType(element) === 'input' ? 0.5 : alignment(column ? style['justifyContent'] : style['alignItems'])
+    const left = px('borderLeftWidth') + px('paddingLeft') - alongX * (px('paddingLeft') + px('paddingRight'))
+    const top = px('borderTopWidth') + px('paddingTop') - alongY * (px('paddingTop') + px('paddingBottom'))
     const scrolls = style['overflowX'] === 'scroll' || style['overflowY'] === 'scroll'
     const [scrollX, scrollY] = scrolls ? offsetOf(element) : [0, 0]
     return {
@@ -1761,6 +1782,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 }
 
 export type GpuixHost = ReturnType<typeof createHost>
+
+/** How far along its axis an alignment puts the content: where gpuix's
+ *  reported corner moves back to (borderBox). */
+const alignment = (value: unknown) =>
+  value === 'center' || value === 'space-around' ? 0.5 : value === 'flex-end' || value === 'end' ? 1 : 0
 
 /** Whether it's in an inert subtree (a plain walk: restyles ask per element). */
 const isInert = (element: NativeElement) => {

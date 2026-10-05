@@ -6,6 +6,10 @@
 
 import type { NativeRenderer } from '@gpuix/native/host'
 
+/** As gpuix's: how far along its axis an alignment puts the content. */
+const alignment = (value: unknown) =>
+  value === 'center' || value === 'space-around' ? 0.5 : value === 'flex-end' || value === 'end' ? 1 : 0
+
 export type FakeNode = {
   id: number
   type: string
@@ -63,11 +67,17 @@ export const createFakeGpui = () => {
     const style = (nodes.get(id)?.style ?? {}) as Record<string, number | undefined>
     const [left, top, right, bottom] = ['Left', 'Top', 'Right', 'Bottom'].map(side => style[`border${side}Width`] ?? 0) as [number, number, number, number]
     const [scrollX, scrollY] = scrolls(id) ? offsets.get(id) ?? [0, 0] : [0, 0]
-    // A single-line input's editor shares its vertical padding out evenly.
-    const down = nodes.get(id)?.type === 'input' ? ((style['paddingTop'] ?? 0) - (style['paddingBottom'] ?? 0)) / 2 : style['paddingTop'] ?? 0
+    // The corner moves back as the content is aligned (half the padding
+    // when centred, all of it at the end); a single-line input centres its
+    // editor vertically.
+    const along = style as Record<string, unknown>
+    const column = along['flexDirection'] === 'column' || along['flexDirection'] === 'column-reverse'
+    const alongX = alignment(column ? along['alignItems'] : along['justifyContent'])
+    const alongY = nodes.get(id)?.type === 'input' ? 0.5 : alignment(column ? along['justifyContent'] : along['alignItems'])
+    const [padLeft, padRight, padTop, padBottom] = ['Left', 'Right', 'Top', 'Bottom'].map(side => style[`padding${side}`] ?? 0) as [number, number, number, number]
     return {
-      x: box.x + left + (style['paddingLeft'] ?? 0) + scrollX,
-      y: box.y + top + down + scrollY,
+      x: box.x + left + padLeft - alongX * (padLeft + padRight) + scrollX,
+      y: box.y + top + padTop - alongY * (padTop + padBottom) + scrollY,
       width: box.width - left - right,
       height: box.height - top - bottom,
     }

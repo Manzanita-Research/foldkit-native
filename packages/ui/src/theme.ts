@@ -298,4 +298,25 @@ ${ui('disclosure', 'panel')} {
   display: flex; flex-direction: column; gap: ${t('space.2')};
   padding: ${t('space.1')} ${t('space.2')} ${t('space.3')} calc(${t('space.2')} * 2 + 12px); color: ${t('color.text-muted')};
 }
+
+${ui('popover')} { position: relative; display: flex; flex-direction: column; align-items: flex-start; }
+${ui('popover', 'trigger')} {
+  display: flex; align-items: center; justify-content: center; height: ${t('size.control')}; padding: 0 ${t('space.4')};
+  border-radius: ${t('radius.control')}; border: 1px solid ${t('color.border')};
+  background-color: ${t('color.surface')}; color: ${t('color.text')}; font-size: ${t('font.size.md')}; cursor: pointer;
+}
+${ui('popover', 'trigger')}:hover { border-color: ${t('color.border-strong')}; }
+${ui('popover', 'trigger')}[data-open] { border-color: ${t('color.focus')}; }
+${ui('popover', 'trigger')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+${ui('popover', 'backdrop')} { position: fixed; top: 0; right: 0; bottom: 0; left: 0; }
+${ui('popover', 'anchor')} { position: absolute; top: 100%; left: 0; margin-top: 8px; z-index: 30; }
+${ui('popover', 'panel')} {
+  display: flex; flex-direction: column; gap: ${t('space.2')}; width: ${t('popover.width', '280px')}; padding: ${t('space.4')};
+  background-color: ${t('color.surface-raised')}; color: ${t('color.text')};
+  border: 1px solid ${t('color.border')}; border-radius: ${t('radius.panel')}; box-shadow: ${t('elevation.overlay')};
+}
+${ui('popover', 'panel')}:focus-visible { border-color: ${t('color.focus')}; }
+${ui('popover', 'title')} { font-size: ${t('font.size.md')}; font-weight: ${t('font.weight.strong')}; }
+${ui('popover', 'description')} { font-size: ${t('font.size.sm')}; color: ${t('color.text-muted')}; }
+${ui('popover', 'actions')} { display: flex; flex-direction: row; justify-content: flex-end; gap: ${t('space.2')}; }
 `

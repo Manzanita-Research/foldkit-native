@@ -311,11 +311,17 @@ upstream asks in the M0 memo.
   field was disabled) is refused: no `input`, and the editor gets the value
   back.
 - **Bounds.** Boxes come from the content corner, and a scroll area's box
-  moves with its own scroll offset. A single-line input's box comes down
-  from its top border plus half its top padding less its bottom padding
-  (its editor shares the vertical padding out evenly), not from the whole
-  top padding. On Linux, bounds queries wait for a painted frame, up to 2 s
-  (see Geometry).
+  moves with its own scroll offset. The corner moves back as the content is
+  aligned: by half the padding on an axis the content is centred on
+  (`justify-content` along the main axis, `align-items` across it), by all
+  of it at the end. So a centred button with 16 px side padding read 16 px
+  left of where it's drawn (Metal); a single-line input centres its editor
+  vertically whatever its style. On Linux, bounds queries wait for a painted
+  frame, up to 2 s (see Geometry).
+- **Anchored boxes paint.** GPUI paints an anchored element's own box, black
+  wherever its content doesn't cover it, even given a transparent
+  background: a rounded popup had black corners (Metal). It takes its
+  content's corner radii.
 - **Box shadows paint under the whole box.** CSS clips an outer shadow to
   outside the border box, but GPUI paints it under the box too, so a focus
   ring on a field with no background filled the field (Metal). A box with a

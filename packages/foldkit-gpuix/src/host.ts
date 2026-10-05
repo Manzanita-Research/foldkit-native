@@ -47,6 +47,7 @@ import {
   type NativeNode,
   NativePointerEvent,
   NativeText,
+  type ScrollBlock,
   isDisabled,
   isNaturallyFocusable,
 } from './dom.ts'
@@ -75,6 +76,8 @@ const KEY_NAMES: Readonly<Record<string, string>> = {
 
 /** gpuix events that a disabled control never hears (clicks: see 'click'). */
 const POINTER_PRESSES = new Set(['mouseDown', 'mouseUp', 'auxClick'])
+/** gpuix events that start an interaction, which an inert element never hears. */
+const INERT_IGNORES = new Set(['click', 'auxClick', 'mouseDown', 'mouseEnter'])
 
 const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number'])
 /** gpuix has no masked editor, so a password field would show the secret as
@@ -142,6 +145,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   let restyled = 0
   let detached = false
   const schedule = () => {
+    fresh = undefined
     if (scheduled || detached) return
     scheduled = true
     queueMicrotask(sync)
@@ -173,6 +177,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   // STYLE
   // Per sync pass: each element's declarations and inherited text values.
   let pass = new Map<NativeElement, { declared: Declared; inherited: Map<string, string> }>()
+  /** The same, for reads between syncs (getComputedStyle): dropped on any change. */
+  let fresh: typeof pass | undefined
   let viewport = options.viewport()
   const info = (element: NativeElement): { declared: Declared; inherited: Map<string, string> } => {
     const found = pass.get(element)
@@ -222,7 +228,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const field = element.localName === 'input' || element.localName === 'textarea'
     const states: Array<State> = ['base']
     if (focused === element) states.push(...(focusVisible ? ['focus', 'focus-visible'] as const : ['focus'] as const))
-    const values = resolved(fold(own, states), inherited)
+    const values = viewportOverflow(element, resolved(fold(own, states), inherited))
+    // An inert subtree is out of GPUI's hit testing: no hover, no presses.
+    if (isInert(element)) values.set('pointer-events', 'none')
     // A field draws its own text: it needs the text style a text node gets.
     if (field) for (const name of INHERITED) if (!values.has(name) && inherited.has(name)) values.set(name, inherited.get(name)!)
     // Text beside elements: GPUI has no inline layout, so a wrapping row.
@@ -278,6 +286,38 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       if (change !== undefined) style[name] = change
     }
     return style as StyleDesc
+  }
+  /** CSS gives the root element's overflow to the viewport, which here is
+   *  the body GPUI draws as its root (the user-agent sheet's `overflow-y:
+   *  scroll`). So `<html>`'s, when it sets one, is the body's:
+   *  `Dom.lockScroll`'s `overflow: hidden` stops the page scrolling. */
+  const viewportOverflow = (element: NativeElement, values: Map<string, string>) => {
+    if (element !== body) return values
+    const root = info(document.documentElement).declared.base
+    for (const name of ['overflow-x', 'overflow-y']) {
+      const value = root.get(name)
+      if (value !== undefined && value !== 'visible') values.set(name, value)
+    }
+    return values
+  }
+  /** What `getComputedStyle` reads: the declarations at rest, var()s
+   *  resolved, with what the element inherits (text, custom properties,
+   *  visibility). */
+  const computedStyle = (element: NativeElement): Map<string, string> => {
+    const saved = pass
+    pass = fresh ??= new Map()
+    try {
+      const { declared: own, inherited } = info(element)
+      const values = viewportOverflow(element, resolved(own.base, inherited))
+      for (const [name, value] of inherited) if (!values.has(name)) values.set(name, value)
+      for (let at = element.parentElement; at !== null && !values.has('visibility'); at = at.parentElement) {
+        const visibility = info(at).declared.base.get('visibility')
+        if (visibility !== undefined && visibility !== 'inherit') values.set('visibility', visibility)
+      }
+      return values
+    } finally {
+      pass = saved
+    }
   }
   /** The solid colour behind `element`: its nearest ancestor's background,
    *  if that's opaque (not a gradient, nor see-through). */
@@ -480,9 +520,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const next = propsOf(element)
     const sent = sentProps.get(element) ?? new Map<string, unknown>()
     for (const [key, value] of next) {
-      if (key !== 'value' && JSON.stringify(sent.get(key)) !== JSON.stringify(value)) mutations.setCustomProp(id, key, value as never)
+      if (key !== 'value' && JSON.stringify(sent.get(key)) !== JSON.stringify(value)) {
+        mutations.setCustomProp(id, key, value as never)
+        if (key === 'motion') moving(element)
+      }
     }
-    for (const key of sent.keys()) if (!next.has(key) && key !== 'value') mutations.setCustomProp(id, key, null)
+    for (const key of sent.keys()) {
+      if (next.has(key) || key === 'value') continue
+      mutations.setCustomProp(id, key, null)
+      if (key === 'motion') settled(element)
+    }
     if (next.has('value') && sent.get('value') !== next.get('value')) pushValue(element, next.get('value') as string)
     sentProps.set(element, next)
     if (isFocusable(element)) {
@@ -501,6 +548,20 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     // A button or link activates on click with no listener of its own (a
     // submit button submits its form).
     if (element.localName === 'button' || (element.localName === 'a' && element.hasAttribute('href'))) listenNatively(element, 'click')
+  }
+  // MOTION: GPUI's own animation (`data-fn-motion`, gpuix's `motion` prop).
+  // A new target starts one, and GPUI's `motionComplete` ends it; until
+  // then `getAnimations()` has it, so `Dom.waitForAnimationSettled` waits.
+  const motions = new WeakMap<NativeElement, { finished: Promise<void>; resolve: () => void }>()
+  const moving = (element: NativeElement) => {
+    settled(element)
+    const { promise, resolve } = Promise.withResolvers<void>()
+    motions.set(element, { finished: promise, resolve })
+    listenNatively(element, 'motionComplete')
+  }
+  const settled = (element: NativeElement) => {
+    motions.get(element)?.resolve()
+    motions.delete(element)
   }
   /** The field's value as GPUI's editor has it, so it isn't sent back.
    *  (`sentProps`' value is what the editor shows; `valueProps` is the
@@ -577,6 +638,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     layout.drew()
     watchSize()
     fitAspects()
+    if (document.resizeObservers.size > 0) for (const observer of [...document.resizeObservers]) observer.deliver(host)
     if (drawTimer !== undefined) clearTimeout(drawTimer)
     drawTimer = undefined
     const waiting = drawWaiters
@@ -609,6 +671,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     }
   }
   const unmount = (node: NativeNode) => {
+    if (node instanceof NativeElement) settled(node)
     if (node.nativeId !== 0) {
       unregisterEventHandlers(eventHandlers, node.nativeId)
       nodes.delete(node.nativeId)
@@ -850,7 +913,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     target.dispatchEvent(new NativeEvent('scroll'))
   }
   const scrollable = (element: NativeElement) => {
-    const values = info(element).declared.base
+    const own = info(element).declared.base
+    const values = element === body ? viewportOverflow(element, new Map(own)) : own
     return values.get('overflow-y') === 'scroll' || values.get('overflow-x') === 'scroll'
   }
 
@@ -864,8 +928,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       ctrlKey: held?.ctrl ?? false, metaKey: held?.cmd ?? false, shiftKey: held?.shift ?? false, altKey: held?.alt ?? false,
     }
     const element = node as NativeElement
-    // A disabled control hears no presses or clicks, as in a browser.
+    // A disabled control hears no presses or clicks, as in a browser; an
+    // inert subtree hears no pointer at all (its style already keeps GPUI's
+    // hit test off it; this is for what was on its way).
     if (POINTER_PRESSES.has(event.eventType) && element instanceof NativeElement && disabledControl(element) !== null) return
+    if (INERT_IGNORES.has(event.eventType) && element instanceof NativeElement && isInert(element)) return
     switch (event.eventType) {
       case 'click': {
         // GPUI tells every listening ancestor; the DOM bubbles it itself.
@@ -957,6 +1024,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       case 'scroll':
         layout.moved()
         element.dispatchEvent(new NativeEvent('scroll'))
+        return
+      case 'motionComplete':
+        settled(element)
+        layout.moved()
+        element.dispatchEvent(new NativeEvent('motioncomplete'))
         return
       default:
         element.dispatchEvent(new NativeEvent(event.eventType, init))
@@ -1153,6 +1225,17 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       height: box.height + px('borderTopWidth') + px('borderBottomWidth'),
     }
   }
+  /** Inside the borders and padding last sent, at `bounds`' corner. */
+  const contentBoxOf = (element: NativeElement): Box => {
+    const box = boundsOf(element) ?? { x: 0, y: 0, width: 0, height: 0 }
+    const style = (sentStyles.get(element) ?? {}) as Record<string, unknown>
+    const px = (key: string) => (typeof style[key] === 'number' ? style[key] as number : 0)
+    const left = px('borderLeftWidth') + px('paddingLeft')
+    const top = px('borderTopWidth') + px('paddingTop')
+    const right = px('borderRightWidth') + px('paddingRight')
+    const bottom = px('borderBottomWidth') + px('paddingBottom')
+    return { x: box.x + left, y: box.y + top, width: Math.max(0, box.width - left - right), height: Math.max(0, box.height - top - bottom) }
+  }
   const layout = createLayout({
     guard,
     ...(options.now === undefined ? {} : { now: options.now }),
@@ -1178,7 +1261,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     let pointer: string | undefined
     for (let at: NativeElement | null = element; at !== null; at = at.parentElement) {
       const values = hitStyles.get(at) ?? {}
-      if (values.display === 'none') return false
+      if (values.display === 'none' || at.hasAttribute('inert')) return false
       if (visibility === undefined || visibility === 'inherit') visibility = values.visibility
       if (pointer === undefined || pointer === 'inherit') pointer = values.pointer
     }
@@ -1198,8 +1281,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 
   /** Scrolls the nearest scroll area until `element` shows, from where GPUI
    *  last painted both, and moves only that area (gpuix 0.10's own
-   *  scrollIntoView also scrolled the page, on Metal). */
-  const reveal = (element: NativeElement) => {
+   *  scrollIntoView also scrolled the page, on Metal). `block` places it as
+   *  a browser does: the area's top, centre or bottom, or (`nearest`) just
+   *  far enough to show it. */
+  const reveal = (element: NativeElement, block: ScrollBlock = 'nearest') => {
     if (element.nativeId === 0) return
     let area = element.parentElement
     while (area !== null && (area.nativeId === 0 || !scrollable(area))) area = area.parentElement
@@ -1212,9 +1297,14 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       return
     }
     const [x, y] = offsetOf(area)
+    const toStart = y + (view.y - box.y)
+    const toEnd = y - (box.y + box.height - view.y - view.height)
     let next = y
-    if (box.y < view.y) next = y + (view.y - box.y)
-    else if (box.y + box.height > view.y + view.height) next = y - (box.y + box.height - view.y - view.height)
+    if (block === 'start') next = toStart
+    else if (block === 'end') next = toEnd
+    else if (block === 'center') next = y + (view.y + view.height / 2 - (box.y + box.height / 2))
+    else if (box.y < view.y) next = toStart
+    else if (box.y + box.height > view.y + view.height) next = toEnd
     if (next !== y) {
       scrollTo(area, x, Math.min(0, next))
       area.dispatchEvent(new NativeEvent('scroll'))
@@ -1301,9 +1391,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       if (focused === element) setFocus(null, false)
     },
     focusVisible: () => focusVisible,
-    bounds: element => boundsOf(element) ?? { x: 0, y: 0, width: 0, height: 0 },
+    // The root's box is the page's: the body GPUI draws as its root.
+    bounds: element => boundsOf(element === document.documentElement ? body : element) ?? { x: 0, y: 0, width: 0, height: 0 },
+    contentBox: element => contentBoxOf(element === document.documentElement ? body : element),
+    computedStyle: element => computedStyle(element),
+    animations: element => {
+      const motion = motions.get(element)
+      return motion === undefined ? [] : [{ finished: motion.finished }]
+    },
     elementsFromPoint: (x, y) => elementsAt(x, y),
-    scrollIntoView: element => reveal(element),
+    scrollIntoView: (element, block) => reveal(element, block),
     scrollOffset: element => offsetOf(element),
     scrollTo: (element, x, y) => {
       if (element.nativeId === 0) return
@@ -1441,6 +1538,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
 }
 
 export type GpuixHost = ReturnType<typeof createHost>
+
+/** Whether it's in an inert subtree (a plain walk: restyles ask per element). */
+const isInert = (element: NativeElement) => {
+  for (let at: NativeElement | null = element; at !== null; at = at.parentElement) if (at.attributeMap.has('inert')) return true
+  return false
+}
 
 /** Whether a colour hides what's behind it: no alpha, or a full one. */
 const opaque = (colour: string) => {

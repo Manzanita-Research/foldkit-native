@@ -34,6 +34,7 @@ import {
   NativeMutationObserver,
   NativeNode,
   NativePointerEvent,
+  NativeResizeObserver,
   NativeText,
   NativeUIEvent,
   NativeWindow,
@@ -74,10 +75,11 @@ const installGlobals = (window: NativeWindow) => {
     HTMLInputElement: tagClass('input'), HTMLTextAreaElement: tagClass('textarea'), HTMLButtonElement: tagClass('button'),
     HTMLFormElement: tagClass('form'), HTMLSelectElement: tagClass('select'), HTMLDialogElement: tagClass('dialog'),
     HTMLAnchorElement: tagClass('a'), HTMLImageElement: tagClass('img'), HTMLCanvasElement: tagClass('canvas'),
-    // Behaves (dom.ts). The other two need layout read back every frame,
-    // which a live gpuix window can't afford yet (FKN-29): absent, so feature
-    // detection says so.
-    MutationObserver: NativeMutationObserver, ResizeObserver: undefined, IntersectionObserver: undefined,
+    // Behave (dom.ts): ResizeObserver from where GPUI last painted things
+    // (FKN-29's per-frame layout). IntersectionObserver isn't built yet:
+    // absent, so feature detection says so.
+    MutationObserver: NativeMutationObserver, ResizeObserver: NativeResizeObserver, IntersectionObserver: undefined,
+    navigator: window.navigator,
     requestAnimationFrame: window.requestAnimationFrame.bind(window),
     cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
     getComputedStyle: window.getComputedStyle.bind(window), matchMedia: window.matchMedia.bind(window),

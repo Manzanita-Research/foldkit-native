@@ -113,9 +113,7 @@ const once = async (app: App, run: number): Promise<{ samples: Samples; signal: 
       }
     }
     await window.getByText(app.ready).waitFor({ timeoutMs: 15_000 })
-    // Pixel Art's Listbox opens in an anchored overlay that macOS's painted text
-    // doesn't list, so it always waits on the retained tree.
-    if (app.id !== 'pixel-art' && (await texts(window, 'getPaintedText')).length > 0) signal = 'getPaintedText'
+    if ((await texts(window, 'getPaintedText')).length > 0) signal = 'getPaintedText'
     await appears(app.ready, 15_000)
     record('first', performance.now() - started)
     await settle(800)

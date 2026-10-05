@@ -417,7 +417,17 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     return position !== undefined && position !== 'static'
   }
   const containingBlock = (element: NativeElement, position: string | undefined): NativeElement | null => {
-    if (position === 'fixed') return body
+    // A fixed box inside a fixed one (a dialog's backdrop, in the dialog)
+    // paints in that box's stacking context, under what follows it there:
+    // drawn under the body, last, it would cover the whole dialog. So it
+    // stays in the fixed ancestor, which for a full-window overlay is the
+    // window's box anyway.
+    if (position === 'fixed') {
+      for (let at = element.parentElement; at !== null && at !== body; at = at.parentElement) {
+        if (info(at).declared.base.get('position') === 'fixed') return at
+      }
+      return body
+    }
     if (position !== 'absolute') return null
     for (let at = element.parentElement; at !== null; at = at.parentElement) if (at === body || positioned(at)) return at
     return body
@@ -1764,6 +1774,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     },
     focus: (element, options) => {
       if (element.nativeId === 0 || !isFocusable(element)) return
+      // As in a browser, focus doesn't land on what isn't rendered or is
+      // `visibility: hidden` (an anchored panel before it's placed: @foldkit/ui
+      // focuses it once it's shown, after portaling it, which would blur it).
+      if (!element.checkVisibility({ visibilityProperty: true })) return
       setFocus(element, false, options?.focusVisible ?? keyboardModality)
     },
     blur: element => {

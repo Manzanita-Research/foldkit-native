@@ -17,6 +17,7 @@ export const meta: ExampleMeta = {
   source: 'https://github.com/foldkit/foldkit/tree/main/examples/pixel-art',
   width: 1100,
   height: 820,
+  renderer: 'gpuix',
 }
 
 export const start = (container: HTMLElement) =>

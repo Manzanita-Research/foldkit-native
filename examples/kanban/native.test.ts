@@ -1,14 +1,17 @@
-// Kanban in FoldKit Native: the real app, its CSS and the mirror, driven by
-// GPUI's input. FoldKit's own tests (story.test.ts, scene.test.ts) cover the
-// app's logic and view; these cover it running natively: a pointer drag from
-// one column to another, and a keyboard reorder.
+// Kanban in FoldKit Native: the real app and its CSS on FoldKit on gpuix (its
+// `meta.renderer`; FOLDKIT_NATIVE_RENDERER=mirror runs them on the mirror, as
+// CI does too), driven by GPUI's input. FoldKit's own tests (story.test.ts,
+// scene.test.ts) cover the app's logic and view; these cover it running
+// natively: a pointer drag from one column to another, and a keyboard reorder.
 //
 // FoldKit's DragAndDrop is pointer events, not HTML drag and drop: a
 // pointerdown on the card, then pointermove/pointerup listeners on document,
 // with document.elementsFromPoint and getBoundingClientRect finding the drop
-// target. GPUI sends a press's moves and release to the pressed card, and the
-// mirror answers both from where GPUI painted things. No network: the board
-// starts from FoldKit's default columns, in a fresh localStorage each time.
+// target. GPUI sends a press's moves and release only to the pressed card; the
+// renderer dispatches them there (they bubble to document), holds GPUI's card
+// when the drag lifts it out of its list, and answers the geometry from where
+// GPUI painted things. No network: the board starts from FoldKit's default
+// columns, in a fresh localStorage each time.
 import { afterEach, describe, expect, test } from 'bun:test'
 
 import type { Shape } from '../../test/support/fake-gpui.ts'
@@ -56,6 +59,7 @@ describe('headless', () => {
       list.querySelectorAll('li').forEach((card, row) =>
         app.gpui.setBounds(app.idOf(card as unknown as Node), { x, y: 140 + row * 92, width: 300, height: 84 }))
     })
+    app.relayout()
   }
 
   /** A pointer drag as GPUI delivers it: the press to the card under the
@@ -99,7 +103,7 @@ describe('headless', () => {
 
     // Mid-drag: the ghost follows the pointer, In Progress is the drop target
     // (blue border, a blue placeholder at the top), and the card left To Do.
-    const ghost = app.document.querySelector('[aria-hidden="true"][style]')!
+    const ghost = Array.from(app.document.querySelectorAll('[aria-hidden="true"]')).find(element => element.textContent?.includes(RESEARCH))!
     expect(app.nativeOf(ghost as unknown as Node).style).toMatchObject({ left: 390, top: 150, pointerEvents: 'none' })
     expect(nativeTexts(ghost)).toEqual([RESEARCH, 'Review dnd-kit, elm-draggable, and annaghi/dnd-list for inspiration.'])
     expect(app.nativeOf(region('In Progress') as unknown as Node).style).toMatchObject({ borderColor: '#90c5ff' })
@@ -112,6 +116,9 @@ describe('headless', () => {
     const held = app.gpui.node(app.idOf(region('To Do').querySelector('ul') as unknown as Node)).children
       .map(id => app.gpui.node(id)).find(node => node.style['opacity'] === 0)
     expect(held?.style).toEqual({ position: 'absolute', opacity: 0, pointerEvents: 'none' })
+    // Still listening: snabbdom took the card's listeners off as it removed
+    // it, and GPUI would stop sending the gesture.
+    expect([...held!.listeners]).toEqual(expect.arrayContaining(['mouseMove', 'mouseUp']))
 
     await release()
     expect(titles(app.document, 'in-progress')[0]).toBe(RESEARCH)
@@ -124,7 +131,7 @@ describe('headless', () => {
     expect(app.gpui.retainedCount()).toBe(app.gpui.reachableCount())
   })
 
-  test('a click on a card is not a drag', async () => {
+  test('a click on a card is not a drag, and leaves the board ready for the keyboard', async () => {
     app = await openHeadless('kanban')
     const before = app.texts()
     const id = app.idOf(cardOf(app.document, RESEARCH) as unknown as Node)
@@ -134,6 +141,9 @@ describe('headless', () => {
     await app.settle()
     expect(app.texts()).toEqual(before)
     expect(app.inSync()).toBe(true)
+    // The release reached document: the press is over, so Space picks up.
+    await app.key('space', RESEARCH)
+    expect(announcement()[0]).toStartWith(`Picked up ${RESEARCH}.`)
   })
 
   test('the keyboard: Space picks a card up, an arrow moves it, Space drops it, each announced', async () => {
@@ -158,7 +168,7 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
 
   const nextFrame = async () => {
     await frames()
-    app.renderer.flush()
+    await app.frame()
   }
   /** The painted box of the column (its region) named `name`. */
   const column = (name: string) => app.bounds(name)

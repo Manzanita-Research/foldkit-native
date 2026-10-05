@@ -235,6 +235,16 @@ describe('containing blocks (taffy positions `absolute` against the parent; CSS 
     expect(app!.gpui.retainedCount()).toBe(app!.gpui.reachableCount())
   })
 
+  test('a fixed box inside a fixed one stays in it, under what follows it there (a dialog\'s backdrop and panel)', async () => {
+    const overlay = `.dialog { position: fixed; top: 0; right: 0; bottom: 0; left: 0; } .backdrop { position: fixed; top: 0; right: 0; bottom: 0; left: 0; } .panel { position: relative; }`
+    await open(overlay, (_, h) => h.div([h.Id('page')], [
+      h.div([h.Class('dialog'), h.Id('dialog')], [h.div([h.Class('backdrop'), h.Id('backdrop')], []), h.div([h.Class('panel'), h.Id('panel')], ['Change to 8×8?'])]),
+    ]))
+    // The dialog goes to the window; its backdrop stays in it, before the panel.
+    expect(nativeParent('dialog')).toBe(app!.document.body.nativeId)
+    expect(app!.gpui.node(nativeId('dialog')).children).toEqual([nativeId('backdrop'), nativeId('panel')])
+  })
+
   test('siblings placed after a re-homed box keep their order', async () => {
     await open(css, (state, h) => h.div([h.Id('list')], [
       h.div([h.Id('one')], ['1']),

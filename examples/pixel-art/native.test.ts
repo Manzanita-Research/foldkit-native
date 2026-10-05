@@ -1,17 +1,26 @@
-// Pixel Art in FoldKit Native: the real app, its CSS and the mirror, driven by
-// GPUI's input. FoldKit's own tests (story.test.ts, scene.test.ts) cover the
-// editor's logic and view; these cover it running natively: cells painted by
-// GPUI presses and drags, tools and colours from the keyboard and the toolbar,
-// undo and redo from GPUI's modified keys, time travel through the history,
-// FoldKit UI's Dialog and Listbox, and the saved canvas coming in as Flags.
+// Pixel Art in FoldKit Native: the real app and its CSS on FoldKit on gpuix
+// (its `meta.renderer`; FOLDKIT_NATIVE_RENDERER=mirror runs them on the
+// mirror, as CI does too), driven by GPUI's input. FoldKit's own tests
+// (story.test.ts, scene.test.ts) cover the editor's logic and view; these
+// cover it running natively: cells painted by GPUI presses and drags, tools
+// and colours from the keyboard and the toolbar, undo and redo from GPUI's
+// modified keys, time travel through the history, FoldKit UI's Dialog and
+// Listbox, and the saved canvas coming in as Flags.
+//
+// A stroke is a mousedown on a cell, then a mouseenter on each cell the drag
+// crosses, then a mouseup on document. While a button's held GPUI sends the
+// moves only to the pressed cell and no enter or leave to the rest, so the
+// renderer hit-tests each move against GPUI's last layout and fires the enters
+// a browser would; the release goes to the pressed cell and bubbles to
+// document.
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Schema } from 'effect'
 
-import { type Mounted, mountFake } from '../../test/support/mount.ts'
-import { loadExample } from '../support/example.ts'
-import { METAL, type Headless, type Metal, openHeadless, openMetal } from '../support/harness.ts'
+import { METAL, type Headless, type Metal, openHeadless, openMetal, rendererFor } from '../support/harness.ts'
 import { STORAGE_KEY } from './constant'
 import { SavedCanvasJsonString } from './model'
+
+const RENDERER = await rendererFor('pixel-art')
 
 const WHITE = '#ffffff' // an empty cell
 const INK = '#262427' // Syntax palette, colour 0 (the default)
@@ -52,31 +61,64 @@ const board = (app: Headless) => {
 const stroke = (cells: Array<[number, number]>, color: string) =>
   Object.fromEntries(cells.map(([x, y]) => [`${x},${y}`, color]))
 
-/** GPUI's input, as gpuix delivers it to the elements listening. */
-let pressedCell: Node | undefined
+/** The fake GPUI doesn't lay out: the board as 20 px cells at (100, 100). */
+const CELL = 20
+const layOut = (app: Headless) => {
+  const grid = gridOf(app.document)
+  const size = grid.children.length
+  app.gpui.setBounds(app.idOf(grid), { x: 100, y: 100, width: size * CELL, height: size * CELL })
+  Array.from(grid.children).forEach((line, y) => {
+    app.gpui.setBounds(app.idOf(line), { x: 100, y: 100 + y * CELL, width: size * CELL, height: CELL })
+    Array.from(line.children).forEach((cell, x) => app.gpui.setBounds(app.idOf(cell), { x: 100 + x * CELL, y: 100 + y * CELL, width: CELL, height: CELL }))
+  })
+  app.relayout()
+}
+const centre = (x: number, y: number) => ({ x: 100 + x * CELL + CELL / 2, y: 100 + y * CELL + CELL / 2 })
+
+/** GPUI's input, as gpuix delivers it: a press to the cell under the
+ *  pointer, then every move and the release to that same cell (GPUI sends no
+ *  enter or leave to the others while a button's held). */
+let pressed: { cell: Node; x: number; y: number } | undefined
 const press = async (app: Headless, x: number, y: number) => {
-  pressedCell = cellOf(app.document, x, y)
-  app.send(pressedCell, { eventType: 'mouseDown', x: 0, y: 0, button: 0, clickCount: 1 } as never)
+  layOut(app)
+  const cell = cellOf(app.document, x, y)
+  pressed = { cell, ...centre(x, y) }
+  app.send(cell, { eventType: 'mouseDown', ...centre(x, y), button: 0, clickCount: 1 })
   await app.settle()
 }
-const enter = async (app: Headless, x: number, y: number) => {
-  app.send(cellOf(app.document, x, y), { eventType: 'mouseEnter', hovered: true } as never)
+const move = async (app: Headless, x: number, y: number) => {
+  pressed = { ...pressed!, ...centre(x, y) }
+  app.send(pressed.cell, { eventType: 'mouseMove', ...centre(x, y), pressedButton: 0 })
   await app.settle()
 }
-/** GPUI sends a press's release to the element it pressed. */
 const release = async (app: Headless) => {
-  const sent = app.send(pressedCell!, { eventType: 'mouseUp', x: 0, y: 0, button: 0, clickCount: 1 } as never)
-  if (!sent) throw new Error('nothing heard the release')
+  const { cell, x, y } = pressed!
+  pressed = undefined
+  if (!app.send(cell, { eventType: 'mouseUp', x, y, button: 0, clickCount: 1 })) throw new Error('nothing heard the release')
+  await sleep(10)
   await app.settle()
 }
-/** A drag along a row, as GPUI reports one: a press, the pointer entering each
- *  cell it crosses, and the release. */
-const drag = async (app: Headless, y: number, fromX: number, toX: number) => {
-  await press(app, fromX, y)
-  for (let x = fromX + 1; x <= toX; x++) await enter(app, x, y)
+/** A click on a cell: a stroke of one. */
+const tap = async (app: Headless, x: number, y: number) => {
+  await press(app, x, y)
   await release(app)
 }
-const NO_MODIFIERS = { shift: false, ctrl: false, alt: false, cmd: false }
+/** With no button held, GPUI hovers itself: the pointer entering a cell. */
+const enter = async (app: Headless, x: number, y: number) => {
+  app.send(cellOf(app.document, x, y), { eventType: 'mouseEnter', hovered: true })
+  await app.settle()
+}
+/** The pointer leaves the board: no brush preview under it. */
+const leave = async (app: Headless) => {
+  app.send(gridOf(app.document).parentElement!, { eventType: 'mouseLeave', hovered: false })
+  await app.settle()
+}
+/** A drag along a row: a press, a move into each cell, and the release. */
+const drag = async (app: Headless, y: number, fromX: number, toX: number) => {
+  await press(app, fromX, y)
+  for (let x = fromX + 1; x <= toX; x++) await move(app, x, y)
+  await release(app)
+}
 const shortcut = (app: Headless, keystroke: string) => app.shortcut(keystroke)
 
 const checked = (document: Document, group: string) =>
@@ -116,11 +158,21 @@ describe('headless', () => {
     expect(board(app).painted).toEqual(stroke([[2, 3], [3, 3], [4, 3], [5, 3], [6, 3], [7, 3], [8, 3], [9, 3]], INK))
     expect(history(app.texts())).toEqual(['Current', 'Back 1'])
 
-    await press(app, 12, 12)
-    await release(app)
+    await tap(app, 12, 12)
     expect(board(app).painted['12,12']).toBe(INK)
     expect(history(app.texts())).toEqual(['Current', 'Back 1', 'Back 2'])
     expect(app.inSync()).toBe(true)
+  }, SLOW)
+
+  // The mirror sends what GPUI hit-tests on each move; the adapter also
+  // fills in the cells between two moves, as a browser's pointer crosses them.
+  test.skipIf(RENDERER !== 'gpuix')('a diagonal drag crosses the cells between its moves, as the pointer does', async () => {
+    app = await openHeadless('pixel-art')
+    // Two moves per cell, corner to corner of a 6-cell diagonal.
+    await press(app, 0, 0)
+    for (let step = 1; step <= 10; step++) await move(app, step / 2, step / 2)
+    await release(app)
+    for (let at = 0; at <= 5; at++) expect(board(app).painted[`${at},${at}`]).toBe(INK)
   }, SLOW)
 
   test('releasing the mouse ends the stroke: the pointer moving on only previews the brush', async () => {
@@ -131,16 +183,17 @@ describe('headless', () => {
     await enter(app, 10, 10)
     await enter(app, 11, 10)
     expect(board(app).painted).toEqual({ ...stroke([[2, 3], [3, 3], [4, 3]], INK), '11,10': INK })
-    app.send(gridOf(app.document).parentElement as unknown as Node, { eventType: 'mouseLeave', hovered: false } as never)
-    await app.settle()
+    await leave(app)
     expect(board(app).painted).toEqual(stroke([[2, 3], [3, 3], [4, 3]], INK))
   }, SLOW)
 
   test('undo and redo from GPUI window keys with modifiers: Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y, ⌘Z', async () => {
     app = await openHeadless('pixel-art')
-    await press(app, 1, 1)
-    await press(app, 2, 2)
-    await press(app, 3, 3)
+    await tap(app, 1, 1)
+    await tap(app, 2, 2)
+    await tap(app, 3, 3)
+    // Off the board, so no cell shows the brush's preview.
+    await leave(app)
     expect(Object.keys(board(app).painted)).toEqual(['1,1', '2,2', '3,3'])
 
     await shortcut(app, 'ctrl-z')
@@ -165,9 +218,10 @@ describe('headless', () => {
 
   test('time travel: clicking a step in the history goes back to it, and forward again', async () => {
     app = await openHeadless('pixel-art')
-    await press(app, 0, 0)
-    await press(app, 1, 0)
-    await press(app, 2, 0)
+    await tap(app, 0, 0)
+    await tap(app, 1, 0)
+    await tap(app, 2, 0)
+    await leave(app)
     await app.click('Back 2')
     expect(Object.keys(board(app).painted)).toEqual(['0,0'])
     expect(history(app.texts())).toEqual(['Forward 2', 'Forward 1', 'Current', 'Back 1'])
@@ -181,20 +235,17 @@ describe('headless', () => {
   test('tools from the keyboard and the RadioGroup: B, F, E; fill floods, the eraser clears', async () => {
     app = await openHeadless('pixel-art')
     // A vertical wall down column 4.
-    for (let y = 0; y < 16; y++) await press(app, 4, y)
-    await release(app)
+    for (let y = 0; y < 16; y++) await tap(app, 4, y)
 
     await app.key('f')
     expect(checked(app.document, 'Drawing tool')).toBe('FillF')
-    await press(app, 0, 0)
-    await release(app)
+    await tap(app, 0, 0)
     // Everything left of the wall: 4 × 16 cells, plus the wall itself.
     expect(Object.keys(board(app).painted)).toHaveLength(5 * 16)
 
     await app.key('e')
     expect(checked(app.document, 'Drawing tool')).toBe('EraserE')
-    await press(app, 4, 0)
-    await release(app)
+    await tap(app, 4, 0)
     expect(board(app).painted['4,0']).toBeUndefined()
 
     await app.click('Brush')
@@ -211,15 +262,13 @@ describe('headless', () => {
 
     await app.click('Mirror horizontal')
     expect(app.document.querySelector('[role=switch]')!.getAttribute('aria-checked')).toBe('true')
-    await press(app, 2, 5)
-    await release(app)
+    await tap(app, 2, 5)
     expect(board(app).painted).toEqual(stroke([[2, 5], [13, 5]], RED))
   }, SLOW)
 
   test('the grid size Dialog: Cancel keeps the canvas, confirming resizes it and clears the history', async () => {
     app = await openHeadless('pixel-art')
-    await press(app, 3, 3)
-    await release(app)
+    await tap(app, 3, 3)
 
     // A painted canvas asks first.
     await app.click('8')
@@ -257,8 +306,7 @@ describe('headless', () => {
 
   test('the palette theme Listbox opens, and picking a theme recolours the palette', async () => {
     app = await openHeadless('pixel-art')
-    await press(app, 0, 0)
-    await release(app)
+    await tap(app, 0, 0)
     await app.click('Syntax')
     expect(app.texts()).toEqual(expect.arrayContaining(['ISO50', 'Sunset', 'Ocean', 'Mono']))
     expect(app.document.querySelector('[role=listbox]')).not.toBeNull()
@@ -272,79 +320,65 @@ describe('headless', () => {
 })
 
 describe('saved canvas', () => {
-  let mounted: Mounted
-  afterEach(() => mounted?.close())
+  let app: Headless
+  afterEach(() => app?.close())
 
   test('comes in as Flags from localStorage, and is saved back after each change', async () => {
-    const example = await loadExample('pixel-art')
-    mounted = mountFake({ css: example.css })
     // An 8 × 8 canvas with one red cell in the corner, saved by an earlier run.
     const grid = Array.from({ length: 8 }, (_, y) =>
       Array.from({ length: 8 }, (_, x) => (x === 7 && y === 7 ? { _tag: 'Some', value: 4 } : { _tag: 'None' })))
-    mounted.window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ grid, gridSize: 8, paletteThemeIndex: 0, selectedColorIndex: 4 }))
-    example.start(mounted.container)
-    await mounted.settle()
+    app = await openHeadless('pixel-art', { storage: { [STORAGE_KEY]: JSON.stringify({ grid, gridSize: 8, paletteThemeIndex: 0, selectedColorIndex: 4 }) } })
 
-    const rows = Array.from(gridOf(mounted.document).children)
-    expect(rows).toHaveLength(8)
-    expect(mounted.nativeOf(rows[7]!.children[7]! as unknown as Node).style?.['backgroundColor']).toBe(RED)
-    expect(mounted.nativeOf(rows[0]!.children[0]! as unknown as Node).style?.['backgroundColor']).toBe(WHITE)
+    expect(board(app).size).toBe(8)
+    expect(board(app).painted).toEqual({ '7,7': RED })
 
     // Paint, then undo: FoldKit's SaveCanvas Command writes the canvas back.
-    mounted.send(rows[0]!.children[0]! as unknown as Node, { eventType: 'mouseDown', x: 0, y: 0, button: 0, clickCount: 1 } as never)
-    await mounted.settle()
-    mounted.mirror.windowKey({ elementId: 0, eventType: 'keyDown', key: 'z', modifiers: { ...NO_MODIFIERS, ctrl: true } })
-    for (let i = 0; i < 20 && mounted.window.localStorage.getItem(STORAGE_KEY)?.includes('"selectedColorIndex":4') !== true; i++) {
+    await tap(app, 0, 0)
+    await shortcut(app, 'ctrl-z')
+    for (let i = 0; i < 20 && app.localStorage.getItem(STORAGE_KEY)?.includes('"selectedColorIndex":4') !== true; i++) {
       await sleep(10)
-      await mounted.settle()
+      await app.settle()
     }
-    const saved = Schema.decodeSync(SavedCanvasJsonString)(mounted.window.localStorage.getItem(STORAGE_KEY)!)
+    const saved = Schema.decodeSync(SavedCanvasJsonString)(app.localStorage.getItem(STORAGE_KEY)!)
     expect(saved.gridSize).toBe(8)
     expect(saved.selectedColorIndex).toBe(4)
   }, SLOW)
 })
 
 describe('a stroke across a 32 × 32 board, measured', () => {
-  let mounted: Mounted
-  afterEach(() => mounted?.close())
+  let app: Headless
+  afterEach(() => app?.close())
 
-  test('the DOM → GPUI sync for each cell the pointer enters', async () => {
-    const example = await loadExample('pixel-art')
-    const syncs: Array<{ syncMs: number; nodes: number; mutations: number }> = []
-    mounted = mountFake({ css: example.css, onSynced: timings => syncs.push(timings) })
+  test('the document → GPUI sync for each cell the pointer crosses', async () => {
+    const syncs: Array<{ syncMs: number; mutations: number }> = []
     const empty = Array.from({ length: 32 }, () => Array.from({ length: 32 }, () => ({ _tag: 'None' })))
-    mounted.window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ grid: empty, gridSize: 32, paletteThemeIndex: 0, selectedColorIndex: 0 }))
-    example.start(mounted.container)
-    await mounted.settle()
-    const rows = Array.from(gridOf(mounted.document).children)
-    expect(rows).toHaveLength(32)
-    const firstRender = syncs[0]!
+    app = await openHeadless('pixel-art', {
+      onSynced: timings => syncs.push(timings),
+      storage: { [STORAGE_KEY]: JSON.stringify({ grid: empty, gridSize: 32, paletteThemeIndex: 0, selectedColorIndex: 0 }) },
+    })
+    expect(board(app).size).toBe(32)
+    const first = { syncMs: syncs.reduce((total, sync) => total + sync.syncMs, 0), mutations: syncs.reduce((total, sync) => total + sync.mutations, 0) }
 
     // A diagonal stroke: every step changes a row and the history thumbnail.
+    await press(app, 0, 0)
     syncs.length = 0
     const started = performance.now()
-    mounted.send(rows[0]!.children[0]! as unknown as Node, { eventType: 'mouseDown', x: 0, y: 0, button: 0, clickCount: 1 } as never)
-    await mounted.settle()
-    for (let i = 1; i < 32; i++) {
-      mounted.send(rows[i]!.children[i]! as unknown as Node, { eventType: 'mouseEnter', hovered: true } as never)
-      await mounted.settle()
-    }
+    for (let i = 1; i < 32; i++) await move(app, i, i)
     const elapsed = performance.now() - started
+    await release(app)
     const steps = syncs.filter(sync => sync.mutations > 0)
     const median = (values: Array<number>) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]!
     const report = {
       cells: 32 * 32,
-      firstRender: { syncMs: +firstRender.syncMs.toFixed(2), nodes: firstRender.nodes },
+      firstRender: { syncMs: +first.syncMs.toFixed(2), mutations: first.mutations },
       steps: steps.length,
       syncMs: { median: +median(steps.map(s => s.syncMs)).toFixed(2), max: +Math.max(...steps.map(s => s.syncMs)).toFixed(2) },
       mutationsPerStep: median(steps.map(s => s.mutations)),
-      msPerCellEntered: +(elapsed / 32).toFixed(1),
+      msPerCellCrossed: +(elapsed / 31).toFixed(1),
     }
     console.log('pixel-art stroke:', JSON.stringify(report))
 
-    for (let i = 0; i < 32; i++) {
-      expect(mounted.nativeOf(rows[i]!.children[i]! as unknown as Node).style?.['backgroundColor']).toBe(INK)
-    }
+    for (let i = 0; i < 32; i++) expect(board(app).painted[`${i},${i}`]).toBe(INK)
     // Loose budgets, to catch "broken" on noisy CI machines: FoldKit's keyed
     // lazy rows mean a step touches one row, not the whole board.
     expect(steps.length).toBeGreaterThanOrEqual(31)
@@ -442,10 +476,11 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
 
   // FoldKit clears the brush preview on the board's mouseleave. GPUI only
   // hovers the topmost element listening under the pointer, and the board is
-  // all cells, so the board itself is never entered or left: the preview stays
-  // on the last cell after the pointer goes. (A browser fires mouseleave on an
-  // ancestor whichever child the pointer leaves through.)
-  test.skip('moving off the board clears the brush preview', async () => {
+  // all cells, so on the mirror the board itself is never entered or left:
+  // the preview stays on the last cell after the pointer goes. The adapter
+  // follows the pointer itself and fires mouseleave on an ancestor whichever
+  // child the pointer leaves through, as a browser does.
+  test.skipIf(RENDERER !== 'gpuix')('moving off the board clears the brush preview', async () => {
     app = await openMetal('pixel-art')
     const cell = app.boundsOf(cellOf(app.document, 5, 5) as unknown as Element, 'cell 5,5')
     app.renderer.nativeSimulateMouseMove(cell.x + cell.width / 2, cell.y + cell.height / 2)
@@ -459,15 +494,19 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
 
   // floating-ui (under @foldkit/ui's anchor) caps the panel at the room left
   // in the viewport, read from documentElement.clientHeight and the scroll
-  // ancestors' clientHeight. happy-dom has no layout, so those are 0, the
-  // panel's max-height is 0px, and its options are clipped away. Needs
-  // clientWidth/clientHeight from GPUI's layout (README, roadmap item 2).
-  test.skip('the theme Listbox shows its options, and picking one recolours the board', async () => {
+  // ancestors' clientHeight. On the mirror happy-dom has no layout, so those
+  // are 0, the panel's max-height is 0px, and its options are clipped away.
+  // The adapter answers them from GPUI's layout.
+  test.skipIf(RENDERER !== 'gpuix')('the theme Listbox shows its options, and picking one recolours the board', async () => {
     app = await openMetal('pixel-art')
     await app.click('Syntax')
     expect(app.boundsOf(app.document.querySelector('[role=listbox]')!, 'listbox').height).toBeGreaterThan(100)
+    expect(app.painted()).toEqual(expect.arrayContaining(['ISO50', 'Sunset', 'Ocean', 'Mono']))
+    app.screenshot('theme-list')
     await app.click('Ocean')
     expect(app.document.querySelector('[role=listbox]')).toBeNull()
+    expect(app.painted()).toContain('Ocean')
+    app.screenshot('ocean')
   }, SLOW)
 
   test('a drag across a 32 × 32 board through GPUI: every cell it crosses, and how many moves a second', async () => {

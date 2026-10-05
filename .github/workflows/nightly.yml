@@ -1,10 +1,12 @@
 name: Nightly numbers
 
 # The performance table (bench/README.md): FoldKit on gpuix in real windows on
-# Metal, against bench/baseline.macos-ci.json. MANUAL ONLY for now: a schedule
-# is a recurring spend on the Blacksmith account, which is Jem's call (FKN-26).
-# To switch it on, add:   schedule: [{ cron: '17 7 * * *' }]
+# Metal, against bench/baseline.macos-ci.json. Nightly at 07:17 UTC: Jem
+# approved the Blacksmith minutes (about 10 a night) on Oct 4 (FKN-26).
+# Pixel Art is left out on macOS until its theme list paints on the adapter
+# (FKN-25); add it back to --apps then.
 on:
+  schedule: [{ cron: '17 7 * * *' }]
   workflow_dispatch:
     inputs:
       record:
@@ -30,10 +32,10 @@ jobs:
       - run: npm ci
       - name: Measure
         env:
-          RECORD: ${{ inputs.record && '--record' || '' }}
+          RECORD: ${{ github.event_name == 'workflow_dispatch' && inputs.record && '--record' || '' }}
         run: |
           set +e
-          bun scripts/nightly.ts --class macos-ci --out nightly.json $RECORD > nightly.md
+          bun scripts/nightly.ts --class macos-ci --apps counter,big-list --out nightly.json $RECORD > nightly.md
           status=$?
           cat nightly.md >> "$GITHUB_STEP_SUMMARY"
           exit $status

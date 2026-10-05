@@ -23,6 +23,7 @@ A baseline is only comparable to the same hardware and OS. The committed ones:
 | File | Class | Recorded on |
 |---|---|---|
 | `baseline.linux-m6.json` | `linux-m6` | jemarchy-m6 (an AMD Ryzen mini PC, Phoenix1 iGPU on Mesa, Linux, headless sway; load average about 1.5 from other threads) |
+| `baseline.macos-mini.json` | `macos-mini` | the Mac mini (M1, 8 GB, Metal, macOS; other threads running). Counter and Big List only: Pixel Art's theme list doesn't paint its items on the adapter on macOS yet (FKN-25), so it can't be measured by painted text |
 
 Add another class with `--record --class <name>` on that hardware and commit
 the file. The CI runner is its own class (`macos-ci`): record it by running the

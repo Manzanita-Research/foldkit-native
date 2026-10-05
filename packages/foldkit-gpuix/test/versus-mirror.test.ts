@@ -5,7 +5,7 @@
 // time is JS time on this machine, not frames; budgets are loose.
 import { describe, expect, test } from 'bun:test'
 
-import { type Headless as MirrorApp, openHeadless } from '../../../examples/support/harness.ts'
+import { type Headless as MirrorApp, mirrorHeadless as openHeadless } from '../../../examples/support/harness.ts'
 import { exampleIds, loadExample } from '../../../examples/support/example.ts'
 import { type Headless, mountHeadless } from './support.ts'
 
@@ -61,7 +61,7 @@ describe('mirror vs FoldKit on gpuix, same apps', () => {
     expect(light).not.toBe(dark)
 
     const mirror = await openHeadless('big-list')
-    const mirrorRoot = () => mirror.mounted.nativeOf(mirror.document.querySelector('.app') as unknown as Node).style['backgroundColor']
+    const mirrorRoot = () => mirror.nativeOf(mirror.document.querySelector('.app')!).style['backgroundColor']
     const before = mirrorRoot()
     started = performance.now()
     await mirror.click('Dark')

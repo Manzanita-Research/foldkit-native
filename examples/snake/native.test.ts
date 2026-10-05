@@ -1,12 +1,12 @@
-// Snake in FoldKit Native: the real app, its CSS and the mirror, driven by
-// GPUI's input. FoldKit's own tests (story.test.ts, scene.test.ts) cover the
-// game's logic and view; these cover it running natively. The game clock is
-// real (a FoldKit Subscription ticking every 150 ms), so each test plays a few
-// ticks, not a whole game, and pauses before closing so the clock stops.
+// Snake in FoldKit Native: the real app and its CSS on FoldKit on gpuix (its
+// `meta.renderer`; FOLDKIT_NATIVE_RENDERER=mirror runs them on the mirror, as
+// CI does too), driven by GPUI's input. FoldKit's own tests (story.test.ts,
+// scene.test.ts) cover the game's logic and view; these cover it running
+// natively. The game clock is real (a FoldKit Subscription ticking every 150
+// ms), so each test plays a few ticks, not a whole game, and pauses before
+// closing so the clock stops.
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import { type Mounted, mountFake } from '../../test/support/mount.ts'
-import { loadExample } from '../support/example.ts'
 import { METAL, type Headless, type Metal, openHeadless, openMetal } from '../support/harness.ts'
 
 type Cell = { x: number; y: number }
@@ -35,7 +35,7 @@ const board = (app: Headless) => {
   const cells: Record<string, Array<Cell>> = { [HEAD]: [], [BODY]: [], [APPLE]: [], [EMPTY]: [] }
   Array.from(grid.children).forEach((row, y) =>
     Array.from(row.children).forEach((cell, x) => {
-      const background = app.mounted.nativeOf(cell as unknown as Node).style?.['backgroundColor'] as string
+      const background = app.nativeOf(cell as unknown as Node).style?.['backgroundColor'] as string
       ;(cells[background] ??= []).push({ x, y })
     }))
   return { head: cells[HEAD]!, body: cells[BODY]!, apples: cells[APPLE]!, empty: cells[EMPTY]!.length }
@@ -68,10 +68,10 @@ describe('headless', () => {
     expect(apples).toHaveLength(1)
     expect(empty).toBe(396)
     // w-6 h-6 cells; text-4xl font-bold heading; bg-black page.
-    const cell = app.mounted.nativeOf(app.document.querySelector('.inline-block')!.firstElementChild!.firstElementChild! as unknown as Node)
+    const cell = app.nativeOf(app.document.querySelector('.inline-block')!.firstElementChild!.firstElementChild! as unknown as Node)
     expect(cell.style).toMatchObject({ width: 24, height: 24 })
     const heading = app.document.querySelector('h1')!.firstChild as unknown as Node
-    expect(app.mounted.nativeOf(heading).style).toMatchObject({ color: '#fff', fontSize: 36, fontWeight: 700, lineHeight: 40 })
+    expect(app.nativeOf(heading).style).toMatchObject({ color: '#fff', fontSize: 36, fontWeight: 700, lineHeight: 40 })
   })
 
   test('space starts the clock, GPUI window keys steer, space pauses', async () => {
@@ -122,33 +122,28 @@ describe('headless', () => {
 })
 
 describe('one tick, measured', () => {
-  let mounted: Mounted
-  afterEach(() => mounted?.close())
+  let app: Headless
+  afterEach(() => app?.close())
 
-  test('the DOM → GPUI sync per tick, and the tick rate', async () => {
-    const example = await loadExample('snake')
-    const syncs: Array<{ at: number; syncMs: number; nodes: number; mutations: number }> = []
-    mounted = mountFake({ css: example.css, onSynced: timings => syncs.push({ at: performance.now(), ...timings }) })
-    example.start(mounted.container)
-    await mounted.settle()
-    const firstSync = syncs[0]!
+  test('the document → GPUI sync per tick, and the tick rate', async () => {
+    const syncs: Array<{ at: number; syncMs: number; mutations: number }> = []
+    app = await openHeadless('snake', { onSynced: timings => syncs.push({ at: performance.now(), ...timings }) })
+    // Everything until the board settled: the first render.
+    const first = { syncMs: syncs.reduce((total, sync) => total + sync.syncMs, 0), mutations: syncs.reduce((total, sync) => total + sync.mutations, 0) }
 
-    mounted.mirror.windowKey({ eventType: 'keyDown', key: ' ' } as never)
-    await mounted.settle()
+    await app.key(' ')
     syncs.length = 0
     await sleep(1600) // about ten ticks at 150 ms
-    mounted.mirror.windowKey({ eventType: 'keyDown', key: ' ' } as never)
-    await mounted.settle()
+    await app.key(' ')
 
     const ticks = syncs.filter(sync => sync.mutations > 0).slice(0, -1) // the last is the pause
     const median = (values: Array<number>) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]!
     const intervals = ticks.slice(1).map((tick, i) => tick.at - ticks[i]!.at)
     const report = {
-      firstRender: { syncMs: +firstSync.syncMs.toFixed(2), nodes: firstSync.nodes },
+      firstRender: { syncMs: +first.syncMs.toFixed(2), mutations: first.mutations },
       ticks: ticks.length,
       syncMs: { median: +median(ticks.map(t => t.syncMs)).toFixed(2), max: +Math.max(...ticks.map(t => t.syncMs)).toFixed(2) },
       mutationsPerTick: median(ticks.map(t => t.mutations)),
-      nodesPerTick: median(ticks.map(t => t.nodes)),
       intervalMs: { median: +median(intervals).toFixed(1), max: +Math.max(...intervals).toFixed(1) },
     }
     console.log('snake tick:', JSON.stringify(report))

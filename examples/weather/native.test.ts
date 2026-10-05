@@ -1,7 +1,8 @@
-// Weather in FoldKit Native: the real app, its CSS and the mirror, driven by
-// GPUI's input. FoldKit's own tests (story.test.ts, scene.test.ts) cover the
-// app's logic and view; these cover it running natively. The weather service
-// is stubbed: no network in tests.
+// Weather in FoldKit Native: the real app and its CSS on FoldKit on gpuix (its
+// `meta.renderer`; FOLDKIT_NATIVE_RENDERER=mirror runs them on the mirror, as
+// CI does too), driven by GPUI's input. FoldKit's own tests (story.test.ts,
+// scene.test.ts) cover the app's logic and view; these cover it running
+// natively. The weather service is stubbed: no network in tests.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { METAL, type Headless, type Metal, openHeadless, openMetal } from '../support/harness.ts'

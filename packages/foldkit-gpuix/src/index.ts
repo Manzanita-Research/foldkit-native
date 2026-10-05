@@ -104,6 +104,37 @@ const installGlobals = (window: NativeWindow) => {
   }
 }
 
+// DOCUMENT BEFORE MOUNT
+// In a browser `document` exists before any module runs, and FoldKit apps
+// name it at module scope (Snake's and Pixel Art's keyboard Subscriptions are
+// `target: document`). Each attach makes its document the global, but a
+// module that ran before has the one it saw. So the newest attached document
+// is kept in one slot (shared with FoldKit Native's mirror, src/dom.ts, so
+// either one's stand-in follows whichever attached last), and importing
+// foldkit-gpuix gives `document` a stand-in that forwards to it: a listener
+// the app adds once it runs lands on the real document.
+
+/** The newest attached document (src/dom.ts reads the same slot). */
+const CURRENT_DOCUMENT = Symbol.for('foldkit-native.document')
+const slot = globalThis as unknown as Record<typeof CURRENT_DOCUMENT, NativeDocument | undefined>
+
+/** `document` before (and between) attaches: forwards to the newest attached
+ *  one. Methods run on the real document. Not the same object as it, so
+ *  `node.ownerDocument === document` is false through this one (FoldKit
+ *  never compares against `document` itself). */
+const documentStandIn = new Proxy({} as NativeDocument, {
+  get: (_, key) => {
+    const document = slot[CURRENT_DOCUMENT]
+    if (document === undefined) throw new Error(`foldkit-gpuix: no window attached yet (document.${String(key)})`)
+    const value = Reflect.get(document, key, document)
+    return typeof value === 'function' && key !== 'constructor' ? value.bind(document) : value
+  },
+  set: (_, key, value) => slot[CURRENT_DOCUMENT] !== undefined && Reflect.set(slot[CURRENT_DOCUMENT], key, value),
+  has: (_, key) => slot[CURRENT_DOCUMENT] !== undefined && key in slot[CURRENT_DOCUMENT],
+  getPrototypeOf: () => slot[CURRENT_DOCUMENT] === undefined ? Object.prototype : Object.getPrototypeOf(slot[CURRENT_DOCUMENT]),
+})
+;(globalThis as Record<string, unknown>)['document'] ??= documentStandIn
+
 export type AttachOptions = {
   /** The app's CSS. Rules it can't use are listed in `unsupported`. */
   css?: string
@@ -141,6 +172,8 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
   const dataDir = options.dataDir ?? (options.appId === undefined ? undefined : dataDirFor(options.appId))
   if (dataDir !== undefined) window.localStorage = fileStorage(dataDir, (error, context) => window.report('storage', error, context))
   const restore = installGlobals(window)
+  const previousDocument = slot[CURRENT_DOCUMENT]
+  slot[CURRENT_DOCUMENT] = document
   const appSheet = options.css === undefined ? undefined : sheetFromCss(options.css)
   const sheets = [...(options.sheets ?? []), ...(appSheet === undefined ? [] : [appSheet])]
   const host = createHost(document, {
@@ -197,6 +230,7 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
       window.cancelAllFrames()
       host.detach(options)
       restore()
+      if (slot[CURRENT_DOCUMENT] === document) slot[CURRENT_DOCUMENT] = previousDocument
     },
   }
 }

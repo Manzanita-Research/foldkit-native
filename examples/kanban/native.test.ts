@@ -37,11 +37,11 @@ describe('headless', () => {
   const nativeTexts = (element: Element) => {
     const out: Array<string> = []
     const walk = (id: number) => {
-      const node = app.mounted.gpui.node(id)
+      const node = app.gpui.node(id)
       if (node.type === 'text' && node.text !== undefined) out.push(node.text)
       for (const child of node.children) walk(child)
     }
-    walk(app.mounted.idOf(element as unknown as Node))
+    walk(app.idOf(element as unknown as Node))
     return out
   }
   const region = (name: string) => app.document.querySelector(`[role="region"][aria-label="${name}"]`)!
@@ -52,9 +52,9 @@ describe('headless', () => {
   const layOut = () => {
     app.document.querySelectorAll('[data-droppable-id]').forEach((list, column) => {
       const x = 24 + column * 325
-      app.mounted.gpui.setBounds(app.mounted.idOf(list as unknown as Node), { x, y: 140, width: 300, height: 560 })
+      app.gpui.setBounds(app.idOf(list as unknown as Node), { x, y: 140, width: 300, height: 560 })
       list.querySelectorAll('li').forEach((card, row) =>
-        app.mounted.gpui.setBounds(app.mounted.idOf(card as unknown as Node), { x, y: 140 + row * 92, width: 300, height: 84 }))
+        app.gpui.setBounds(app.idOf(card as unknown as Node), { x, y: 140 + row * 92, width: 300, height: 84 }))
     })
   }
 
@@ -62,18 +62,18 @@ describe('headless', () => {
    *  pointer, then every move and the release to that same card. */
   const drag = async (title: string, path: ReadonlyArray<readonly [number, number]>) => {
     layOut()
-    const id = app.mounted.idOf(cardOf(app.document, title) as unknown as Node)
+    const id = app.idOf(cardOf(app.document, title) as unknown as Node)
     const [startX, startY] = [40, 140 + 20 + titles(app.document, 'todo').indexOf(title) * 92]
-    app.mounted.send(id, { eventType: 'mouseDown', x: startX, y: startY, button: 0, clickCount: 1 })
+    app.send(id, { eventType: 'mouseDown', x: startX, y: startY, button: 0, clickCount: 1 })
     await frames()
     for (const [x, y] of path) {
-      app.mounted.send(id, { eventType: 'mouseMove', x, y, pressedButton: 0 })
+      app.send(id, { eventType: 'mouseMove', x, y, pressedButton: 0 })
       await frames()
       layOut()
     }
     const [endX, endY] = path.at(-1)!
     return async () => {
-      app.mounted.send(id, { eventType: 'mouseUp', x: endX, y: endY, button: 0, clickCount: 1 })
+      app.send(id, { eventType: 'mouseUp', x: endX, y: endY, button: 0, clickCount: 1 })
       await frames()
       await app.settle()
     }
@@ -86,10 +86,10 @@ describe('headless', () => {
     expect(app.texts()).toContain('DONE')
     expect(app.inSync()).toBe(true)
     // bg-white rounded-lg shadow-sm p-3 on the card; bg-gray-50 on the column.
-    const card = app.mounted.nativeOf(cardOf(app.document, RESEARCH) as unknown as Node)
+    const card = app.nativeOf(cardOf(app.document, RESEARCH) as unknown as Node)
     expect(card.style).toMatchObject({ backgroundColor: '#fff', borderTopLeftRadius: 8, paddingLeft: 12 })
     expect(card.style['boxShadow']).toBeDefined()
-    expect(app.mounted.nativeOf(region('To Do') as unknown as Node).style).toMatchObject({ backgroundColor: '#f9fafb' })
+    expect(app.nativeOf(region('To Do') as unknown as Node).style).toMatchObject({ backgroundColor: '#f9fafb' })
   })
 
   test('a pointer drag moves a card to another column, with a live drop target on the way', async () => {
@@ -100,17 +100,17 @@ describe('headless', () => {
     // Mid-drag: the ghost follows the pointer, In Progress is the drop target
     // (blue border, a blue placeholder at the top), and the card left To Do.
     const ghost = app.document.querySelector('[aria-hidden="true"][style]')!
-    expect(app.mounted.nativeOf(ghost as unknown as Node).style).toMatchObject({ left: 390, top: 150, pointerEvents: 'none' })
+    expect(app.nativeOf(ghost as unknown as Node).style).toMatchObject({ left: 390, top: 150, pointerEvents: 'none' })
     expect(nativeTexts(ghost)).toEqual([RESEARCH, 'Review dnd-kit, elm-draggable, and annaghi/dnd-list for inspiration.'])
-    expect(app.mounted.nativeOf(region('In Progress') as unknown as Node).style).toMatchObject({ borderColor: '#90c5ff' })
+    expect(app.nativeOf(region('In Progress') as unknown as Node).style).toMatchObject({ borderColor: '#90c5ff' })
     const placeholder = app.document.querySelector('[data-droppable-id="in-progress"] li')!
     expect(placeholder.hasAttribute('data-draggable-id')).toBe(false)
-    expect(app.mounted.nativeOf(placeholder as unknown as Node).style).toMatchObject({ backgroundColor: '#eff6ff', height: 48 })
+    expect(app.nativeOf(placeholder as unknown as Node).style).toMatchObject({ backgroundColor: '#eff6ff', height: 48 })
     // The card left To Do. GPUI still holds its element there, unseen, because
     // GPUI sends the rest of the gesture to it.
     expect(titles(app.document, 'todo')).not.toContain(RESEARCH)
-    const held = app.mounted.gpui.node(app.mounted.idOf(region('To Do').querySelector('ul') as unknown as Node)).children
-      .map(id => app.mounted.gpui.node(id)).find(node => node.style['opacity'] === 0)
+    const held = app.gpui.node(app.idOf(region('To Do').querySelector('ul') as unknown as Node)).children
+      .map(id => app.gpui.node(id)).find(node => node.style['opacity'] === 0)
     expect(held?.style).toEqual({ position: 'absolute', opacity: 0, pointerEvents: 'none' })
 
     await release()
@@ -121,16 +121,16 @@ describe('headless', () => {
     expect(nativeTexts(region('To Do')).slice(0, 3)).toEqual(['TO DO', '5', DESIGN])
     expect(announcement()).toEqual([`Dropped ${RESEARCH} in position 1 of In Progress.`])
     expect(app.inSync()).toBe(true)
-    expect(app.mounted.gpui.retainedCount()).toBe(app.mounted.gpui.reachableCount())
+    expect(app.gpui.retainedCount()).toBe(app.gpui.reachableCount())
   })
 
   test('a click on a card is not a drag', async () => {
     app = await openHeadless('kanban')
     const before = app.texts()
-    const id = app.mounted.idOf(cardOf(app.document, RESEARCH) as unknown as Node)
-    app.mounted.send(id, { eventType: 'mouseDown', x: 40, y: 160, button: 0, clickCount: 1 })
+    const id = app.idOf(cardOf(app.document, RESEARCH) as unknown as Node)
+    app.send(id, { eventType: 'mouseDown', x: 40, y: 160, button: 0, clickCount: 1 })
     await app.settle()
-    app.mounted.send(id, { eventType: 'mouseUp', x: 40, y: 160, button: 0, clickCount: 1 })
+    app.send(id, { eventType: 'mouseUp', x: 40, y: 160, button: 0, clickCount: 1 })
     await app.settle()
     expect(app.texts()).toEqual(before)
     expect(app.inSync()).toBe(true)
@@ -141,7 +141,7 @@ describe('headless', () => {
     await app.key('space', DESIGN)
     expect(announcement()[0]).toStartWith(`Picked up ${DESIGN}.`)
     // Keyboard dragging: the card itself, blue-bordered, instead of a placeholder.
-    expect(app.mounted.nativeOf(cardOf(app.document, DESIGN) as unknown as Node).style).toMatchObject({ borderColor: '#54a2ff' })
+    expect(app.nativeOf(cardOf(app.document, DESIGN) as unknown as Node).style).toMatchObject({ borderColor: '#54a2ff' })
     await app.key('up')
     expect(announcement()).toEqual(['Position 1 in To Do.'])
     await app.key('space')

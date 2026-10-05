@@ -123,8 +123,11 @@ export const mountHeadless = (options: AttachOptions = {}) => {
       await settle()
     },
     /** A key, as GPUI reports it to the window: "tab", "down", "space"… */
-    press: async (key: string, modifiers: { shift?: boolean } = {}) => {
-      const binding = { eventType: 'windowKeyDown', key, modifiers: { shift: modifiers.shift ?? false } }
+    press: async (key: string, modifiers: { shift?: boolean; ctrl?: boolean; cmd?: boolean; alt?: boolean } = {}) => {
+      const binding = {
+        eventType: 'windowKeyDown', key,
+        modifiers: { shift: modifiers.shift ?? false, ctrl: modifiers.ctrl ?? false, cmd: modifiers.cmd ?? false, alt: modifiers.alt ?? false },
+      }
       send({ ...binding, elementId: 1 } as never)
       send({ ...binding, eventType: 'windowKeyUp', elementId: 1 } as never)
       await settle()

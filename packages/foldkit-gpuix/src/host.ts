@@ -267,6 +267,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const values = viewportOverflow(element, resolved(fold(own, states), inherited))
     // An inert subtree is out of GPUI's hit testing: no hover, no presses.
     if (isInert(element)) values.set('pointer-events', 'none')
+    else if (passesHits(element, values, own)) values.set('pointer-events', 'none')
     // A field draws its own text: it needs the text style a text node gets.
     if (field) for (const name of INHERITED) if (!values.has(name) && inherited.has(name)) values.set(name, inherited.get(name)!)
     // Text beside elements: GPUI has no inline layout, so a wrapping row.
@@ -769,9 +770,52 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const before = counts.get(native) ?? 0
     const after = Math.max(0, before + delta)
     counts.set(native, after)
-    if (node.nativeId !== 0 && (before === 0) !== (after === 0)) syncListener(node, native, after > 0)
+    if (node.nativeId !== 0 && (before === 0) !== (after === 0)) {
+      syncListener(node, native, after > 0)
+      // Whether it and its children let hits through (CLICK-THROUGH).
+      if (node instanceof NativeElement && node !== body) {
+        dirty.add(node)
+        schedule()
+      }
+    }
     if (after > 0 && node instanceof NativeElement) track(node)
   }
+  // CLICK-THROUGH: GPUI lets a box that paints a fill block hits to
+  // everything behind it, its own ancestors included, where a browser bubbles
+  // a click on a child up to its parent: a switch's coloured track swallowed
+  // the switch's click (FKN-12, as on the mirror). So a plain box inside one
+  // that listens for the pointer, with no listeners of its own, lets GPUI's
+  // hits through to it (GPUI's `pointerEvents: 'none'`; the document's own
+  // hit testing still finds the box, so it's still a click's target). Not a
+  // positioned box (it can sit outside its parent, over something else), a
+  // scroller (it needs the wheel), a field, or one whose CSS sets
+  // pointer-events, or one with a hover or press style. Decided as each box
+  // is styled, parents first.
+  const POINTER_NATIVES: ReadonlyArray<string> = ['click', 'auxClick', 'mouseDown', 'mouseUp', 'mouseMove', 'mouseEnter', 'mouseLeave']
+  const through = new WeakSet<NativeElement>()
+  /** Whether the document listens on `node` for any of `natives` (or for
+   *  anything): its own listeners, not the moves the host follows itself
+   *  (TRACKING: every painted box, for hover). */
+  const listensNatively = (node: NativeNode, natives?: ReadonlyArray<string>) => {
+    const counts = nativeCounts.get(node)
+    if (counts === undefined) return false
+    const own = implicit.get(node)
+    const asked = (native: string) => (counts.get(native) ?? 0) - (own?.has(native) === true ? 1 : 0) > 0
+    return (natives ?? [...counts.keys()]).some(asked)
+  }
+  const passesHits = (element: NativeElement, values: Map<string, string>, own: Declared) => {
+    const parent = element.parentElement
+    const scrolls = ['overflow', 'overflow-x', 'overflow-y'].some(name => ['scroll', 'auto'].includes(values.get(name) ?? ''))
+    // GPUI paints a hover or press style from its own hit test.
+    const states = own.has('hover') || own.has('active')
+    const passes = parent !== null && parent !== body && nativeType(element) === 'div' && !values.has('pointer-events') && !states &&
+      !['absolute', 'fixed'].includes(values.get('position') ?? '') && !scrolls && !listensNatively(element) &&
+      (through.has(parent) || listensNatively(parent, POINTER_NATIVES))
+    if (passes) through.add(element)
+    else through.delete(element)
+    return passes
+  }
+
   /** GPUI sends the pointer's moves (and its leaving) only to the topmost
    *  element it hit-tests, which is one that listens for something. So each
    *  of those, and the body under them all, tells the host where the pointer
@@ -1448,7 +1492,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   /** Scrolls an area, and moves what the layout has inside it by what GPUI
    *  scrolled (it clamps to the content, at once): a box read straight
    *  after is where it's going to be drawn, as in a browser. */
-  const scrollTo = (element: NativeElement, x: number, y: number) => {
+  const scrollTo = (element: NativeElement, at: number, down: number) => {
+    // Offsets are negated scroll positions: 0 at rest, never -0.
+    const [x, y] = [at + 0, down + 0]
     if (nativeType(element) === 'virtual-list') return scrollListTo(element, y)
     const [fromX, fromY] = offsets.get(element) ?? offsetOf(element)
     renderer.scrollTo?.(element.nativeId, x, y)

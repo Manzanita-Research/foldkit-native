@@ -1,0 +1,10 @@
+move (10,10) outer
+  native mouseEnter → outer x=undefined y=undefined pb=undefined
+    dom mouseenter @outer target=outer
+move (100,100) inner
+  native mouseLeave → outer x=undefined y=undefined pb=undefined
+    dom mouseleave @outer target=outer
+move (290,100) inner, right edge
+move (350,100) out of both
+move (100,100) inner again
+move (-20,-20) out of window

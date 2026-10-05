@@ -1,0 +1,231 @@
+move (10,10) outer
+  pointerover@outer t=outer b=-1/0 rel=null
+  pointerenter@outer t=outer b=-1/0 rel=null
+  mouseover@outer t=outer b=0/0 rel=BODY
+  mouseenter@outer t=outer b=0/0 rel=BODY
+  pointermove@outer t=outer b=-1/0 rel=null
+  mousemove@outer t=outer b=0/0 rel=null
+move (100,100) inner
+  pointerover@inner t=inner b=-1/0 rel=null
+  pointerover@outer t=inner b=-1/0 rel=null
+  pointerenter@outer t=outer b=-1/0 rel=null
+  pointerenter@inner t=inner b=-1/0 rel=null
+  mouseout@outer t=outer b=0/0 rel=inner
+  mouseover@inner t=inner b=0/0 rel=outer
+  mouseover@outer t=inner b=0/0 rel=outer
+  mouseenter@inner t=inner b=0/0 rel=outer
+  pointermove@inner t=inner b=-1/0 rel=null
+  pointermove@outer t=inner b=-1/0 rel=null
+  mousemove@inner t=inner b=0/0 rel=null
+  mousemove@outer t=inner b=0/0 rel=null
+move (10,10) outer
+  pointerover@outer t=outer b=-1/0 rel=null
+  pointerenter@outer t=outer b=-1/0 rel=null
+  mouseout@inner t=inner b=0/0 rel=outer
+  mouseout@outer t=inner b=0/0 rel=outer
+  mouseleave@inner t=inner b=0/0 rel=outer
+  mouseover@outer t=outer b=0/0 rel=inner
+  pointermove@outer t=outer b=-1/0 rel=null
+  mousemove@outer t=outer b=0/0 rel=null
+move (390,290) nothing
+  mouseout@outer t=outer b=0/0 rel=BODY
+  mouseleave@outer t=outer b=0/0 rel=BODY
+move (100,100) straight into inner
+  pointerover@inner t=inner b=-1/0 rel=null
+  pointerover@outer t=inner b=-1/0 rel=null
+  pointerenter@outer t=outer b=-1/0 rel=null
+  pointerenter@inner t=inner b=-1/0 rel=null
+  mouseover@inner t=inner b=0/0 rel=BODY
+  mouseover@outer t=inner b=0/0 rel=BODY
+  mouseenter@outer t=outer b=0/0 rel=BODY
+  mouseenter@inner t=inner b=0/0 rel=BODY
+  pointermove@inner t=inner b=-1/0 rel=null
+  pointermove@outer t=inner b=-1/0 rel=null
+  mousemove@inner t=inner b=0/0 rel=null
+  mousemove@outer t=inner b=0/0 rel=null
+left click (100,100)
+  pointerover@inner t=inner b=0/1 rel=null
+  pointerover@outer t=inner b=0/1 rel=null
+  pointerenter@outer t=outer b=0/1 rel=null
+  pointerenter@inner t=inner b=0/1 rel=null
+  pointerdown@inner t=inner b=0/1 rel=null
+  pointerdown@outer t=inner b=0/1 rel=null
+  mousedown@inner t=inner b=0/1 rel=null
+  mousedown@outer t=inner b=0/1 rel=null
+  pointerover@inner t=inner b=0/0 rel=null
+  pointerover@outer t=inner b=0/0 rel=null
+  pointerenter@outer t=outer b=0/0 rel=null
+  pointerenter@inner t=inner b=0/0 rel=null
+  pointerup@inner t=inner b=0/0 rel=null
+  pointerup@outer t=inner b=0/0 rel=null
+  pointerup@document t=inner
+  mouseup@inner t=inner b=0/0 rel=null
+  mouseup@outer t=inner b=0/0 rel=null
+  mouseup@document t=inner
+  click@inner t=inner b=0/0 rel=null
+  click@outer t=inner b=0/0 rel=null
+  click@document t=inner
+  pointerover@inner t=inner b=0/0 rel=null
+  pointerover@outer t=inner b=0/0 rel=null
+  pointerenter@outer t=outer b=0/0 rel=null
+  pointerenter@inner t=inner b=0/0 rel=null
+right click (100,100)
+  pointerover@inner t=inner b=2/2 rel=null
+  pointerover@outer t=inner b=2/2 rel=null
+  pointerenter@outer t=outer b=2/2 rel=null
+  pointerenter@inner t=inner b=2/2 rel=null
+  pointerdown@inner t=inner b=2/2 rel=null
+  pointerdown@outer t=inner b=2/2 rel=null
+  mousedown@inner t=inner b=2/2 rel=null
+  mousedown@outer t=inner b=2/2 rel=null
+  contextmenu@inner t=inner b=2/2 rel=null
+  contextmenu@outer t=inner b=2/2 rel=null
+  contextmenu@document t=inner
+  pointerover@inner t=inner b=2/0 rel=null
+  pointerover@outer t=inner b=2/0 rel=null
+  pointerenter@outer t=outer b=2/0 rel=null
+  pointerenter@inner t=inner b=2/0 rel=null
+  pointerup@inner t=inner b=2/0 rel=null
+  pointerup@outer t=inner b=2/0 rel=null
+  pointerup@document t=inner
+  mouseup@inner t=inner b=2/0 rel=null
+  mouseup@outer t=inner b=2/0 rel=null
+  mouseup@document t=inner
+  auxclick@inner t=inner b=2/0 rel=null
+  auxclick@outer t=inner b=2/0 rel=null
+  pointerover@inner t=inner b=2/0 rel=null
+  pointerover@outer t=inner b=2/0 rel=null
+  pointerenter@outer t=outer b=2/0 rel=null
+  pointerenter@inner t=inner b=2/0 rel=null
+middle click (100,100)
+  pointerover@inner t=inner b=1/4 rel=null
+  pointerover@outer t=inner b=1/4 rel=null
+  pointerenter@outer t=outer b=1/4 rel=null
+  pointerenter@inner t=inner b=1/4 rel=null
+  pointerdown@inner t=inner b=1/4 rel=null
+  pointerdown@outer t=inner b=1/4 rel=null
+  mousedown@inner t=inner b=1/4 rel=null
+  mousedown@outer t=inner b=1/4 rel=null
+  pointerover@inner t=inner b=1/0 rel=null
+  pointerover@outer t=inner b=1/0 rel=null
+  pointerenter@outer t=outer b=1/0 rel=null
+  pointerenter@inner t=inner b=1/0 rel=null
+  pointerup@inner t=inner b=1/0 rel=null
+  pointerup@outer t=inner b=1/0 rel=null
+  pointerup@document t=inner
+  mouseup@inner t=inner b=1/0 rel=null
+  mouseup@outer t=inner b=1/0 rel=null
+  mouseup@document t=inner
+  auxclick@inner t=inner b=1/0 rel=null
+  auxclick@outer t=inner b=1/0 rel=null
+  pointerover@inner t=inner b=1/0 rel=null
+  pointerover@outer t=inner b=1/0 rel=null
+  pointerenter@outer t=outer b=1/0 rel=null
+  pointerenter@inner t=inner b=1/0 rel=null
+wheel deltaY=50 at (100,100)
+  wheel@inner t=inner b=0/0 dY=50 mode=0 rel=null
+  wheel@outer t=inner b=0/0 dY=50 mode=0 rel=null
+  pointerover@inner t=inner b=-1/0 rel=null
+  pointerover@outer t=inner b=-1/0 rel=null
+  pointerenter@outer t=outer b=-1/0 rel=null
+  pointerenter@inner t=inner b=-1/0 rel=null
+  scroll@outer t=outer b=/
+press inner, drag to (10,10), (390,290), release
+  pointerover@inner t=inner b=-1/0 rel=null
+  pointerover@outer t=inner b=-1/0 rel=null
+  pointerenter@outer t=outer b=-1/0 rel=null
+  pointerenter@inner t=inner b=-1/0 rel=null
+  pointermove@inner t=inner b=-1/0 rel=null
+  pointermove@outer t=inner b=-1/0 rel=null
+  mousemove@inner t=inner b=0/0 rel=null
+  mousemove@outer t=inner b=0/0 rel=null
+  pointerover@inner t=inner b=0/1 rel=null
+  pointerover@outer t=inner b=0/1 rel=null
+  pointerenter@outer t=outer b=0/1 rel=null
+  pointerenter@inner t=inner b=0/1 rel=null
+  pointerdown@inner t=inner b=0/1 rel=null
+  pointerdown@outer t=inner b=0/1 rel=null
+  mousedown@inner t=inner b=0/1 rel=null
+  mousedown@outer t=inner b=0/1 rel=null
+  pointerover@outer t=outer b=-1/1 rel=null
+  pointerenter@outer t=outer b=-1/1 rel=null
+  mouseout@inner t=inner b=0/1 rel=outer
+  mouseout@outer t=inner b=0/1 rel=outer
+  mouseleave@inner t=inner b=0/1 rel=outer
+  mouseover@outer t=outer b=0/1 rel=inner
+  pointermove@outer t=outer b=-1/1 rel=null
+  mousemove@outer t=outer b=0/1 rel=null
+  mouseout@outer t=outer b=0/1 rel=BODY
+  mouseleave@outer t=outer b=0/1 rel=BODY
+  pointerup@document t=BODY
+  mouseup@document t=BODY
+  click@document t=BODY
+press btn, drag off to (700,300), release
+  pointerover@btn t=btn b=-1/0 rel=null
+  pointerenter@btn t=btn b=-1/0 rel=null
+  mouseover@btn t=btn b=0/0 rel=BODY
+  mouseenter@btn t=btn b=0/0 rel=BODY
+  pointermove@btn t=btn b=-1/0 rel=null
+  mousemove@btn t=btn b=0/0 rel=null
+  pointerover@btn t=btn b=0/1 rel=null
+  pointerenter@btn t=btn b=0/1 rel=null
+  pointerdown@btn t=btn b=0/1 rel=null
+  mousedown@btn t=btn b=0/1 rel=null
+  focus@btn t=btn b=/ rel=null
+  mouseout@btn t=btn b=0/1 rel=BODY
+  mouseleave@btn t=btn b=0/1 rel=BODY
+  pointerup@document t=BODY
+  mouseup@document t=BODY
+  click@document t=BODY
+capture to outer on press of inner, move to (700,300), release
+  pointerover@inner t=inner b=-1/0 rel=null
+  pointerover@outer t=inner b=-1/0 rel=null
+  pointerenter@outer t=outer b=-1/0 rel=null
+  pointerenter@inner t=inner b=-1/0 rel=null
+  mouseover@inner t=inner b=0/0 rel=BODY
+  mouseover@outer t=inner b=0/0 rel=BODY
+  mouseenter@outer t=outer b=0/0 rel=BODY
+  mouseenter@inner t=inner b=0/0 rel=BODY
+  pointermove@inner t=inner b=-1/0 rel=null
+  pointermove@outer t=inner b=-1/0 rel=null
+  mousemove@inner t=inner b=0/0 rel=null
+  mousemove@outer t=inner b=0/0 rel=null
+  pointerover@inner t=inner b=0/1 rel=null
+  pointerover@outer t=inner b=0/1 rel=null
+  pointerenter@outer t=outer b=0/1 rel=null
+  pointerenter@inner t=inner b=0/1 rel=null
+  pointerdown@inner t=inner b=0/1 rel=null
+  pointerdown@outer t=inner b=0/1 rel=null
+  mousedown@inner t=inner b=0/1 rel=null
+  mousedown@outer t=inner b=0/1 rel=null
+  blur@btn t=btn b=/ rel=null
+  mouseout@inner t=inner b=0/1 rel=BODY
+  mouseout@outer t=inner b=0/1 rel=BODY
+  mouseleave@inner t=inner b=0/1 rel=BODY
+  mouseleave@outer t=outer b=0/1 rel=BODY
+  pointerup@document t=BODY
+  mouseup@document t=BODY
+  click@document t=BODY
+capture outer, remove outer mid-drag
+  pointerover@inner t=inner b=-1/0 rel=null
+  pointerover@outer t=inner b=-1/0 rel=null
+  pointerenter@outer t=outer b=-1/0 rel=null
+  pointerenter@inner t=inner b=-1/0 rel=null
+  mouseover@inner t=inner b=0/0 rel=BODY
+  mouseover@outer t=inner b=0/0 rel=BODY
+  mouseenter@outer t=outer b=0/0 rel=BODY
+  mouseenter@inner t=inner b=0/0 rel=BODY
+  pointermove@inner t=inner b=-1/0 rel=null
+  pointermove@outer t=inner b=-1/0 rel=null
+  mousemove@inner t=inner b=0/0 rel=null
+  mousemove@outer t=inner b=0/0 rel=null
+  pointerover@inner t=inner b=0/1 rel=null
+  pointerover@outer t=inner b=0/1 rel=null
+  pointerenter@outer t=outer b=0/1 rel=null
+  pointerenter@inner t=inner b=0/1 rel=null
+  pointerdown@inner t=inner b=0/1 rel=null
+  pointerdown@outer t=inner b=0/1 rel=null
+  mousedown@inner t=inner b=0/1 rel=null
+  mousedown@outer t=inner b=0/1 rel=null
+  pointerup@document t=BODY
+  mouseup@document t=BODY

@@ -1,0 +1,131 @@
+move (10,10) outer
+  native mouseEnter → outer hovered=true
+    dom mouseenter @outer target=outer phase=2 button=0
+    dom mouseover @outer target=outer phase=2 button=0
+  native mouseMove → outer 
+    dom mousemove @outer target=outer phase=2 button=0
+move (100,100) inner
+  native mouseEnter → inner hovered=true
+    dom mouseenter @inner target=inner phase=2 button=0
+    dom mouseover @inner target=inner phase=2 button=0
+    dom mouseover @outer target=inner phase=3 button=0
+  native mouseMove → inner 
+    dom mousemove @inner target=inner phase=2 button=0
+    dom mousemove @outer target=inner phase=3 button=0
+  native mouseLeave → outer hovered=false
+    dom mouseleave @outer target=outer phase=2 button=0
+    dom mouseout @outer target=outer phase=2 button=0
+move (10,10) outer
+  native mouseLeave → inner hovered=false
+    dom mouseleave @inner target=inner phase=2 button=0
+    dom mouseout @inner target=inner phase=2 button=0
+    dom mouseout @outer target=inner phase=3 button=0
+  native mouseEnter → outer hovered=true
+    dom mouseenter @outer target=outer phase=2 button=0
+    dom mouseover @outer target=outer phase=2 button=0
+  native mouseMove → outer 
+    dom mousemove @outer target=outer phase=2 button=0
+move (390,290) nothing
+  native mouseLeave → outer hovered=false
+    dom mouseleave @outer target=outer phase=2 button=0
+    dom mouseout @outer target=outer phase=2 button=0
+move (100,100) straight into inner
+  native mouseEnter → inner hovered=true
+    dom mouseenter @inner target=inner phase=2 button=0
+    dom mouseover @inner target=inner phase=2 button=0
+    dom mouseover @outer target=inner phase=3 button=0
+  native mouseMove → inner 
+    dom mousemove @inner target=inner phase=2 button=0
+    dom mousemove @outer target=inner phase=3 button=0
+click left (100,100)
+  native mouseDownOutside → 1000001 button=0
+  native mouseDown → inner button=0 clickCount=1
+    dom mousedown @inner target=inner phase=2 button=0
+    dom mousedown @outer target=inner phase=3 button=0
+  native mouseUp → inner button=0 clickCount=1
+    dom mouseup @inner target=inner phase=2 button=0
+    dom mouseup @outer target=inner phase=3 button=0
+  native click → inner button=0 clickCount=1 isRightClick=false
+    dom click @inner target=inner phase=2 button=0
+    dom click @outer target=inner phase=3 button=0
+click right (100,100)
+  native mouseDownOutside → 1000001 button=2
+  native mouseDown → inner button=2 clickCount=1
+    dom mousedown @inner target=inner phase=2 button=2
+    dom mousedown @outer target=inner phase=3 button=2
+  native auxClick → inner clickCount=1 isRightClick=true
+  native mouseUp → inner button=2 clickCount=1
+    dom mouseup @inner target=inner phase=2 button=2
+    dom mouseup @outer target=inner phase=3 button=2
+click middle (100,100)
+  native mouseDownOutside → 1000001 button=1
+  native mouseDown → inner button=1 clickCount=1
+    dom mousedown @inner target=inner phase=2 button=1
+    dom mousedown @outer target=inner phase=3 button=1
+  native auxClick → inner clickCount=1 isRightClick=false
+  native mouseUp → inner button=1 clickCount=1
+    dom mouseup @inner target=inner phase=2 button=1
+    dom mouseup @outer target=inner phase=3 button=1
+down right (100,100)
+  native mouseDownOutside → 1000001 button=2
+  native mouseDown → inner button=2 clickCount=1
+    dom mousedown @inner target=inner phase=2 button=2
+    dom mousedown @outer target=inner phase=3 button=2
+up right (100,100)
+  native auxClick → inner clickCount=1 isRightClick=true
+  native mouseUp → inner button=2 clickCount=1
+    dom mouseup @inner target=inner phase=2 button=2
+    dom mouseup @outer target=inner phase=3 button=2
+wheel (100,100) dy=-50
+  native scroll → inner deltaX=0 deltaY=-50 precise=true
+    dom scroll @inner target=inner phase=2 button=
+  native scroll → outer deltaX=0 deltaY=-50 precise=true
+    dom scroll @outer target=outer phase=2 button=
+  native scroll → body deltaX=0 deltaY=-50 precise=true
+  outer offset now [0,-50]
+wheel (10,10) dy=-50 (outer only)
+  native scroll → outer deltaX=0 deltaY=-50 precise=true
+    dom scroll @outer target=outer phase=2 button=
+  native scroll → body deltaX=0 deltaY=-50 precise=true
+  native mouseEnter → outer hovered=true
+    dom mouseenter @outer target=outer phase=2 button=0
+    dom mouseover @outer target=outer phase=2 button=0
+  native mouseLeave → inner hovered=false
+    dom mouseleave @inner target=inner phase=2 button=0
+    dom mouseout @inner target=inner phase=2 button=0
+    dom mouseout @outer target=inner phase=3 button=0
+down left (100,100)
+  native mouseDownOutside → 1000001 button=0
+  native mouseDown → inner button=0 clickCount=1
+    dom mousedown @inner target=inner phase=2 button=0
+    dom mousedown @outer target=inner phase=3 button=0
+  native mouseLeave → outer hovered=false
+move pressed (10,10)
+  native mouseMove → inner pressedButton=0
+    dom mouseout @inner target=inner phase=2 button=0
+    dom mouseout @outer target=inner phase=3 button=0
+    dom mouseleave @inner target=inner phase=2 button=0
+    dom mouseover @outer target=outer phase=2 button=0
+    dom mousemove @inner target=inner phase=2 button=0
+    dom mousemove @outer target=inner phase=3 button=0
+move pressed (390,290)
+  native mouseMove → inner pressedButton=0
+    dom mouseout @outer target=outer phase=2 button=0
+    dom mouseleave @outer target=outer phase=2 button=0
+    dom mousemove @inner target=inner phase=2 button=0
+    dom mousemove @outer target=inner phase=3 button=0
+up (390,290)
+  native mouseUp → inner button=0 clickCount=1
+    dom mouseup @inner target=inner phase=2 button=0
+    dom mouseup @outer target=inner phase=3 button=0
+  native click → inner button=0 clickCount=1 isRightClick=false
+    dom click @inner target=inner phase=2 button=0
+    dom click @outer target=inner phase=3 button=0
+move unpressed (100,100)
+  native mouseEnter → inner hovered=true
+    dom mouseenter @inner target=inner phase=2 button=0
+    dom mouseover @inner target=inner phase=2 button=0
+    dom mouseover @outer target=inner phase=3 button=0
+  native mouseMove → inner 
+    dom mousemove @inner target=inner phase=2 button=0
+    dom mousemove @outer target=inner phase=3 button=0

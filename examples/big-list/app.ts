@@ -12,7 +12,6 @@ export const meta: ExampleMeta = {
   gpui: 'Smooth native scrolling of a long list, theming, shadows and rounded layers',
   width: 1040,
   height: 760,
-  renderer: 'gpuix',
 }
 
 export const start = (container: HTMLElement) =>

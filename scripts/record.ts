@@ -1,8 +1,12 @@
 // Evidence for an example: a still and a short clip of the real app in a real
 // window, driven through gpuix's automation channel.
 //
-//   bun run record weather            → evidence/weather.png, evidence/weather.mp4
-//   bun run record weather some/dir   → some/dir/weather.png, …
+//   bun run record weather            → evidence/weather-adapter.png, evidence/weather-adapter.mp4
+//   bun run record weather some/dir   → some/dir/weather-adapter.png, …
+//
+// An example on FoldKit on gpuix (the default) is named `<name>-adapter`;
+// on the DOM mirror (FOLDKIT_NATIVE_RENDERER=mirror, and the single-file
+// demos) plain `<name>`, as the clips recorded before the adapter were.
 //
 // The walk-through is the example's demo (`examples/<name>/demo.ts`, or
 // `examples/<name>.demo.ts` for the single-file demos); without one, the clip
@@ -16,7 +20,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import { entries } from '../examples/support/example.ts'
+import { entries, rendererOf } from '../examples/support/example.ts'
 
 /** A demo module exports `ready` (text that shows once the app has drawn)
  *  and `demo`, which drives the app for the clip (`pause` is a plain wait). */
@@ -44,6 +48,7 @@ const outDir = resolve(process.argv[3] ?? join(root, 'evidence'))
 await mkdir(outDir, { recursive: true })
 const frameDir = await mkdtemp(join(tmpdir(), 'foldkit-native-record-'))
 
+const name = entry.command[0] === 'examples/open.ts' && rendererOf(entry.meta) === 'gpuix' ? `${entry.id}-adapter` : entry.id
 const demoFile = [join(root, 'examples', entry.id, 'demo.ts'), join(root, 'examples', `${entry.id}.demo.ts`)].find(existsSync)
 const { demo, ready } = demoFile === undefined
   ? { demo: (async (_app, pause) => pause(3000)) as Demo, ready: undefined }
@@ -65,7 +70,7 @@ try {
   }
   if (ready === undefined) await pause(1500)
   await pause(500)
-  await app.screenshot({ path: join(outDir, `${entry.id}.png`) })
+  await app.screenshot({ path: join(outDir, `${name}.png`) })
 
   let recording = true
   const recordFrom = performance.now()
@@ -91,11 +96,11 @@ try {
 const list = frames.map((frame, i) =>
   `file '${frame.file}'\nduration ${(((frames[i + 1]?.at ?? frame.at + 100) - frame.at) / 1000).toFixed(3)}`)
 await writeFile(join(frameDir, 'frames.txt'), `${list.join('\n')}\nfile '${frames.at(-1)!.file}'\n`)
-const clip = join(outDir, `${entry.id}.mp4`)
+const clip = join(outDir, `${name}.mp4`)
 const ffmpeg = Bun.spawnSync(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', join(frameDir, 'frames.txt'),
   '-vf', 'fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p', '-c:v', 'libx264', '-crf', '20', clip])
 if (ffmpeg.exitCode !== 0) throw new Error(`ffmpeg failed: ${ffmpeg.stderr.toString()}`)
 await rm(frameDir, { recursive: true })
 const seconds = (frames.at(-1)!.at / 1000).toFixed(1)
-console.log(`${join(outDir, `${entry.id}.png`)}\n${clip}: ${frames.length} frames over ${seconds} s`)
+console.log(`${join(outDir, `${name}.png`)}\n${clip}: ${frames.length} frames over ${seconds} s`)
 process.exit(0)

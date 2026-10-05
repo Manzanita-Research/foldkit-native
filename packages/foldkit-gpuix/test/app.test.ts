@@ -117,6 +117,8 @@ describe('close()', () => {
       throw new Error('GPUI application is not initialized')
     }
     expect(() => app.detach()).toThrow('not initialized')
+    // Its globals went all the same.
+    expect(globalThis.document as unknown).not.toBe(app.document)
   })
 })
 

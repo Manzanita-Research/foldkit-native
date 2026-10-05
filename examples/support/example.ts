@@ -24,13 +24,25 @@ export type ExampleMeta = Readonly<{
   /** Window size in logical pixels. */
   width: number
   height: number
-  /** What draws it: the DOM mirror (the default), or FoldKit on gpuix
-   *  (packages/foldkit-gpuix), which has no DOM engine. */
-  renderer?: 'mirror' | 'gpuix'
+  /** Set only for an example that runs on one renderer alone (one built on
+   *  @foldkit-native/ui is FoldKit on gpuix's): FOLDKIT_NATIVE_RENDERER
+   *  doesn't move it. */
+  renderer?: Renderer
   /** More of gpuix's window options, on FoldKit on gpuix: a layer-shell
    *  surface (Layer bar's), a fixed size. Width and height above still count. */
   window?: WindowOptions
 }>
+
+export type Renderer = 'gpuix' | 'mirror'
+
+/** What draws an example: FoldKit on gpuix (packages/foldkit-gpuix), or the
+ *  DOM mirror (happy-dom → GPUI, `src/`), kept as a comparator, with
+ *  FOLDKIT_NATIVE_RENDERER=mirror. An example that runs on one alone says so
+ *  in `meta.renderer`. `bun run example` and the tests decide this way. */
+export const rendererOf = (meta: ExampleMeta, env: Readonly<Record<string, string | undefined>> = process.env): Renderer => {
+  const asked = env['FOLDKIT_NATIVE_RENDERER']
+  return meta.renderer ?? (asked === 'mirror' ? 'mirror' : 'gpuix')
+}
 
 export type ExampleApp = Readonly<{
   meta: ExampleMeta

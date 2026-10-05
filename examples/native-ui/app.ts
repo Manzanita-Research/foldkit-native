@@ -11,6 +11,7 @@ export const meta: ExampleMeta = {
   gpui: 'GPUI owns focus, Tab order, focus traps, scrolling and text editing',
   width: 560,
   height: 720,
+  // Built on @foldkit-native/ui: FoldKit on gpuix only.
   renderer: 'gpuix',
 }
 

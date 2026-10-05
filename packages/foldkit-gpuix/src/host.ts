@@ -541,7 +541,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     }
     if (isField(element)) {
       listenNatively(element, 'change')
-      listenNatively(element, 'submit')
+      // Enter in an input submits its form. In a textarea it's a new line:
+      // gpuix's textarea submits on Enter instead whenever this is heard.
+      if (nativeType(element) === 'input') listenNatively(element, 'submit')
     }
     // GPUI scrolls by itself (the wheel): the layout reads again after.
     if (scrollable(element)) listenNatively(element, 'scroll')

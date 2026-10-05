@@ -7,10 +7,11 @@ import { defineMessageUnion } from 'foldkit/message'
 
 import { Option } from 'effect'
 
-import { Dialog, Listbox, ScrollArea, Select, Switch, TextField, button, dusk, part, themeStyle, uiCss } from '../src/index.ts'
+import { Button, Checkbox, Dialog, Listbox, ScrollArea, Select, Switch, TextField, button, part, uiCss } from '../src/index.ts'
 
+// The theme's tokens come from the runner (run.ts), around the app.
 const root = <Message>(h: HtmlBuilder<Message>, children: ReadonlyArray<Html>) =>
-  h.div([...part(h, 'root', undefined), h.Style(themeStyle(dusk))], [h.div([h.Style({ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '12px' })], children)])
+  h.div(part(h, 'root', undefined), [h.div([h.Style({ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '12px' })], children)])
 
 export const css = uiCss
 
@@ -47,6 +48,75 @@ export const Toggle = (() => {
   const update = (_: Model, message: Message): Update.Return<Model, Message> => ({ model: { on: message.isChecked } })
   const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
     Switch.view({ id: 'wifi', label: 'Wi-Fi', description: 'Join known networks', isChecked: model.on, onToggle: isChecked => Message.Toggled({ isChecked }) }, h),
+    // Neither of these toggles: one's off limits, one only reports.
+    Switch.view({ id: 'airplane', label: 'Airplane mode', description: 'Managed by your organisation', isChecked: false, isDisabled: true, onToggle: isChecked => Message.Toggled({ isChecked }) }, h),
+    Switch.view({ id: 'location', label: 'Location', isChecked: true, isReadOnly: true, onToggle: isChecked => Message.Toggled({ isChecked }) }, h),
+  ])
+  return { Model, Message, init, update, view }
+})()
+
+// CHECKBOX
+// "All toppings" ticks or clears the three under it, and is indeterminate
+// while only some are ticked.
+export const Checks = (() => {
+  const toppings = ['Cheese', 'Basil', 'Olives'] as const
+  const Model = Schema.Struct({ toppings: Schema.Array(Schema.String), remember: Schema.Boolean })
+  const Message = defineMessageUnion({
+    ToggledAll: { isChecked: Schema.Boolean },
+    ToggledTopping: { name: Schema.String, isChecked: Schema.Boolean },
+    ToggledRemember: { isChecked: Schema.Boolean },
+  })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const init: Model = { toppings: ['Cheese'], remember: false }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> =>
+    Message.match<Update.Return<Model, Message>>(message, {
+      ToggledAll: ({ isChecked }) => ({ model: { ...model, toppings: isChecked ? [...toppings] : [] } }),
+      ToggledTopping: ({ name, isChecked }) => ({
+        model: { ...model, toppings: toppings.filter(other => (other === name ? isChecked : model.toppings.includes(other))) },
+      }),
+      ToggledRemember: ({ isChecked }) => ({ model: { ...model, remember: isChecked } }),
+    })
+  const view = (model: Model, h: HtmlBuilder<Message>) => {
+    const count = model.toppings.length
+    return root(h, [
+      Checkbox.view({
+        id: 'all', label: 'All toppings', isChecked: count === toppings.length, isIndeterminate: count > 0 && count < toppings.length,
+        onToggle: isChecked => Message.ToggledAll({ isChecked }),
+      }, h),
+      h.div([h.Style({ display: 'flex', 'flex-direction': 'column', gap: '8px', 'padding-left': '26px' })], toppings.map(name =>
+        Checkbox.view({
+          id: name.toLowerCase(), label: name, isChecked: model.toppings.includes(name),
+          onToggle: isChecked => Message.ToggledTopping({ name, isChecked }),
+        }, h))),
+      Checkbox.view({
+        id: 'remember', label: 'Remember me', description: 'Stay signed in on this computer', isChecked: model.remember,
+        onToggle: isChecked => Message.ToggledRemember({ isChecked }),
+      }, h),
+      Checkbox.view({ id: 'terms', label: 'Accepted the terms', isChecked: true, isReadOnly: true, onToggle: isChecked => Message.ToggledRemember({ isChecked }) }, h),
+      Checkbox.view({ id: 'beta', label: 'Beta features', description: 'Not available on your plan', isChecked: false, isDisabled: true, onToggle: isChecked => Message.ToggledRemember({ isChecked }) }, h),
+    ])
+  }
+  return { Model, Message, init, update, view }
+})()
+
+// BUTTON: the variants, and a disabled one.
+export const Actions = (() => {
+  const Model = Schema.Struct({ pressed: Schema.Array(Schema.String) })
+  const Message = defineMessageUnion({ Pressed: { label: Schema.String } })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const init: Model = { pressed: [] }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> => ({ model: { pressed: [...model.pressed, message.label] } })
+  const press = (label: string) => Message.Pressed({ label })
+  const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
+    h.div([h.Style({ display: 'flex', 'flex-direction': 'row', gap: '8px' })], [
+      Button.view({ id: 'save', label: 'Save', variant: 'primary', onClick: press('Save') }, h),
+      Button.view({ id: 'cancel', label: 'Cancel', onClick: press('Cancel') }, h),
+      Button.view({ id: 'delete', label: 'Delete', variant: 'danger', onClick: press('Delete') }, h),
+      Button.view({ id: 'archive', label: 'Archive', isDisabled: true, onClick: press('Archive') }, h),
+    ]),
+    h.p([h.Id('pressed')], [`Pressed: ${model.pressed.join(', ') || 'nothing'}`]),
   ])
   return { Model, Message, init, update, view }
 })()
@@ -154,7 +224,7 @@ export const Confirm = (() => {
       Closed: () => ({ model: { ...model, open: false } }),
       Confirmed: () => ({ model: { open: false, confirmed: model.confirmed + 1 } }),
     })
-  const view = (model: Model, h: HtmlBuilder<Message>) => h.div([...part(h, 'root', undefined), h.Style(themeStyle(dusk))], [
+  const view = (model: Model, h: HtmlBuilder<Message>) => h.div(part(h, 'root', undefined), [
     h.div([h.Style({ padding: '16px', display: 'flex', 'flex-direction': 'row', gap: '8px' })], [
       button({ label: 'Delete…', onClick: Message.Opened(), attributes: [h.Id('open')] }, h),
       h.input([h.Id('behind'), h.Placeholder('Behind the dialog')]),

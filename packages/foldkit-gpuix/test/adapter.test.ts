@@ -171,6 +171,27 @@ describe('fixes from the first real-GPUI run', () => {
     expect(app.gpui.ops().length - before).toBeLessThan(40)
   })
 
+  test('a button, an option, a heading are named by their text, as a browser names them, and renamed as it changes', async () => {
+    const { app } = await run({}, {
+      Model: Counter.Model, init: { count: 0 }, update: c => ({ count: c.count + 1 }),
+      view: (c, h) => h.div([], [
+        h.button([h.Id('save'), h.OnClick(Counter.Message.Clicked())], [c.count === 0 ? 'Save' : 'Saved']),
+        h.div([h.Id('fig'), h.Role('option')], [h.span([h.AriaHidden(true)], ['✓']), h.span([], [' Fig '])]),
+        h.h2([h.Id('title')], ['Settings ', h.span([], ['and more'])]),
+        h.button([h.Id('named'), h.AriaLabel('Close')], ['×']),
+        h.div([h.Id('plain')], ['Not a control']),
+      ]),
+    })
+    const label = (id: string) => app.gpui.node(app.document.getElementById(id)!.nativeId).props['aria-label']
+    expect(label('save')).toBe('Save')
+    expect(label('fig')).toBe('Fig')
+    expect(label('title')).toBe('Settings and more')
+    expect(label('named')).toBe('Close')
+    expect(label('plain')).toBeUndefined()
+    await app.click('Save')
+    expect(label('save')).toBe('Saved')
+  })
+
   test('a password field throws as it\'s mounted, naming the gap, before any of it reaches GPUI', async () => {
     app = mountHeadless()
     const { document } = app

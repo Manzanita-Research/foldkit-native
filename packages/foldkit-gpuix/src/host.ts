@@ -391,7 +391,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const own = element.getAttribute('tabindex')
     return own !== null ? !Number.isNaN(Number(own)) : isNaturallyFocusable(element)
   }
-  const labelText = (element: NativeElement): string | undefined => {
+  const labelText = (element: NativeElement, role: string | undefined): string | undefined => {
     const own = element.getAttribute('aria-label')
     if (own !== null) return own
     const by = element.getAttribute('aria-labelledby')
@@ -404,6 +404,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       const label = document.querySelector(`label[for="${id}"]`)
       if (label !== null) return label.textContent.trim()
     }
+    // A button, a tab, an option…: named by its text, as a browser names it.
+    if (role !== undefined && NAMED_BY_CONTENT.has(role)) {
+      const text = shownText(element).replace(/\s+/g, ' ').trim()
+      if (text !== '') return text
+    }
     return undefined
   }
   /** The props last sent per element, so an attribute that goes away is
@@ -413,7 +418,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const props = new Map<string, unknown>()
     const role = element.getAttribute('role') ?? implicitRole(element)
     if (role !== undefined) props.set('role', role)
-    const label = labelText(element)
+    const label = labelText(element, role)
     if (label !== undefined) props.set('aria-label', label)
     const description = element.getAttribute('aria-description')
     if (description !== null) props.set('aria-description', description)
@@ -423,7 +428,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     }
     // gpuix has no checked state for AccessKit yet; say it as the value.
     const checked = element.getAttribute('aria-checked')
-    if (checked !== null) props.set('aria-valuetext', checked === 'true' ? 'on' : 'off')
+    if (checked !== null) props.set('aria-valuetext', checked === 'true' ? 'on' : checked === 'mixed' ? 'mixed' : 'off')
     const level = element.getAttribute('aria-level')
     if (level !== null) props.set('aria-level', Number(level))
     const testId = element.getAttribute('data-testid') ?? element.getAttribute('id')
@@ -1272,6 +1277,14 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     text: node => {
       if (node.nativeId === 0) return
       mutations.setText(node.nativeId, textOf(node))
+      // The text may be a control's name (a button's label).
+      for (let at = node.parentElement; at !== null; at = at.parentElement) {
+        const role = at.getAttribute('role') ?? implicitRole(at)
+        if (role !== undefined && NAMED_BY_CONTENT.has(role)) {
+          if (at.nativeId !== 0) syncProps(at)
+          break
+        }
+      }
       schedule()
     },
     listening: (node, type, delta) => {
@@ -1457,6 +1470,24 @@ const treeOf = (renderer: NativeRenderer) => {
 }
 
 /** The role a browser gives an element without one, for AccessKit. */
+/** Roles named by their content when nothing else names them (WAI-ARIA's
+ *  "name from content"). */
+const NAMED_BY_CONTENT = new Set([
+  'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'option', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+  'treeitem', 'heading', 'cell', 'gridcell', 'columnheader', 'rowheader', 'tooltip',
+])
+
+/** The text a browser's name computation reads: not what's `aria-hidden` or
+ *  `hidden`. */
+const shownText = (node: NativeNode): string => {
+  if (node instanceof NativeText) return node.data
+  if (!(node instanceof NativeElement)) return ''
+  if (node.getAttribute('aria-hidden') === 'true' || node.hasAttribute('hidden')) return ''
+  let out = ''
+  for (const child of node.childNodes) out += shownText(child)
+  return out
+}
+
 const implicitRole = (element: NativeElement): string | undefined => {
   switch (element.localName) {
     case 'button': return 'button'

@@ -1031,7 +1031,9 @@ export const parseSelector = (source: string): Selector => {
     if (char === ',') { at++; list.push(complex); complex = []; combinator = ''; continue }
     if (char === '>') { at++; combinator = '>'; continue }
     if (char === '' ) break
+    const start = at
     complex.push({ compound: compound(), combinator })
+    if (at === start) throw new Error(`Unsupported selector token at ${at}: ${source}`)
     const before = at
     space()
     combinator = at > before && peek() !== ',' && peek() !== '>' ? ' ' : ''

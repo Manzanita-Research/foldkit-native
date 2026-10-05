@@ -442,9 +442,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const base = info(element).declared.base
     hitStyles.set(element, { display: base.get('display'), visibility: base.get('visibility'), pointer: base.get('pointer-events') })
     mutations.setStyle(element.nativeId, style)
-    // GPUI hit-tests an element with a hover or press style: it has to say
-    // where the pointer went, as a listening one does (TRACKING).
-    if ((style as { hover?: unknown }).hover !== undefined || (style as { active?: unknown }).active !== undefined) track(element)
+    // GPUI hit-tests an element with a hover or press style, and one that
+    // paints a fill (a background or a shadow; Metal), hiding what's under
+    // it from its own hit test: it has to say where the pointer went, as a
+    // listening one does (TRACKING).
+    const painted = style as { hover?: unknown; active?: unknown; backgroundColor?: unknown; background?: unknown; boxShadow?: unknown }
+    if ([painted.hover, painted.active, painted.backgroundColor, painted.background, painted.boxShadow].some(value => value !== undefined)) track(element)
     rehome(element, (style as { position?: string }).position)
     syncProps(element)
     for (const child of element.childNodes) {
@@ -1369,7 +1372,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     }
     if (!scrollable(element) || element.nativeId === 0) return
     const before = announced.get(element)
+    const known = offsets.get(element)
     const now = offsetOf(element)
+    // GPUI scrolled it: what's inside is where it will be drawn, at once.
+    if (known !== undefined) layout.scrolled(element.nativeId, now[0] - known[0], now[1] - known[1])
     if (before !== undefined && before[0] === now[0] && before[1] === now[1]) return
     announced.set(element, now)
     element.dispatchEvent(new NativeEvent('scroll'))
@@ -1415,10 +1421,17 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (read !== undefined) offsets.set(element, [read?.[0] ?? 0, read?.[1] ?? 0])
     return offsets.get(element) ?? [0, 0]
   }
+  /** Scrolls an area, and moves what the layout has inside it by what GPUI
+   *  scrolled (it clamps to the content, at once): a box read straight
+   *  after is where it's going to be drawn, as in a browser. */
   const scrollTo = (element: NativeElement, x: number, y: number) => {
+    const [fromX, fromY] = offsets.get(element) ?? offsetOf(element)
     renderer.scrollTo?.(element.nativeId, x, y)
-    offsets.set(element, [x, y])
-    announced.set(element, [x, y])
+    const read = renderer.getScrollOffset === undefined ? undefined : guard.ask('scroll', () => renderer.getScrollOffset!(element.nativeId))
+    const to: [number, number] = read === undefined || read === null ? [x, y] : [read[0] ?? 0, read[1] ?? 0]
+    offsets.set(element, to)
+    announced.set(element, to)
+    layout.scrolled(element.nativeId, to[0] - fromX, to[1] - fromY)
     layout.moved()
   }
   /** gpuix 0.10 reports a box from the content corner (moved by the left and

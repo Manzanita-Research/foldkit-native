@@ -18,7 +18,7 @@ The host (`src/host.ts`) turns that into what a browser fires:
 
 | GPUI sends | Unlike a browser | The host |
 |---|---|---|
-| `mouseEnter`, `mouseLeave`, no position | Exclusive: a parent "leaves" as the pointer goes onto a child that listens, and never hears about it again | Ignores them as hover. Every element GPUI hit-tests (it listens for something, or has a hover style), and the body under them all, reports its moves and its leaving. Each move is hit-tested against GPUI's last layout (`elementsFromPoint`), and the host fires the boundary events |
+| `mouseEnter`, `mouseLeave`, no position | Exclusive: a parent "leaves" as the pointer goes onto a child that listens, and never hears about it again | Ignores them as hover. Every element GPUI hit-tests (it listens for something, has a hover or press style, or paints a background or a shadow), and the body under them all, reports its moves and its leaving. Each move is hit-tested against GPUI's last layout (`elementsFromPoint`), and the host fires the boundary events |
 | `mouseDown`, then moves and `mouseUp` to the pressed element only | Implicit capture: nothing else hears the gesture | The moves and the release go to the element under the pointer, or to the one with pointer capture |
 | `click` to the pressed element, wherever the release was | Clicks a button the press was dragged off | The click goes to what the press and the release have in common |
 | `auxClick` for the right and middle buttons, before `mouseUp`; no `click` | `contextmenu` never came | `contextmenu` on the press (right button), `auxclick` after the release |

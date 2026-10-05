@@ -51,6 +51,8 @@ export type Theme = Readonly<{
   'size.control': number
   'focus.ring': number
   'elevation.overlay': string
+  'color.success': string
+  'color.warning': string
 }>
 
 export type TokenName = keyof Theme
@@ -75,6 +77,7 @@ export const dusk: Theme = {
   'color.accent': '#8b7cf6', 'color.accent-hover': '#9d90f8', 'color.accent-text': '#ffffff',
   'color.focus': '#b9b0ff', 'color.danger': '#f2727f', 'color.highlight': '#2f2b45', 'color.backdrop': '#08070bcc',
   'elevation.overlay': '0 18px 40px #00000099',
+  'color.success': '#4cc38a', 'color.warning': '#f0b45b',
 }
 
 export const paper: Theme = {
@@ -84,6 +87,7 @@ export const paper: Theme = {
   'color.accent': '#3d6df2', 'color.accent-hover': '#2f5ee0', 'color.accent-text': '#ffffff',
   'color.focus': '#3d6df2', 'color.danger': '#c93545', 'color.highlight': '#e7eefc', 'color.backdrop': '#24211c66',
   'elevation.overlay': '0 18px 40px #24211c33',
+  'color.success': '#1f8a5b', 'color.warning': '#b7791f',
 }
 
 /** A theme from a base and overrides: one accent, or everything. */
@@ -319,4 +323,30 @@ ${ui('popover', 'panel')}:focus-visible { border-color: ${t('color.focus')}; }
 ${ui('popover', 'title')} { font-size: ${t('font.size.md')}; font-weight: ${t('font.weight.strong')}; }
 ${ui('popover', 'description')} { font-size: ${t('font.size.sm')}; color: ${t('color.text-muted')}; }
 ${ui('popover', 'actions')} { display: flex; flex-direction: row; justify-content: flex-end; gap: ${t('space.2')}; }
+
+${ui('toast', 'viewport')} {
+  position: fixed; right: ${t('space.4')}; bottom: ${t('space.4')}; z-index: 50;
+  display: flex; flex-direction: column; gap: ${t('space.2')}; width: ${t('toast.width', '320px')};
+}
+${ui('toast', 'toast')} {
+  display: flex; flex-direction: row; align-items: flex-start; gap: ${t('space.3')}; padding: ${t('space.3')};
+  background-color: ${t('color.surface-raised')}; color: ${t('color.text')};
+  border: 1px solid ${t('color.border')}; border-radius: ${t('radius.panel')}; box-shadow: ${t('elevation.overlay')};
+}
+${ui('toast', 'indicator')} {
+  width: 8px; height: 8px; margin-top: 6px; margin-left: ${t('space.1')}; flex-shrink: 0; border-radius: ${t('radius.full')};
+  background-color: ${t('toast.info', t('color.accent'))};
+}
+${ui('toast', 'indicator')}[data-variant="success"] { background-color: ${t('toast.success', t('color.success'))}; }
+${ui('toast', 'indicator')}[data-variant="warning"] { background-color: ${t('toast.warning', t('color.warning'))}; }
+${ui('toast', 'indicator')}[data-variant="error"] { background-color: ${t('toast.error', t('color.danger'))}; }
+${ui('toast', 'text')} { display: flex; flex-direction: column; gap: 2px; flex-grow: 1; flex-shrink: 1; }
+${ui('toast', 'title')} { font-size: ${t('font.size.md')}; font-weight: ${t('font.weight.strong')}; }
+${ui('toast', 'description')} { font-size: ${t('font.size.sm')}; color: ${t('color.text-muted')}; }
+${ui('toast', 'dismiss')} {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: ${t('radius.full')}; color: ${t('color.text-muted')}; font-size: ${t('font.size.sm')}; cursor: pointer;
+}
+${ui('toast', 'dismiss')}:hover { background-color: ${t('color.highlight')}; color: ${t('color.text')}; }
+${ui('toast', 'dismiss')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
 `

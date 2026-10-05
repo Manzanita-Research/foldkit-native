@@ -349,6 +349,29 @@ describe.skipIf(!METAL)('platform Commands on real GPUI (Metal)', () => {
     }
   })
 
+  test('a box read straight after a scroll, before GPUI paints, is where GPUI then draws it', async () => {
+    const app = await open('scrolled')
+    try {
+      const log = app.byId('log')
+      const row = app.byId('row-10')
+      const before = row.getBoundingClientRect()
+      log.scrollTop = 100
+      const straight = row.getBoundingClientRect()
+      await app.settle()
+      const painted = row.getBoundingClientRect()
+      console.log('platform scrolled:', JSON.stringify({ before: before.y, straight: straight.y, painted: painted.y, scrollTop: log.scrollTop }))
+      expect(straight.y).toBe(before.y - 100)
+      expect(painted.y).toBe(straight.y)
+      // Past the end: GPUI clamps, and the box goes no further than it does.
+      log.scrollTop = 100000
+      const clamped = row.getBoundingClientRect()
+      await app.settle()
+      expect(clamped.y).toBe(row.getBoundingClientRect().y)
+    } finally {
+      app.close()
+    }
+  })
+
   test('ResizeObserver sees GPUI\'s layout; detectElementMovement resolves when a scroll moves the element', async () => {
     const app = await open('resize')
     try {

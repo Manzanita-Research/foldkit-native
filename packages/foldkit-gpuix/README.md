@@ -180,7 +180,7 @@ painted since a change):
 
 | | Returns |
 |---|---|
-| `getBoundingClientRect` and friends | The box from the last layout GPUI gave. An element that wasn't in it (added since, or never painted) gets zeros, as an unrendered element does in a browser |
+| `getBoundingClientRect` and friends | The box from the last layout GPUI gave. An element that wasn't in it (added since, or never painted) gets zeros, as an unrendered element does in a browser. After a scroll (the host's own, or one GPUI reports), what's inside the area is moved by what it scrolled at once, clipped to the area, so a box read straight after is where GPUI then draws it (Metal) |
 | `elementsFromPoint` | Hits in the last layout. Elements added since aren't hit; elements removed since are left out |
 | `scrollIntoView` | Scrolls by the last layout; with none, asks GPUI to (a command: it never waits) |
 | `scrollTop` | The last offset GPUI gave, or the one the app last set |

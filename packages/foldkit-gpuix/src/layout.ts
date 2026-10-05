@@ -92,9 +92,9 @@ export const createGuard = (now: () => number = () => performance.now()) => {
 }
 export type Guard = ReturnType<typeof createGuard>
 
-/** One painted element: its border box, and the box its ancestors clip it
- *  to (null: unclipped). */
-type Painted = { id: number; box: Box; clip: Box | null }
+/** One painted element: its border box, the box its ancestors clip it to
+ *  (null: unclipped), and which ancestors those are. */
+type Painted = { id: number; box: Box; clip: Box | null; clippers: ReadonlyArray<number> }
 
 /** A layout this old is read again when asked for, moved or not. */
 export const MAX_AGE_MS = 500
@@ -125,6 +125,8 @@ export const createLayout = (options: LayoutOptions) => {
   let readAt = -Infinity
   let painted: Array<Painted> = []
   let boxes = new Map<number, Box>()
+  /** Each painted element's parent in GPUI's tree. */
+  let parents = new Map<number, number>()
   /** Frames GPUI has drawn (`drew`), the frame of the last read, and the last
    *  frame whose layout may differ from what was read. */
   let frame = 0
@@ -142,25 +144,32 @@ export const createLayout = (options: LayoutOptions) => {
     const root = JSON.parse(json) as TreeNode | null
     const order: Array<Painted> = []
     const byId = new Map<number, Box>()
+    const parentOf = new Map<number, number>()
     // GPUI paints an anchored element after everything else, unclipped.
     const deferred: Array<TreeNode> = []
-    const walk = (node: TreeNode, clip: Box | null, top: boolean) => {
+    const walk = (node: TreeNode, clip: Box | null, clippers: ReadonlyArray<number>, top: boolean) => {
       if (node.type === 'anchored' && !top) {
         deferred.push(node)
         return
       }
       const box = node.bounds === undefined ? null : options.borderBox(node.id, node.bounds)
       if (box !== null) {
-        order.push({ id: node.id, box, clip })
+        order.push({ id: node.id, box, clip, clippers })
         byId.set(node.id, box)
       }
-      const inner = box !== null && options.clips(node.id) ? intersect(clip, box) : clip
-      for (const child of node.children ?? []) walk(child, inner, false)
+      const clipping = box !== null && options.clips(node.id)
+      const inner = clipping ? intersect(clip, box) : clip
+      const within = clipping ? [...clippers, node.id] : clippers
+      for (const child of node.children ?? []) {
+        parentOf.set(child.id, node.id)
+        walk(child, inner, within, false)
+      }
     }
-    if (root !== null) walk(root, null, true)
-    for (let at = 0; at < deferred.length; at++) walk(deferred[at]!, null, true)
+    if (root !== null) walk(root, null, [], true)
+    for (let at = 0; at < deferred.length; at++) walk(deferred[at]!, null, [], true)
     painted = order
     boxes = byId
+    parents = parentOf
   }
   /** The layout as GPUI last painted it: read now if it may have changed
    *  since the last read and GPUI has drawn since (and is answering). */
@@ -173,6 +182,22 @@ export const createLayout = (options: LayoutOptions) => {
      *  next few frames (GPUI paints a change within one or two). */
     moved: () => {
       staleThrough = frame + 2
+    },
+    /** A scroll area moved its content by (dx, dy), and GPUI hasn't painted
+     *  it yet: what's inside it is where it will be, at once, as a browser
+     *  answers after a scroll. The next read replaces it with GPUI's. */
+    scrolled: (area: number, dx: number, dy: number) => {
+      if (dx === 0 && dy === 0) return
+      const inside = (id: number) => {
+        for (let at = parents.get(id); at !== undefined; at = parents.get(at)) if (at === area) return true
+        return false
+      }
+      const moved = painted.filter(entry => inside(entry.id))
+      for (const entry of moved) {
+        entry.box = { ...entry.box, x: entry.box.x + dx, y: entry.box.y + dy }
+        boxes.set(entry.id, entry.box)
+      }
+      for (const entry of moved) entry.clip = entry.clippers.reduce<Box | null>((clip, id) => intersect(clip, boxes.get(id)!), null)
     },
     /** GPUI drew a frame. */
     drew: () => {

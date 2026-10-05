@@ -592,6 +592,41 @@ describe.skipIf(!METAL)('real GPUI (Metal): what its dispatch decides', () => {
     return { metal, log, outer, inner, btn, r: metal.renderer, take: () => log.splice(0) }
   }
 
+  test('hover over a child that paints a fill and listens for nothing: GPUI hides the parent there, the host doesn\'t', async () => {
+    const metal = await openMetal('events-fill', { width: 400, height: 300 })
+    try {
+      const { document } = metal
+      const log: Array<string> = []
+      const parent = document.createElement('div')
+      parent.setAttribute('style', 'position: absolute; left: 20px; top: 20px; width: 300px; height: 200px; padding: 20px; display: flex; flex-direction: column; gap: 8px')
+      for (const type of ['mouseenter', 'mouseleave']) parent.addEventListener(type, () => log.push(type))
+      // A surface (Toast's toasts are this), a shadowed box, and plain text.
+      for (const style of ['height: 40px; background-color: #333333', 'height: 40px; box-shadow: 0 2px 4px #00000066', 'height: 40px']) {
+        const child = document.createElement('div')
+        child.setAttribute('style', style)
+        child.appendChild(document.createTextNode('child'))
+        parent.appendChild(child)
+      }
+      document.body.appendChild(parent)
+      await metal.settle()
+      const step = async (x: number, y: number) => {
+        metal.renderer.nativeSimulateMouseMove(x, y)
+        await metal.settle()
+        return log.splice(0)
+      }
+      // Straight onto each child from outside: the parent's entered.
+      for (const y of [60, 108, 156]) {
+        await step(5, 5)
+        expect(await step(100, y)).toEqual(['mouseenter'])
+        // Across the parent's own gap to the next child: still in it.
+        expect(await step(100, y + 44)).toEqual([])
+      }
+      expect(await step(5, 5)).toEqual(['mouseleave'])
+    } finally {
+      metal.close()
+    }
+  })
+
   test('hover: onto a child and back, out, and straight in (Chrome\'s sequence)', async () => {
     const { metal, r, take } = await open(MOUSE_BOUNDARY)
     try {

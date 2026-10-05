@@ -19,6 +19,8 @@ type App<M, Msg> = {
   init: M
   update: (model: M, message: Msg) => Update.Return<M, Msg>
   view: (model: M, h: never) => unknown
+  /** A component with a clock (Toast) lifts its Subscription here. */
+  subscriptions?: unknown
 }
 
 /** The app's view inside the theme's tokens, filling the window. */
@@ -39,6 +41,7 @@ const start = async <M, Msg>(container: HTMLElement, app: App<M, Msg>, theme: Th
       return app.view(model, h)
     }),
     container,
+    ...(app.subscriptions === undefined ? {} : { subscriptions: app.subscriptions }),
   } as never))
   return () => latest
 }

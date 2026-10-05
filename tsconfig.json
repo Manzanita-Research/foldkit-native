@@ -36,6 +36,7 @@
     "src",
     "examples",
     "scripts",
+    "bench",
     "test",
     "packages"
   ]

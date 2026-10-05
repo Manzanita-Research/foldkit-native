@@ -1,13 +1,12 @@
-// Form in FoldKit Native: the real app, its CSS and the mirror, driven by
-// GPUI's input. FoldKit's own tests (story.test.ts, scene.test.ts) cover the
-// app's logic and view; these cover it running natively. Both async Commands
-// are real: the email check and the submit each wait 500 ms, then the submit
-// flips a coin with Effect's Random, which reads Math.random, so the tests
-// stub Math.random to pick the outcome.
+// Form in FoldKit Native: the real app and its CSS on FoldKit on gpuix (its
+// `meta.renderer`; FOLDKIT_NATIVE_RENDERER=mirror runs them on the mirror, as
+// CI does too), driven by GPUI's input. FoldKit's own tests (story.test.ts,
+// scene.test.ts) cover the app's logic and view; these cover it running
+// natively. Both async Commands are real: the email check and the submit each
+// wait 500 ms, then the submit flips a coin with Effect's Random, which reads
+// Math.random, so the tests stub Math.random to pick the outcome.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import { attachDom } from '../../src/index.ts'
-import { type Mounted, mountFake } from '../../test/support/mount.ts'
 import { loadExample } from '../support/example.ts'
 import { METAL, type Headless, type Metal, openHeadless, openMetal } from '../support/harness.ts'
 import { type Headless as GpuixHeadless, mountHeadless as mountGpuixHeadless, openMetal as openGpuixMetal } from '../../packages/foldkit-gpuix/test/support.ts'
@@ -59,11 +58,11 @@ describe('headless', () => {
   }
   /** A text's colour in GPUI: it's on the native text node. */
   const textColour = (text: string) => {
-    const walker = app.document.createTreeWalker(app.document.body, 4 /* NodeFilter.SHOW_TEXT */)
-    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-      if (node.textContent === text) return app.nativeOf(node).style['color']
-    }
-    throw new Error(`no text "${text}"`)
+    const find = (node: Node): Node | undefined => node.nodeType === 3 && node.textContent === text
+      ? node : Array.from(node.childNodes).map(find).find(found => found !== undefined)
+    const found = find(app.document.body)
+    if (found === undefined) throw new Error(`no text "${text}"`)
+    return app.nativeOf(found).style['color']
   }
 
   test('draws the form, with Tailwind styles reaching GPUI', async () => {
@@ -205,16 +204,13 @@ describe('focus, FoldKit on gpuix (headless)', () => {
 })
 
 describe('typing, measured', () => {
-  let mounted: Mounted
-  afterEach(() => mounted?.close())
+  let app: Headless
+  afterEach(() => app?.close())
 
-  test('a keystroke in GPUI → FoldKit update → DOM → GPUI sync', async () => {
-    const example = await loadExample('form')
+  test('a keystroke in GPUI → FoldKit update → the document → GPUI sync', async () => {
     const syncs: Array<{ at: number; syncMs: number; mutations: number }> = []
-    mounted = mountFake({ css: example.css, onSynced: timings => syncs.push({ at: performance.now(), ...timings }) })
-    example.start(mounted.container)
-    await mounted.settle()
-    const name = mounted.document.getElementById('name')! as unknown as Node
+    app = await openHeadless('form', { onSynced: timings => syncs.push({ at: performance.now(), ...timings }) })
+    const name = app.document.getElementById('name')!
 
     const samples: Array<{ toSyncMs: number; syncMs: number }> = []
     let value = ''
@@ -222,10 +218,10 @@ describe('typing, measured', () => {
       value += char
       syncs.length = 0
       const sent = performance.now()
-      mounted.send(name, { eventType: 'change', value } as never)
+      app.send(name, { eventType: 'change', value })
       while (syncs.length === 0) await sleep(0)
       samples.push({ toSyncMs: syncs[0]!.at - sent, syncMs: syncs[0]!.syncMs })
-      await mounted.settle()
+      await app.settle()
     }
     const median = (values: Array<number>) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]!
     const report = {
@@ -234,7 +230,7 @@ describe('typing, measured', () => {
       syncMs: { median: +median(samples.map(s => s.syncMs)).toFixed(2), max: +Math.max(...samples.map(s => s.syncMs)).toFixed(2) },
     }
     console.log('form typing (headless):', JSON.stringify(report))
-    expect((mounted.document.getElementById('name') as HTMLInputElement).value).toBe('Alice Liddell')
+    expect((app.document.getElementById('name') as HTMLInputElement).value).toBe('Alice Liddell')
     // Loose, to catch "broken" on noisy CI machines: a frame is 16 ms.
     expect(report.keystrokeToSyncMs.median).toBeLessThan(50)
   })
@@ -375,55 +371,43 @@ describe.skipIf(!METAL)('focus, FoldKit on gpuix (Metal, offscreen)', () => {
 })
 
 describe.skipIf(!METAL)('typing on Metal, measured', () => {
-  test('a real keystroke → DOM → GPUI sync → painted frame', async () => {
-    const example = await loadExample('form')
-    const { TestRenderer } = await import('@gpuix/native/testing')
-    const renderer = new TestRenderer({ width: example.meta.width, height: example.meta.height })
+  let app: Metal
+  afterEach(() => app?.close())
+
+  test('a real keystroke → the document → GPUI sync → painted frame', async () => {
     const syncs: Array<{ at: number; syncMs: number }> = []
-    const dom = attachDom(renderer, { css: example.css, onSynced: timings => syncs.push({ at: performance.now(), ...timings }) })
-    try {
-      example.start(dom.container)
-      for (let i = 0; i < 3; i++) {
-        await dom.window.happyDOM.waitUntilComplete()
+    app = await openMetal('form', undefined, { onSynced: timings => syncs.push({ at: performance.now(), ...timings }) })
+    await app.click(app.document.getElementById('name')!)
+
+    const samples: Array<{ toSyncMs: number; syncMs: number; frameMs: number }> = []
+    for (const key of 'alice liddell'.split('').map(char => (char === ' ' ? 'space' : char))) {
+      syncs.length = 0
+      const pressed = performance.now()
+      app.renderer.simulateKeystrokes(key)
+      // GPUI's input reaches the renderer as its queued native events.
+      while (syncs.length === 0 && performance.now() - pressed < 1000) {
+        app.renderer.dispatchNativeEvents()
         await sleep(0)
       }
-      renderer.flush()
-      const [name] = renderer.findByType('input')
-      const box = renderer.getElementBounds(name!.id)!
-      renderer.nativeSimulateClick(box.x + box.width / 2, box.y + box.height / 2)
-      await dom.window.happyDOM.waitUntilComplete()
-      renderer.flush()
-
-      const samples: Array<{ toSyncMs: number; syncMs: number; frameMs: number }> = []
-      for (const key of 'alice liddell'.split('').map(char => (char === ' ' ? 'space' : char))) {
-        syncs.length = 0
-        const pressed = performance.now()
-        renderer.simulateKeystrokes(key)
-        while (syncs.length === 0 && performance.now() - pressed < 1000) await sleep(0)
-        const synced = syncs[0]
-        if (synced === undefined) break
-        renderer.flush()
-        samples.push({ toSyncMs: synced.at - pressed, syncMs: synced.syncMs, frameMs: performance.now() - synced.at })
-        await dom.window.happyDOM.waitUntilComplete()
-      }
-      const input = dom.window.document.getElementById('name') as unknown as HTMLInputElement
-      const median = (values: Array<number>) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]!
-      const stat = (pick: (s: (typeof samples)[number]) => number) =>
-        ({ median: +median(samples.map(pick)).toFixed(2), max: +Math.max(...samples.map(pick)).toFixed(2) })
-      const report = {
-        keystrokes: samples.length,
-        keystrokeToSyncMs: stat(s => s.toSyncMs),
-        syncMs: stat(s => s.syncMs),
-        syncToFrameMs: stat(s => s.frameMs),
-        value: input.value,
-      }
-      console.log('form typing (Metal):', JSON.stringify(report))
-      expect(input.value).toBe('alice liddell')
-      expect(report.keystrokeToSyncMs.median).toBeLessThan(50)
-    } finally {
-      dom.detach()
-      await dom.window.happyDOM.abort()
-      dom.window.close()
+      const synced = syncs[0]
+      if (synced === undefined) break
+      app.renderer.flush()
+      samples.push({ toSyncMs: synced.at - pressed, syncMs: synced.syncMs, frameMs: performance.now() - synced.at })
+      await app.settle()
     }
+    const input = app.document.getElementById('name') as unknown as HTMLInputElement
+    const median = (values: Array<number>) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]!
+    const stat = (pick: (s: (typeof samples)[number]) => number) =>
+      ({ median: +median(samples.map(pick)).toFixed(2), max: +Math.max(...samples.map(pick)).toFixed(2) })
+    const report = {
+      keystrokes: samples.length,
+      keystrokeToSyncMs: stat(s => s.toSyncMs),
+      syncMs: stat(s => s.syncMs),
+      syncToFrameMs: stat(s => s.frameMs),
+      value: input.value,
+    }
+    console.log('form typing (Metal):', JSON.stringify(report))
+    expect(input.value).toBe('alice liddell')
+    expect(report.keystrokeToSyncMs.median).toBeLessThan(50)
   })
 })

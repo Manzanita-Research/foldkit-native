@@ -728,3 +728,21 @@ describe('`document` before a window is attached', () => {
     expect(keys).toEqual(['a'])
   })
 })
+
+describe('links', () => {
+  test('href resolves against the location and follows pushState, as a browser reflects it; target is its attribute', async () => {
+    app = mountHeadless()
+    const link = app.document.createElement('a')
+    expect(link.href).toBe('')
+    link.setAttribute('href', '/cart?x=1')
+    expect(link.href).toBe('http://foldkit.native/cart?x=1')
+    app.window.history.pushState(null, '', '/shop/')
+    link.setAttribute('href', 'checkout')
+    expect(link.href).toBe('http://foldkit.native/shop/checkout')
+    link.href = 'https://example.com/'
+    expect(link.getAttribute('href')).toBe('https://example.com/')
+    expect(link.target).toBe('')
+    link.target = '_blank'
+    expect(link.getAttribute('target')).toBe('_blank')
+  })
+})

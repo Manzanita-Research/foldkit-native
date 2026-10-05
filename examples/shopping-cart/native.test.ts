@@ -1,9 +1,10 @@
-// Shopping Cart in FoldKit Native: the real app, its CSS and the mirror,
-// driven by GPUI's input. FoldKit's own tests (story.test.ts, scene.test.ts
-// and page/*.test.ts) cover the app's logic and views; these cover it running
-// natively: pages changed by clicking FoldKit's links in GPUI, a cart that
-// survives the page changes, hover colours. No network: the app makes no
-// requests.
+// Shopping Cart in FoldKit Native: the real app and its CSS on FoldKit on
+// gpuix (its `meta.renderer`; FOLDKIT_NATIVE_RENDERER=mirror runs them on the
+// mirror, as CI does too), driven by GPUI's input. FoldKit's own tests
+// (story.test.ts, scene.test.ts and page/*.test.ts) cover the app's logic and
+// views; these cover it running natively: pages changed by clicking FoldKit's
+// links in GPUI, a cart that survives the page changes, hover colours. No
+// network: the app makes no requests.
 import { afterEach, describe, expect, test } from 'bun:test'
 
 import { METAL, type Headless, type Metal, openHeadless, openMetal } from '../support/harness.ts'
@@ -11,7 +12,7 @@ import { METAL, type Headless, type Metal, openHeadless, openMetal } from '../su
 const NAV = ['Products', 'Cart', 'Checkout']
 const PRODUCTS = ['Apple', 'Banana', 'Orange', 'Bread', 'Milk', 'Eggs']
 
-/** Where FoldKit's routing has the app: happy-dom's location. */
+/** Where FoldKit's routing has the app: the window's location. */
 const path = (app: { document: Document }) => {
   const { pathname, search } = app.document.defaultView!.location
   return pathname + search
@@ -130,6 +131,10 @@ describe('headless', () => {
     await app.settle()
     expect(path(app)).toBe('/cart')
     expect(app.texts()).toContain('Your cart is empty')
+    app.document.defaultView!.history.forward()
+    for (let i = 0; i < 20 && path(app) !== '/checkout'; i++) await new Promise(resolve => setTimeout(resolve, 5))
+    await app.settle()
+    expect(path(app)).toBe('/checkout')
   })
 })
 

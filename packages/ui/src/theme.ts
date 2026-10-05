@@ -230,4 +230,43 @@ ${ui('checkbox', 'label')} { cursor: pointer; }
 ${ui('checkbox', 'label')}[data-disabled] { color: ${t('color.text-muted')}; cursor: default; }
 ${ui('checkbox', 'label')}[data-readonly] { cursor: default; }
 ${ui('checkbox', 'description')} { font-size: ${t('font.size.sm')}; color: ${t('color.text-muted')}; }
+
+${ui('radio-group')} { display: flex; flex-direction: column; gap: ${t('space.2')}; }
+${ui('radio-group')}[data-orientation="horizontal"] { flex-direction: row; gap: ${t('space.4')}; }
+${ui('radio-group', 'item')} { display: flex; flex-direction: row; align-items: flex-start; gap: ${t('space.2')}; }
+${ui('radio-group', 'radio')} {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 18px; height: 18px; margin-top: 1px; padding: 0; border-radius: ${t('radius.full')};
+  background-color: ${t('radio.background', t('color.surface'))}; border: 1px solid ${t('radio.border', t('color.border-strong'))}; cursor: pointer;
+}
+${ui('radio-group', 'radio')}${live}:hover { border-color: ${t('radio.border-hover', t('color.text-muted'))}; }
+${ui('radio-group', 'radio')}[data-checked] { background-color: ${t('radio.checked', t('color.accent'))}; border-color: ${t('radio.checked', t('color.accent'))}; }
+${ui('radio-group', 'radio')}[data-checked]${live}:hover { background-color: ${t('radio.checked-hover', t('color.accent-hover'))}; border-color: ${t('radio.checked-hover', t('color.accent-hover'))}; }
+${ui('radio-group', 'radio')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+${ui('radio-group', 'radio')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; cursor: default; }
+${ui('radio-group', 'radio')}[data-readonly] { cursor: default; }
+${ui('radio-group', 'indicator')} { width: 8px; height: 8px; border-radius: ${t('radius.full')}; }
+${ui('radio-group', 'indicator')}[data-checked] { background-color: ${t('radio.dot', t('color.accent-text'))}; }
+${ui('radio-group', 'text')} { display: flex; flex-direction: column; gap: 2px; }
+${ui('radio-group', 'label')} { cursor: pointer; }
+${ui('radio-group', 'label')}[data-disabled] { color: ${t('color.text-muted')}; cursor: default; }
+${ui('radio-group', 'label')}[data-readonly] { cursor: default; }
+${ui('radio-group', 'description')} { font-size: ${t('font.size.sm')}; color: ${t('color.text-muted')}; }
+
+${ui('tabs')} { display: flex; flex-direction: column; gap: ${t('space.3')}; }
+${ui('tabs')}[data-orientation="vertical"] { flex-direction: row; gap: ${t('space.4')}; }
+${ui('tabs', 'list')} { display: flex; flex-direction: row; gap: ${t('space.1')}; border-bottom: 1px solid ${t('color.border')}; }
+${ui('tabs', 'list')}[data-orientation="vertical"] { flex-direction: column; border-bottom: 0; border-right: 1px solid ${t('color.border')}; padding-right: ${t('space.1')}; }
+${ui('tabs', 'tab')} {
+  display: flex; align-items: center; height: ${t('size.control')}; padding: 0 ${t('space.3')};
+  background-color: ${t('tabs.tab', t('color.canvas'))}; color: ${t('color.text-muted')}; font-size: ${t('font.size.md')};
+  border: 0; border-bottom: 2px solid ${t('tabs.tab', t('color.canvas'))}; border-radius: 6px 6px 0 0; cursor: pointer;
+}
+${ui('tabs', 'tab')}[data-orientation="vertical"] { border-bottom: 0; border-right: 2px solid ${t('tabs.tab', t('color.canvas'))}; border-radius: 6px 0 0 6px; }
+${ui('tabs', 'tab')}${live}:hover { color: ${t('color.text')}; }
+${ui('tabs', 'tab')}[data-selected] { color: ${t('color.text')}; font-weight: ${t('font.weight.strong')}; border-color: ${t('tabs.indicator', t('color.accent'))}; }
+${ui('tabs', 'tab')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+${ui('tabs', 'tab')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; cursor: default; }
+${ui('tabs', 'panel')} { display: flex; flex-direction: column; gap: ${t('space.2')}; border-radius: ${t('radius.control')}; }
+${ui('tabs', 'panel')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
 `

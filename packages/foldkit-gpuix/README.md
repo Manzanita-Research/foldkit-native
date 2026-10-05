@@ -121,7 +121,7 @@ what a browser's does, or is absent or says so. None is a silent stand-in.
 | `document.elementsFromPoint`, `elementFromPoint` | **Behaves, from the last layout GPUI gave.** Topmost first, as GPUI paints: children over parents, later siblings over earlier, a box re-homed under its containing block over that block's other children, anchored elements over everything. Skips `pointer-events: none` (inherited), `visibility: hidden` and `display: none`. A scroll area or `overflow: hidden` clips what's inside it. Then `<html>`. Checked against GPUI's own hit test on Metal | @foldkit/ui's drag and drop finds the drop target with it |
 | `scrollIntoView`, keyboard scrolling | **Behaves, from the last layout GPUI gave**: the nearest scroll area moves until the element shows, placed as `block` says (`start` with no options, as in a browser; `center`, `end`, `nearest`). With no layout for the element or its area, GPUI's own `scrollIntoView` | |
 | `scrollTop`, `scrollLeft` | **Behaves.** GPUI's offset; the last one known while GPUI isn't answering | |
-| Pointer and mouse events | **Behave for a press and its gesture.** `pointerdown`, `mousedown`, then each move and the release, pointer event first, on the pressed element, bubbling to `document` and `window`. While a button's held, `mouseover`/`enter` and `out`/`leave` follow the element under the pointer (from the layout). A pressed element the app removes mid-gesture keeps hearing it (dispatched on the body). **Missing:** `setPointerCapture`, and moves with no button held reach `document` only through an element that listens for them | @foldkit/ui's drag and drop listens on `document`; Pixel Art paints the cells a drag enters |
+| Pointer, mouse and wheel events | **Behave, as [EVENTS.md](EVENTS.md) has them.** The host hit-tests every move against the layout, so hover, a press's moves and its release, and the click go where a browser sends them: boundary events in Chrome's order, no `mouseleave` on a parent as the pointer goes onto its child, a press dragged off a button doesn't click it. `contextmenu` and `auxclick` for the other buttons, one `wheel` under the pointer and `scroll` only where GPUI scrolled, `setPointerCapture`. Listeners on `document` and `window` hear everything. **Can't:** cancel the wheel (GPUI has already scrolled), or keep focus with a prevented `mousedown` (focus moves on the click) | @foldkit/ui's drag and drop, menus and hover intent; Pixel Art paints the cells a drag enters |
 
 ## Geometry
 
@@ -322,15 +322,20 @@ upstream asks in the M0 memo.
   shadow and no background of its own gets the solid colour of the box it
   sits on (what shows through in CSS). Over a gradient or a see-through
   backdrop it gets nothing, and the ring fills it.
-- **A press goes only to what was pressed.** GPUI sends a press's moves and
-  release only to the pressed element, and no enter or leave to anything
-  else while the button's held. So an element listening for a press listens
-  natively for its moves and release too. Hover during a press is
-  hit-tested from the layout, and GPUI's late copies of what the host
-  already said are dropped. snabbdom takes an element's listeners off as it
+- **Hover is exclusive, and a press goes only to what was pressed.** GPUI
+  tells only the topmost listening element that the pointer entered or left
+  it (so a parent "left" as the pointer went onto a listening child), and
+  sends a press's moves and release only to the pressed element. Every
+  element GPUI hit-tests reports its moves and leaving to the host, which
+  hit-tests them against the layout and fires what a browser would
+  ([EVENTS.md](EVENTS.md)). snabbdom takes an element's listeners off as it
   removes it, so the pressed element keeps its gesture listeners until the
   release. If the app removes it mid-gesture, GPUI's element is held,
   unseen (`opacity: 0`, `pointer-events: none`), until the release.
+- **A click goes to what was pressed, wherever the release was;** the
+  right and middle buttons come as `auxClick`, before the release; the
+  wheel (`scroll`) goes to every listening element under the pointer. The
+  host retargets each as a browser does ([EVENTS.md](EVENTS.md)).
 - **Containing blocks.** Taffy positions an `absolute` box against its
   parent, but CSS uses the nearest positioned ancestor, or the window. The
   host draws such a box under its containing block in GPUI's tree (last, so

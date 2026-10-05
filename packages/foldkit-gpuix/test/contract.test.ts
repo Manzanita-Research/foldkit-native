@@ -12,6 +12,9 @@
 //   [0, 0] for one at rest, and clamped to the content.
 // - A scroll area's own reported box moves by its own scroll offset; the
 //   adapter undoes that, so getBoundingClientRect stays where it's drawn.
+// - A box's reported corner is its content corner moved back as its content
+//   is aligned: by half the padding on an axis it's centred on, by all of it
+//   at the end.
 import { describe, expect, test } from 'bun:test'
 import { Schema } from 'effect'
 import type { Update } from 'foldkit'
@@ -246,5 +249,53 @@ describe.skipIf(!METAL)('the fake GPUI agrees with real GPUI (Metal)', () => {
     expect(seen.real.box).toEqual(seen.real.atRest)
     expect(seen.real.raw!.y).toBe(seen.real.atRest.y - 100)
     expect(seen.fake).toEqual(seen.real)
+  })
+
+  test('a padded box\'s reported corner moves with its alignment; the document\'s box is where it\'s drawn', async () => {
+    const CASES: Readonly<Record<string, string>> = {
+      plain: '', 'justify-center': 'justify-content: center;', 'justify-end': 'justify-content: flex-end;',
+      'justify-around': 'justify-content: space-around;', 'justify-evenly': 'justify-content: space-evenly;',
+      'align-center': 'align-items: center;', 'both-center': 'padding: 6px 16px; align-items: center; justify-content: center;',
+      'column-center': 'flex-direction: column; align-items: center;', 'column-end': 'flex-direction: column; align-items: flex-end; justify-content: flex-end; height: 60px;',
+    }
+    const css = Object.entries(CASES).map(([id, rule]) => `#${id} { display: flex; padding: 0 16px; height: 36px; width: 120px; border: 1px solid #888888; ${rule} }`).join('\n') +
+      '\n.boxes { display: flex; flex-direction: column; gap: 4px; padding: 20px; align-items: flex-start; }'
+    const build = (document: { createElement: (tag: string) => never; createTextNode: (text: string) => never }) => {
+      const boxes = document.createElement('div') as unknown as { setAttribute: (n: string, v: string) => void; appendChild: (c: unknown) => void }
+      boxes.setAttribute('class', 'boxes')
+      for (const id of Object.keys(CASES)) {
+        const box = document.createElement('div') as unknown as { setAttribute: (n: string, v: string) => void; appendChild: (c: unknown) => void }
+        box.setAttribute('id', id)
+        box.appendChild(document.createTextNode('Share'))
+        boxes.appendChild(box)
+      }
+      return boxes
+    }
+    const real = await openMetal('contract-aligned', { width: 400, height: 520 }, { css })
+    const fake = mountHeadless({ css, viewport: { width: 400, height: 520 } })
+    try {
+      real.container.appendChild(build(real.document as never) as never)
+      fake.container.appendChild(build(fake.document as never) as never)
+      await real.settle()
+      await fake.settle()
+      const out: Record<string, unknown> = {}
+      for (const id of Object.keys(CASES)) {
+        const element = real.document.getElementById(id)!
+        const box = element.getBoundingClientRect()
+        // Drawn at the column's padding, 20 px in, whatever its alignment.
+        expect(box.x).toBe(20)
+        expect(real.document.elementsFromPoint(21, box.y + 2)[0]).toBe(element)
+        // The fake reports what real GPUI does for the same layout.
+        const twin = fake.document.getElementById(id)!
+        fake.gpui.setBounds(twin.nativeId, { x: box.x, y: box.y, width: box.width, height: box.height })
+        const raw = real.renderer.getElementBounds(element.nativeId)!
+        expect(fake.gpui.renderer.getElementBounds!(twin.nativeId)).toEqual({ x: raw.x, y: raw.y, width: raw.width, height: raw.height })
+        out[id] = { raw: [raw.x, raw.y], box: [box.x, box.y] }
+      }
+      console.log('contract aligned:', JSON.stringify(out))
+    } finally {
+      real.close()
+      fake.close()
+    }
   })
 })

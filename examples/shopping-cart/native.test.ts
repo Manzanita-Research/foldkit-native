@@ -29,7 +29,7 @@ const row = (app: Headless, name: string) => {
 const clickInRow = async (app: Headless, name: string, text: string) => {
   const button = Array.from(row(app, name).querySelectorAll('button')).find(b => b.textContent === text)
   if (button === undefined) throw new Error(`no "${text}" in ${name}'s row`)
-  expect(app.mounted.send(button, { eventType: 'click', x: 1, y: 1, button: 0, clickCount: 1 })).toBe(true)
+  expect(app.send(button, { eventType: 'click', x: 1, y: 1, button: 0, clickCount: 1 })).toBe(true)
   await app.settle()
 }
 
@@ -47,15 +47,15 @@ describe('headless', () => {
 
     // The page you're on is the darker link (bg-blue-700) in the blue bar (bg-blue-500).
     const [products, cart] = Array.from(app.document.querySelectorAll('nav a'))
-    expect(app.mounted.nativeOf(app.document.querySelector('nav')!).style).toMatchObject({ backgroundColor: '#3080ff' })
-    expect(app.mounted.nativeOf(products!).style).toMatchObject({ backgroundColor: '#1447e6', hover: { backgroundColor: '#155dfc' } })
-    expect(app.mounted.nativeOf(cart!).style['backgroundColor']).toBeUndefined()
+    expect(app.nativeOf(app.document.querySelector('nav')!).style).toMatchObject({ backgroundColor: '#3080ff' })
+    expect(app.nativeOf(products!).style).toMatchObject({ backgroundColor: '#1447e6', hover: { backgroundColor: '#155dfc' } })
+    expect(app.nativeOf(cart!).style['backgroundColor']).toBeUndefined()
     // bg-blue-500 hover:bg-blue-600 rounded-lg: Tailwind 4 → styles.native.css → GPUI.
     expect(app.native('Add to Cart').style).toMatchObject({
       backgroundColor: '#3080ff', borderTopLeftRadius: 8, paddingLeft: 16, hover: { backgroundColor: '#155dfc' },
     })
     // Each product row: a 1px border (Tailwind's `border`, the text colour) and hover:bg-gray-50.
-    expect(app.mounted.nativeOf(row(app, 'Apple')).style).toMatchObject({
+    expect(app.nativeOf(row(app, 'Apple')).style).toMatchObject({
       display: 'flex', justifyContent: 'space-between', borderTopWidth: 1, borderColor: '#000000',
       hover: { backgroundColor: '#f9fafb' },
     })

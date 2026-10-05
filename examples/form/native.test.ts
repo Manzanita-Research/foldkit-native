@@ -51,17 +51,17 @@ describe('headless', () => {
   /** The field by id. FoldKit labels fields with `<label for>`, which the
    *  harness's text lookup doesn't follow, so the tests name them by id. */
   const field = (id: string) => app.document.getElementById(id)!
-  const nativeField = (id: string) => app.mounted.nativeOf(field(id) as unknown as Node)
+  const nativeField = (id: string) => app.nativeOf(field(id) as unknown as Node)
   /** Typing, as gpuix's input reports it: the field's whole new value. */
   const type = async (id: string, value: string) => {
-    expect(app.mounted.send(field(id) as unknown as Node, { eventType: 'change', value } as never)).toBe(true)
+    expect(app.send(field(id) as unknown as Node, { eventType: 'change', value } as never)).toBe(true)
     await app.settle()
   }
   /** A text's colour in GPUI: it's on the native text node. */
   const textColour = (text: string) => {
     const walker = app.document.createTreeWalker(app.document.body, 4 /* NodeFilter.SHOW_TEXT */)
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-      if (node.textContent === text) return app.mounted.nativeOf(node).style['color']
+      if (node.textContent === text) return app.nativeOf(node).style['color']
     }
     throw new Error(`no text "${text}"`)
   }
@@ -81,7 +81,7 @@ describe('headless', () => {
       paddingLeft: 12, paddingTop: 8, width: '100%', fontSize: 16,
     })
     // The card: white, rounded-xl, shadow-lg, max-w-md.
-    const card = app.mounted.nativeOf(app.document.querySelector('.max-w-md') as unknown as Node)
+    const card = app.nativeOf(app.document.querySelector('.max-w-md') as unknown as Node)
     expect(card.style).toMatchObject({ backgroundColor: '#fff', borderTopLeftRadius: 12, maxWidth: 448 })
     expect(card.style['boxShadow']).toMatchObject({ offsetY: 10, blurRadius: 15, spreadRadius: -3 })
     // The button can't submit yet: grey, and FoldKit marks it aria-disabled.
@@ -102,7 +102,7 @@ describe('headless', () => {
     expect(app.inSync()).toBe(true)
 
     // Submitting now (Enter in a field) is refused by update: nothing changes.
-    app.mounted.send(field('email') as unknown as Node, { eventType: 'submit' } as never)
+    app.send(field('email') as unknown as Node, { eventType: 'submit' } as never)
     await app.settle()
     expect(app.texts()).toContain('Join Waitlist')
     expect(app.texts()).not.toContain('Joining...')
@@ -151,7 +151,7 @@ describe('headless', () => {
     await type('email', 'alice@example.com')
     await until(app, () => !app.texts().includes('Checking...'))
     // Enter in the email field submits, as a browser's implicit submission.
-    app.mounted.send(field('email') as unknown as Node, { eventType: 'submit' } as never)
+    app.send(field('email') as unknown as Node, { eventType: 'submit' } as never)
     await app.settle()
     expect(app.texts()).toContain('Joining...')
     await until(app, () => app.texts().some(text => text.startsWith('Sorry')))

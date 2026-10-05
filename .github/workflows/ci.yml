@@ -30,6 +30,11 @@ jobs:
       - run: bun run typecheck
       - run: bun run css --check
       - run: bun test
+      # The examples again on the DOM mirror, the comparator: the run above
+      # takes each example's own renderer (FoldKit on gpuix, once ported).
+      - run: bun test ./examples
+        env:
+          FOLDKIT_NATIVE_RENDERER: mirror
 
   # Real GPUI on Metal: offscreen (gpuix's TestRenderer) and in real windows
   # driven through gpuix's automation channel.

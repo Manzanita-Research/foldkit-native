@@ -35,16 +35,21 @@ let current: Window | undefined
  *  `document` is the forwarder. FoldKit 0.165 never compares against
  *  `document` itself, only its `head`, `body` and `documentElement`, which are
  *  the real nodes. */
+/** FoldKit on gpuix's newest attached document, when one is
+ *  (packages/foldkit-gpuix/src/index.ts sets it): `document` follows it, so an
+ *  app module loaded here runs on the adapter too. */
+const ADAPTER_DOCUMENT = Symbol.for('foldkit-native.document')
+const newest = () => (globalThis as unknown as Record<symbol, Document | undefined>)[ADAPTER_DOCUMENT] ?? current?.document
 const liveDocument: Document = new Proxy({} as Document, {
   get: (_, key) => {
-    if (current === undefined) throw new Error(`FoldKit Native: no DOM yet (document.${String(key)}); call installDom or attachDom first`)
-    const document = current.document
+    const document = newest()
+    if (document === undefined) throw new Error(`FoldKit Native: no DOM yet (document.${String(key)}); call installDom or attachDom first`)
     const value = Reflect.get(document, key, document)
     return typeof value === 'function' && key !== 'constructor' ? value.bind(document) : value
   },
-  set: (_, key, value) => current !== undefined && Reflect.set(current.document, key, value),
-  has: (_, key) => current !== undefined && key in current.document,
-  getPrototypeOf: () => current === undefined ? Object.prototype : Object.getPrototypeOf(current.document),
+  set: (_, key, value) => newest() !== undefined && Reflect.set(newest()!, key, value),
+  has: (_, key) => newest() !== undefined && key in newest()!,
+  getPrototypeOf: () => newest() === undefined ? Object.prototype : Object.getPrototypeOf(newest()),
 })
 
 const globals = globalThis as Record<string, unknown>
@@ -54,6 +59,8 @@ globals['document'] ??= liveDocument
 export const installDom = (url = 'http://foldkit.native/'): Window => {
   const window = new Window({ url, settings: { disableCSSFileLoading: true, disableJavaScriptFileLoading: true } })
   current = window
+  // The newest window is this one, not an adapter's attached before it.
+  ;(globalThis as unknown as Record<symbol, Document | undefined>)[ADAPTER_DOCUMENT] = undefined
   for (const name of GLOBALS) {
     const value = (window as unknown as Record<string, unknown>)[name]
     if (value !== undefined) globals[name] = typeof value === 'function' && /^[a-z]/.test(name) ? (value as Function).bind(window) : value

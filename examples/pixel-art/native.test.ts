@@ -44,7 +44,7 @@ const board = (app: Headless) => {
   const rows = Array.from(gridOf(app.document).children)
   rows.forEach((row, y) =>
     Array.from(row.children).forEach((cell, x) => {
-      const background = app.mounted.nativeOf(cell as unknown as Node).style?.['backgroundColor']
+      const background = app.nativeOf(cell as unknown as Node).style?.['backgroundColor']
       if (background !== WHITE) painted[`${x},${y}`] = background as string
     }))
   return { size: rows.length, painted }
@@ -56,16 +56,16 @@ const stroke = (cells: Array<[number, number]>, color: string) =>
 let pressedCell: Node | undefined
 const press = async (app: Headless, x: number, y: number) => {
   pressedCell = cellOf(app.document, x, y)
-  app.mounted.send(pressedCell, { eventType: 'mouseDown', x: 0, y: 0, button: 0, clickCount: 1 } as never)
+  app.send(pressedCell, { eventType: 'mouseDown', x: 0, y: 0, button: 0, clickCount: 1 } as never)
   await app.settle()
 }
 const enter = async (app: Headless, x: number, y: number) => {
-  app.mounted.send(cellOf(app.document, x, y), { eventType: 'mouseEnter', hovered: true } as never)
+  app.send(cellOf(app.document, x, y), { eventType: 'mouseEnter', hovered: true } as never)
   await app.settle()
 }
 /** GPUI sends a press's release to the element it pressed. */
 const release = async (app: Headless) => {
-  const sent = app.mounted.send(pressedCell!, { eventType: 'mouseUp', x: 0, y: 0, button: 0, clickCount: 1 } as never)
+  const sent = app.send(pressedCell!, { eventType: 'mouseUp', x: 0, y: 0, button: 0, clickCount: 1 } as never)
   if (!sent) throw new Error('nothing heard the release')
   await app.settle()
 }
@@ -77,14 +77,7 @@ const drag = async (app: Headless, y: number, fromX: number, toX: number) => {
   await release(app)
 }
 const NO_MODIFIERS = { shift: false, ctrl: false, alt: false, cmd: false }
-/** A window key with modifiers held: "ctrl-z", "cmd-shift-z". */
-const shortcut = async (app: Headless, keystroke: string) => {
-  const parts = keystroke.split('-')
-  const key = parts.pop()!
-  const modifiers = { ...NO_MODIFIERS, ...Object.fromEntries(parts.map(part => [part, true])) }
-  app.mounted.mirror.windowKey({ elementId: 0, eventType: 'keyDown', key, modifiers })
-  await app.settle()
-}
+const shortcut = (app: Headless, keystroke: string) => app.shortcut(keystroke)
 
 const checked = (document: Document, group: string) =>
   document.querySelector(`[aria-label="${group}"] [aria-checked=true]`)?.textContent
@@ -109,12 +102,12 @@ describe('headless', () => {
 
     // bg-gray-900 page; the selected tool in bg-indigo-600; Undo disabled (opacity-40).
     const page = app.document.querySelector('.min-h-screen') as unknown as Node
-    expect(app.mounted.nativeOf(page).style).toMatchObject({ display: 'flex', flexDirection: 'column', backgroundColor: '#101828' })
+    expect(app.nativeOf(page).style).toMatchObject({ display: 'flex', flexDirection: 'column', backgroundColor: '#101828' })
     expect(checked(app.document, 'Drawing tool')).toBe('BrushB')
     const brush = app.document.querySelector('[aria-label="Drawing tool"] [aria-checked=true]') as unknown as Node
-    expect(app.mounted.nativeOf(brush).style).toMatchObject({ backgroundColor: INDIGO, paddingLeft: 12, borderTopLeftRadius: 4 })
+    expect(app.nativeOf(brush).style).toMatchObject({ backgroundColor: INDIGO, paddingLeft: 12, borderTopLeftRadius: 4 })
     const undo = app.document.querySelector('[aria-disabled=true]') as unknown as Node
-    expect(app.mounted.nativeOf(undo).style).toMatchObject({ opacity: 0.4 })
+    expect(app.nativeOf(undo).style).toMatchObject({ opacity: 0.4 })
   }, SLOW)
 
   test('a GPUI drag paints a stroke, and each press is a step in the history', async () => {
@@ -138,7 +131,7 @@ describe('headless', () => {
     await enter(app, 10, 10)
     await enter(app, 11, 10)
     expect(board(app).painted).toEqual({ ...stroke([[2, 3], [3, 3], [4, 3]], INK), '11,10': INK })
-    app.mounted.send(gridOf(app.document).parentElement as unknown as Node, { eventType: 'mouseLeave', hovered: false } as never)
+    app.send(gridOf(app.document).parentElement as unknown as Node, { eventType: 'mouseLeave', hovered: false } as never)
     await app.settle()
     expect(board(app).painted).toEqual(stroke([[2, 3], [3, 3], [4, 3]], INK))
   }, SLOW)
@@ -180,7 +173,7 @@ describe('headless', () => {
     expect(history(app.texts())).toEqual(['Forward 2', 'Forward 1', 'Current', 'Back 1'])
     // The current step is highlighted in GPUI.
     const current = Array.from(app.document.querySelectorAll('span')).find(span => span.textContent === 'Current')!.parentElement!
-    expect(app.mounted.nativeOf(current as unknown as Node).style).toMatchObject({ backgroundColor: INDIGO })
+    expect(app.nativeOf(current as unknown as Node).style).toMatchObject({ backgroundColor: INDIGO })
     await app.click('Forward 2')
     expect(Object.keys(board(app).painted)).toEqual(['0,0', '1,0', '2,0'])
   }, SLOW)
@@ -207,7 +200,7 @@ describe('headless', () => {
     await app.click('Brush')
     expect(checked(app.document, 'Drawing tool')).toBe('BrushB')
     const brush = app.document.querySelector('[aria-label="Drawing tool"] [aria-checked=true]') as unknown as Node
-    expect(app.mounted.nativeOf(brush).style).toMatchObject({ backgroundColor: INDIGO })
+    expect(app.nativeOf(brush).style).toMatchObject({ backgroundColor: INDIGO })
   }, SLOW)
 
   test('a colour from the palette, and mirror drawing from the Switch', async () => {
@@ -235,7 +228,7 @@ describe('headless', () => {
     expect(app.texts()).toContain('Change to 8×8?')
     expect(app.texts()).toContain('This will clear your canvas and reset undo history.')
     // The <dialog> fills the window and centres its panel (open:flex).
-    expect(app.mounted.nativeOf(dialog as unknown as Node).style).toMatchObject({
+    expect(app.nativeOf(dialog as unknown as Node).style).toMatchObject({
       display: 'flex', position: 'fixed', alignItems: 'center', justifyContent: 'center',
     })
     expect(app.inSync()).toBe(true)

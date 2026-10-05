@@ -1,8 +1,9 @@
-// Big List in FoldKit Native: the real app, its CSS and the mirror, driven by
-// GPUI's input. The story and scene tests cover the app's logic and view;
-// these cover it running natively: 10,000 rows filtered and scrolled with
-// only the visible ones in GPUI's tree, keys, the theme switch, and GPUI's
-// scroll position coming back to FoldKit's OnScroll.
+// Big List in FoldKit Native: the real app and its CSS on FoldKit on gpuix
+// (its `meta.renderer`; FOLDKIT_NATIVE_RENDERER=mirror runs them on the
+// mirror, as CI does too), driven by GPUI's input. The story and scene tests
+// cover the app's logic and view; these cover it running natively: 10,000 rows
+// filtered and scrolled with only the visible ones in GPUI's tree, keys, the
+// theme switch, and GPUI's scroll position coming back to FoldKit's OnScroll.
 import { afterEach, describe, expect, test } from 'bun:test'
 
 import { METAL, type Headless, type Metal, openHeadless, openMetal } from '../support/harness.ts'
@@ -26,21 +27,21 @@ describe('headless', () => {
     expect(app.inSync()).toBe(true)
     // Only the rows near the top are in GPUI's tree, not 10,000.
     expect(rows(app.document).length).toBeLessThan(50)
-    expect(app.mounted.gpui.reachableCount()).toBeLessThan(800)
+    expect(app.gpui.reachableCount()).toBeLessThan(800)
     // Theme tokens (CSS custom properties under data-theme) → GPUI colours.
-    expect(app.mounted.nativeOf(app.document.querySelector('.title')!.firstChild!).style['color']).toBe('#eceef4')
-    expect(app.mounted.nativeOf(app.document.querySelector('.app')!).style).toMatchObject({ backgroundColor: '#0c0d11' })
-    const selected = app.mounted.nativeOf(app.document.querySelector('.row[data-selected]')!).style
+    expect(app.nativeOf(app.document.querySelector('.title')!.firstChild!).style['color']).toBe('#eceef4')
+    expect(app.nativeOf(app.document.querySelector('.app')!).style).toMatchObject({ backgroundColor: '#0c0d11' })
+    const selected = app.nativeOf(app.document.querySelector('.row[data-selected]')!).style
     expect(selected).toMatchObject({ backgroundColor: '#4f6ef7', borderTopLeftRadius: 10, height: ROW_HEIGHT })
-    const row = app.mounted.nativeOf(rows(app.document)[1]!).style
+    const row = app.nativeOf(rows(app.document)[1]!).style
     expect(row['hover']).toEqual({ backgroundColor: '#1f2330' })
-    expect(app.mounted.nativeOf(app.document.querySelector('.list-panel')!).style['boxShadow'])
+    expect(app.nativeOf(app.document.querySelector('.list-panel')!).style['boxShadow'])
       .toMatchObject({ offsetY: 24, blurRadius: 48 })
-    expect(app.mounted.nativeOf(list(app.document)).style).toMatchObject({ overflowY: 'scroll' })
+    expect(app.nativeOf(list(app.document)).style).toMatchObject({ overflowY: 'scroll' })
     // The list can take focus in GPUI, so a click in it takes the keys.
-    expect(app.mounted.nativeOf(list(app.document)).props['tabIndex']).toBe(0)
+    expect(app.nativeOf(list(app.document)).props['tabIndex']).toBe(0)
     // The field's own text colour reaches GPUI's input.
-    expect(app.mounted.nativeOf(app.document.querySelector('input')!).style).toMatchObject({ color: '#eceef4', fontSize: 15 })
+    expect(app.nativeOf(app.document.querySelector('input')!).style).toMatchObject({ color: '#eceef4', fontSize: 15 })
   })
 
   test('typing in the filter narrows the list and the count', async () => {
@@ -65,7 +66,7 @@ describe('headless', () => {
     const card = app.document.querySelector('.detail[role="dialog"]')!
     expect(card.getAttribute('aria-label')).toBe(TRACKS[2]!.title)
     expect(app.texts()).toContain(TRACKS[2]!.album)
-    expect(app.mounted.nativeOf(card).style).toMatchObject({
+    expect(app.nativeOf(card).style).toMatchObject({
       borderTopLeftRadius: 20, boxShadow: { offsetY: 30, blurRadius: 60 },
     })
     expect(app.inSync()).toBe(true)
@@ -78,25 +79,25 @@ describe('headless', () => {
     await app.type('Filter', 'velvet')
     await app.key('down')
     // A GPUI text field sends `submit` for Enter, not a key.
-    app.mounted.send(app.document.querySelector('input')!, { eventType: 'submit' } as never)
+    app.send(app.document.querySelector('input')!, { eventType: 'submit' } as never)
     await app.settle()
     expect(app.document.querySelector('.detail[role="dialog"]')!.getAttribute('aria-label')).toBe(matching('velvet')[1]!.title)
   })
 
   test('End scrolls GPUI to the last row; GPUI scrolling brings rows in', async () => {
     app = await openHeadless('big-list')
-    const { gpui } = app.mounted
-    const listId = app.mounted.idOf(list(app.document))
+    const { gpui } = app
+    const listId = app.idOf(list(app.document))
     await app.key('end')
-    // The app set list.scrollTop; the mirror passed it to GPUI.
+    // The app set list.scrollTop, and it went to GPUI.
     expect(gpui.scrollCalls.at(-1)).toEqual({ id: listId, x: 0, y: -(TRACK_COUNT * ROW_HEIGHT - LIST_HEIGHT) })
     expect(selectedTitle(app.document)).toBe(TRACKS[TRACK_COUNT - 1]!.title)
     expect(app.texts()).toContain(TRACKS[TRACK_COUNT - 1]!.title)
 
-    // A wheel in GPUI: GPUI moves, sends `scroll`, the mirror copies the
+    // A wheel in GPUI: GPUI moves, sends `scroll`, the renderer copies the
     // offset into scrollTop, and FoldKit's OnScroll renders the rows there.
     gpui.setScrollOffset(listId, 0, -(4000 * ROW_HEIGHT))
-    app.mounted.send(listId, { eventType: 'scroll', deltaY: -100 } as never)
+    app.send(listId, { eventType: 'scroll', deltaY: -100 } as never)
     await app.settle()
     expect(list(app.document).scrollTop).toBe(4000 * ROW_HEIGHT)
     expect(app.texts()).toContain(TRACKS[4000]!.title)
@@ -109,9 +110,9 @@ describe('headless', () => {
     await app.click('Dark theme')
     expect(app.document.querySelector('.app')!.getAttribute('data-theme')).toBe('light')
     expect(app.texts()).toContain('Light')
-    expect(app.mounted.nativeOf(app.document.querySelector('.app')!).style).toMatchObject({ backgroundColor: '#eef0f5' })
-    expect(app.mounted.nativeOf(app.document.querySelector('.list-panel')!).style).toMatchObject({ backgroundColor: '#fff' })
-    expect(app.mounted.nativeOf(rows(app.document)[1]!).style['hover']).toEqual({ backgroundColor: '#f0f2f7' })
+    expect(app.nativeOf(app.document.querySelector('.app')!).style).toMatchObject({ backgroundColor: '#eef0f5' })
+    expect(app.nativeOf(app.document.querySelector('.list-panel')!).style).toMatchObject({ backgroundColor: '#fff' })
+    expect(app.nativeOf(rows(app.document)[1]!).style['hover']).toEqual({ backgroundColor: '#f0f2f7' })
     expect(app.inSync()).toBe(true)
   })
 
@@ -122,13 +123,13 @@ describe('headless', () => {
     const theme = () => app.document.querySelector('.app')!.getAttribute('data-theme')
     const track = app.document.querySelector('.theme-switch-track')!
     const knob = app.document.querySelector('.theme-switch-knob')!
-    for (const part of [track, knob]) expect(app.mounted.nativeOf(part).style).toMatchObject({ pointerEvents: 'none' })
+    for (const part of [track, knob]) expect(app.nativeOf(part).style).toMatchObject({ pointerEvents: 'none' })
     await app.click(track)
     expect(theme()).toBe('light')
     await app.click(knob)
     expect(theme()).toBe('dark')
     // The switch itself keeps its hits, and its pointer cursor.
-    expect(app.mounted.nativeOf(app.document.querySelector('.theme-switch')!).style['pointerEvents']).toBeUndefined()
+    expect(app.nativeOf(app.document.querySelector('.theme-switch')!).style['pointerEvents']).toBeUndefined()
     expect(app.inSync()).toBe(true)
   })
 })

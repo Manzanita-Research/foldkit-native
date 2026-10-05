@@ -714,3 +714,17 @@ describe('@foldkit/ui, unmodified, on the adapter', () => {
     expect(app!.native('switch').props['aria-valuetext']).toBe('off')
   })
 })
+
+describe('`document` before a window is attached', () => {
+  test('a module that named it before the attach adds its listeners to the attached document', async () => {
+    // What an app module captured at import (Snake's keyboard Subscription is
+    // `target: document`): the global as it was then, not the attached one.
+    const before = globalThis.document as unknown as NativeElement
+    app = mountHeadless()
+    expect(globalThis.document as unknown).toBe(app.document)
+    const keys: Array<string> = []
+    before.addEventListener('keydown', event => keys.push((event as unknown as { key: string }).key))
+    await app.press('a')
+    expect(keys).toEqual(['a'])
+  })
+})

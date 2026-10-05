@@ -64,15 +64,20 @@ const evaluate = (value: string): Length | undefined => {
   return result === undefined || at !== tokens.length || !Number.isFinite(result.value) ? undefined : result
 }
 
-/** Splits on commas outside parentheses: shadow lists, gradient stops. */
+/** Splits unescaped commas outside functions, attributes and quoted strings. */
 const splitTopLevel = (value: string): Array<string> => {
   const parts: Array<string> = []
   let depth = 0
+  let quote = ''
   let start = 0
   for (let i = 0; i < value.length; i++) {
-    if (value[i] === '(') depth++
-    else if (value[i] === ')') depth--
-    else if (value[i] === ',' && depth === 0) {
+    const char = value[i]!
+    if (char === '\\') { i++; continue }
+    if (quote !== '') { if (char === quote) quote = ''; continue }
+    if (char === '"' || char === "'") quote = char
+    else if (char === '(' || char === '[') depth++
+    else if (char === ')' || char === ']') depth--
+    else if (char === ',' && depth === 0) {
       parts.push(value.slice(start, i).trim())
       start = i + 1
     }
@@ -328,6 +333,37 @@ const STATES = [
 
 export type StateRule = Readonly<{ state: (typeof STATES)[number][0]; base: string; style: CSSStyleDeclaration }>
 
+/** A single terminal state on the styled element can become a GPUI state.
+ *  Nested, ancestor and combined states cannot be represented faithfully. */
+const withoutState = (selector: string, pseudo: string): string | undefined => {
+  let depth = 0
+  let attributeDepth = 0
+  let quote = ''
+  let found = -1
+  for (let at = 0; at < selector.length; at++) {
+    const char = selector[at]!
+    if (char === '\\') { at++; continue }
+    if (quote !== '') { if (char === quote) quote = ''; continue }
+    if (char === '"' || char === "'") { quote = char; continue }
+    if (char === '[') attributeDepth++
+    else if (char === ']') attributeDepth--
+    if (attributeDepth > 0) continue
+    if (char === '(') depth++
+    else if (char === ')') depth--
+    if (char !== ':' || selector[at - 1] === ':') continue
+    for (const [, state] of STATES) {
+      if (!selector.startsWith(state, at) || /[\w-]/.test(selector[at + state.length] ?? '')) continue
+      if (depth !== 0 || state !== pseudo || at + state.length !== selector.length) return undefined
+      found = at
+    }
+  }
+  if (found === -1) return undefined
+  const base = selector.slice(0, found)
+  // Removing a state-only compound must leave a universal selector, not a
+  // dangling combinator (`.parent > :hover` → `.parent > *`).
+  return base === '' || /[\s>+~]$/.test(base) ? base + '*' : base
+}
+
 /** Substitutes every `var(--x)` and `var(--x, fallback)` in a value with the
  *  custom property `lookup` finds, or the fallback when it finds none. A
  *  rule's own declaration isn't cascaded, so nobody else does this for it. */
@@ -379,10 +415,10 @@ export const collectStateRules = (document: Document): ReadonlyArray<StateRule> 
         }
         continue
       }
-      for (const selector of rule.selectorText.split(',')) {
+      for (const selector of splitTopLevel(rule.selectorText)) {
         for (const [state, pseudo] of STATES) {
-          if (!selector.includes(pseudo)) continue
-          rules.push({ state, base: selector.split(pseudo).join('').trim() || '*', style: rule.style })
+          const base = withoutState(selector, pseudo)
+          if (base !== undefined) rules.push({ state, base, style: rule.style })
         }
       }
     }

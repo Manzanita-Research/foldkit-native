@@ -3,7 +3,7 @@ import { describe, expect as bunExpect, test } from 'bun:test'
 import { click, expect, given, keydown, role, scene, text } from 'foldkit/scene'
 
 import { Confirm } from './apps.ts'
-import { METAL, headless, metal } from './run.ts'
+import { METAL, THEMES, headless, metal } from './run.ts'
 
 describe('scene', () => {
   test('a modal dialog named by its title; Escape and Cancel close it', () => {
@@ -65,7 +65,46 @@ describe('native, headless', () => {
   })
 })
 
+describe('themes, headless', () => {
+  for (const theme of ['paper', 'dusk'] as const) {
+    test(`${theme}: the panel is the raised surface over the theme's backdrop`, async () => {
+      const app = await headless(Confirm, theme)
+      try {
+        const tokens = THEMES[theme]
+        await app.click('Delete…')
+        bunExpect(app.gpui.node(app.document.getElementById('confirm')!.nativeId).style).toMatchObject({ backgroundColor: tokens['color.surface-raised'] })
+        const backdrop = app.document.querySelector('[data-ui="dialog"][data-part="backdrop"]')!
+        bunExpect(app.gpui.node(backdrop.nativeId).style).toMatchObject({ backgroundColor: tokens['color.backdrop'] })
+      } finally {
+        app.close()
+      }
+    })
+  }
+})
+
 describe.skipIf(!METAL)('native, Metal', () => {
+  for (const theme of ['paper', 'dusk'] as const) {
+    test(`${theme}: opened from the keyboard, focus on Cancel; AccessKit has the dialog named by its title`, async () => {
+      const app = await metal('dialog-theme', Confirm, theme)
+      try {
+        await app.keys('tab')
+        await app.press('enter')
+        bunExpect(app.document.activeElement?.textContent).toBe('Cancel')
+        bunExpect(app.painted()).toContain('You can’t undo this.')
+        const tree = JSON.stringify(app.renderer.getA11yTree())
+        console.log(`ui dialog a11y (${theme}):`, tree.slice(0, 600))
+        bunExpect(tree).toContain('"Dialog"')
+        bunExpect(tree).toContain('"Delete file?"')
+        for (const name of ['"Cancel"', '"Delete"']) bunExpect(tree).toContain(name)
+        app.screenshot('open')
+        await app.press('escape')
+        bunExpect(app.document.activeElement?.getAttribute('id')).toBe('open')
+      } finally {
+        app.close()
+      }
+    })
+  }
+
   test('GPUI\'s focusNextWithin keeps Tab in the panel; the panel paints over the app', async () => {
     const app = await metal('dialog', Confirm)
     try {

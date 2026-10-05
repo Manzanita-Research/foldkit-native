@@ -7,7 +7,7 @@ import { Command, given, message, model, story } from 'foldkit/story'
 
 import * as Listbox from '../src/listbox.ts'
 import { Picker } from './apps.ts'
-import { METAL, headless, metal } from './run.ts'
+import { METAL, THEMES, headless, metal } from './run.ts'
 
 const labels = Picker.items.map(item => item.label)
 
@@ -142,7 +142,50 @@ describe('disabled options (aria-disabled, focusable)', () => {
   })
 })
 
+describe('themes, headless', () => {
+  for (const theme of ['paper', 'dusk'] as const) {
+    test(`${theme}: the highlighted option is the highlight colour; the selected one the accent, ticked`, async () => {
+      const app = await headless(Picker, theme)
+      try {
+        const tokens = THEMES[theme]
+        const option = (index: number) => app.gpui.node(app.document.getElementById(`fruit-option-${index}`)!.nativeId)
+        bunExpect(option(0).style).toMatchObject({ backgroundColor: tokens['color.highlight'] })
+        bunExpect(option(1).style['backgroundColor']).toBeUndefined()
+        bunExpect(option(1).style['hover']).toMatchObject({ backgroundColor: tokens['color.highlight'] })
+        const label = app.document.querySelector('#fruit-option-0 [data-part="label"]')!.firstChild!
+        bunExpect(app.gpui.node(label.nativeId).style).toMatchObject({ color: tokens['color.accent'] })
+        // Named by its label, not by the tick (aria-hidden).
+        bunExpect(option(0).props).toMatchObject({ role: 'option', 'aria-label': 'Apple', 'aria-selected': true })
+      } finally {
+        app.close()
+      }
+    })
+  }
+})
+
 describe.skipIf(!METAL)('native, Metal', () => {
+  for (const theme of ['paper', 'dusk'] as const) {
+    test(`${theme}: Tab in, arrow, select; AccessKit has the list box and its options, named, the chosen one selected`, async () => {
+      const app = await metal('listbox-theme', Picker, theme)
+      try {
+        await app.keys('tab')
+        await app.keys('down down')
+        await app.press('enter')
+        bunExpect(app.model().fruit).toBe('banana')
+        await app.keys('down')
+        const tree = JSON.stringify(app.renderer.getA11yTree())
+        console.log(`ui listbox a11y (${theme}):`, tree.slice(0, 600))
+        bunExpect(tree).toContain('"ListBox"')
+        bunExpect(tree).toContain('"ListBoxOption"')
+        bunExpect(tree).toContain('"label":"Banana","selected":true')
+        bunExpect(tree).toContain('"label":"Apple","selected":false')
+        app.screenshot('selected')
+      } finally {
+        app.close()
+      }
+    })
+  }
+
   test('a disabled option: keys and a click don\'t select it, the list keeps focus; re-enabled, it selects', async () => {
     const app = await metal('listbox-disabled', Picker)
     try {

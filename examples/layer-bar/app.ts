@@ -19,6 +19,7 @@ export const meta: ExampleMeta = {
   // The gallery's size for it: the window it is where there's no layer shell.
   width: BAR.fallbackLength,
   height: BAR.thickness,
+  // Built on @foldkit-native/ui and bar(): FoldKit on gpuix only.
   renderer: 'gpuix',
   window: barWindow,
 }

@@ -23,7 +23,6 @@ if (process.argv.includes('--list')) {
   process.exit(0)
 }
 
-const { mountNative } = await import('../src/index.ts')
 const { Runtime } = await import('foldkit')
 const Gallery = await import('./gallery/main.ts')
 
@@ -38,13 +37,17 @@ process.on('exit', () => {
   for (const child of children) child.kill()
 })
 
-const native = mountNative({
+const window = {
   title: 'FoldKit Native examples',
   width: 960,
   height: 760,
   appId: 'foldkit-native-gallery',
   css: readFileSync(resolve(import.meta.dir, 'gallery/styles.native.css'), 'utf8'),
-})
+}
+// FoldKit on gpuix, as the examples are, unless FOLDKIT_NATIVE_RENDERER=mirror.
+const native = process.env['FOLDKIT_NATIVE_RENDERER'] === 'mirror'
+  ? (await import('../src/index.ts')).mountNative(window)
+  : (await import('foldkit-gpuix')).mountGpuix(window)
 Runtime.run(Runtime.makeElement({
   Model: Gallery.Model,
   init: Gallery.init(listed.map(entry => ({

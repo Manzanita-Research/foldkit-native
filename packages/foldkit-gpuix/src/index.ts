@@ -70,7 +70,8 @@ const tagClass = (tag: string) =>
 class NativeShadowRoot {}
 
 /** Makes `document`, `window` and the DOM classes global, as a browser has
- *  them; returns a function that puts the previous ones back. */
+ *  them, and the document the newest attached one; returns a function that
+ *  takes this window's back off. */
 const installGlobals = (window: NativeWindow) => {
   const globals: Record<string, unknown> = {
     window, document: window.document, self: window,
@@ -98,21 +99,47 @@ const installGlobals = (window: NativeWindow) => {
     location: window.location, history: window.history,
     localStorage: window.localStorage, sessionStorage: window.sessionStorage,
   }
-  const target = globalThis as Record<string, unknown>
-  const previous = new Map(Object.keys(globals).map(name => [name, Object.getOwnPropertyDescriptor(target, name)]))
-  for (const [name, value] of Object.entries(globals)) {
-    Object.defineProperty(target, name, { value, configurable: true, writable: true, enumerable: true })
-  }
   // A browser's window carries the DOM's classes too (`window.HTMLElement`):
   // Floating UI checks `instanceof` against the node's own window.
   for (const [name, value] of Object.entries(globals)) {
     if (/^[A-Z]/.test(name) && !(name in window)) Object.defineProperty(window, name, { value, configurable: true, writable: true })
   }
+  const target = globalThis as Record<string, unknown>
+  if (attachedWindows.length === 0) {
+    globalsBefore = new Map(Object.keys(globals).map(name => [name, Object.getOwnPropertyDescriptor(target, name)]))
+  }
+  const entry = { globals, document: window.document }
+  attachedWindows.push(entry)
+  define(globals)
+  slot[CURRENT_DOCUMENT] = window.document
+  // The newest window still attached keeps the globals, whichever detaches
+  // first; the ones from before come back when the last one goes.
   return () => {
-    for (const [name, descriptor] of previous) {
+    const at = attachedWindows.indexOf(entry)
+    if (at === -1) return
+    const wasNewest = at === attachedWindows.length - 1
+    attachedWindows.splice(at, 1)
+    if (!wasNewest) return
+    const newest = attachedWindows.at(-1)
+    if (newest !== undefined) {
+      define(newest.globals)
+      slot[CURRENT_DOCUMENT] = newest.document
+      return
+    }
+    for (const [name, descriptor] of globalsBefore ?? []) {
       if (descriptor === undefined) delete target[name]
       else Object.defineProperty(target, name, descriptor)
     }
+    if (slot[CURRENT_DOCUMENT] === window.document) slot[CURRENT_DOCUMENT] = undefined
+  }
+}
+/** The windows attached now, oldest first, and the globals from before the
+ *  first of them. */
+const attachedWindows: Array<{ globals: Record<string, unknown>; document: NativeDocument }> = []
+let globalsBefore: Map<string, PropertyDescriptor | undefined> | undefined
+const define = (globals: Record<string, unknown>) => {
+  for (const [name, value] of Object.entries(globals)) {
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true, enumerable: true })
   }
 }
 
@@ -184,8 +211,6 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
   const dataDir = options.dataDir ?? (options.appId === undefined ? undefined : dataDirFor(options.appId))
   if (dataDir !== undefined) window.localStorage = fileStorage(dataDir, (error, context) => window.report('storage', error, context))
   const restore = installGlobals(window)
-  const previousDocument = slot[CURRENT_DOCUMENT]
-  slot[CURRENT_DOCUMENT] = document
   const appSheet = options.css === undefined ? undefined : sheetFromCss(options.css)
   const sheets = [...(options.sheets ?? []), ...(appSheet === undefined ? [] : [appSheet])]
   const host = createHost(document, {
@@ -238,11 +263,14 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
     detach: (options: { windowGone?: boolean } = {}) => {
       if (detached) return
       detached = true
-      for (const handle of owned.splice(0).reverse()) handle.dispose()
-      window.cancelAllFrames()
-      host.detach(options)
-      restore()
-      if (slot[CURRENT_DOCUMENT] === document) slot[CURRENT_DOCUMENT] = previousDocument
+      try {
+        for (const handle of owned.splice(0).reverse()) handle.dispose()
+        window.cancelAllFrames()
+        host.detach(options)
+      } finally {
+        // The globals go back even when GPUI's teardown throws.
+        restore()
+      }
     },
   }
 }

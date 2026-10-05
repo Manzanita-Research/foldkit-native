@@ -6,7 +6,7 @@
 // web; only the container comes from FoldKit Native.
 
 import { mountNative } from '../src/index.ts'
-import { exampleIds, loadExample } from './support/example.ts'
+import { exampleIds, loadExample, rendererOf } from './support/example.ts'
 
 const id = process.argv[2]
 if (id === undefined) {
@@ -14,10 +14,9 @@ if (id === undefined) {
   process.exit(1)
 }
 const example = await loadExample(id)
-// FOLDKIT_NATIVE_RENDERER=gpuix|mirror overrides the example's own choice
-// (scripts/measure.ts runs each example on both).
-const renderer = process.env['FOLDKIT_NATIVE_RENDERER'] ?? example.meta.renderer
-if (renderer === 'gpuix') {
+// FoldKit on gpuix, unless FOLDKIT_NATIVE_RENDERER=mirror asks for the DOM
+// mirror (scripts/measure.ts runs examples on both; see `rendererOf`).
+if (rendererOf(example.meta) === 'gpuix') {
   const { mountGpuix } = await import('foldkit-gpuix')
   // localStorage is a file in the app's data folder; FOLDKIT_NATIVE_DATA_DIR
   // puts it somewhere else (the tests use a scratch folder).

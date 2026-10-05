@@ -13,7 +13,6 @@ export const meta: ExampleMeta = {
   source: 'https://github.com/foldkit/foldkit/tree/main/examples/kanban',
   width: 1000,
   height: 793,
-  renderer: 'gpuix',
 }
 
 export const start = (container: HTMLElement) =>

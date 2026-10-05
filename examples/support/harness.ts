@@ -1,8 +1,8 @@
 // Runs an example the way FoldKit Native runs it (the app's own start and
 // its CSS) and drives it with GPUI's input, for the examples' native.test.ts
-// files. Two renderers, one API, picked as `bun run example` picks them:
-// FOLDKIT_NATIVE_RENDERER=gpuix|mirror, else the example's `meta.renderer`,
-// else the mirror.
+// files. Two renderers, one API, picked as `bun run example` picks them
+// (`rendererOf`): FoldKit on gpuix, or the mirror with
+// FOLDKIT_NATIVE_RENDERER=mirror.
 //
 // - FoldKit on gpuix (`packages/foldkit-gpuix`, the adapter: no DOM engine).
 // - The DOM mirror (happy-dom → GPUI, `src/`): the comparator. CI runs the
@@ -35,18 +35,14 @@ import { attachDom } from '../../src/index.ts'
 import type { FakeGpui, FakeNode, Shape } from '../../test/support/fake-gpui.ts'
 import { mountFake } from '../../test/support/mount.ts'
 import { readPng } from '../../test/support/png.ts'
-import { loadExample } from './example.ts'
+import { type Renderer, loadExample, rendererOf } from './example.ts'
 
 /** Real GPUI offscreen needs pixel read-back: macOS (Metal) today. */
 export const METAL = process.platform === 'darwin'
 
-export type Renderer = 'gpuix' | 'mirror'
+export type { Renderer }
 /** What draws an example in the tests: as `bun run example` decides. */
-export const rendererFor = async (id: string): Promise<Renderer> => {
-  const asked = process.env['FOLDKIT_NATIVE_RENDERER']
-  if (asked === 'gpuix' || asked === 'mirror') return asked
-  return (await loadExample(id)).meta.renderer ?? 'mirror'
-}
+export const rendererFor = async (id: string): Promise<Renderer> => rendererOf((await loadExample(id)).meta)
 
 const evidenceDir = () => {
   const dir = process.env['FOLDKIT_NATIVE_EVIDENCE'] ?? mkdtempSync(join(tmpdir(), 'foldkit-native-evidence-'))

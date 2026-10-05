@@ -729,6 +729,21 @@ describe('`document` before a window is attached', () => {
   })
 })
 
+describe('two windows in one process', () => {
+  test('whichever detaches first, the one still attached keeps the globals; then what was there before comes back', () => {
+    const before = globalThis.document
+    const first = mountHeadless()
+    const second = mountHeadless()
+    first.close()
+    expect(globalThis.document as unknown).toBe(second.document)
+    const late = mountHeadless()
+    second.close()
+    expect(globalThis.document as unknown).toBe(late.document)
+    late.close()
+    expect(globalThis.document).toBe(before)
+  })
+})
+
 describe('links', () => {
   test('href resolves against the location and follows pushState, as a browser reflects it; target is its attribute', async () => {
     app = mountHeadless()

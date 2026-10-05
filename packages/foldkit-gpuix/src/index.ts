@@ -316,7 +316,9 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     ...(dataDir === undefined ? {} : { dataDir }),
     ...(now === undefined ? {} : { now }),
     ...(windowOptions.appId === undefined ? {} : { appId: windowOptions.appId }),
-    viewport: viewport ?? { width: width ?? 1024, height: height ?? 768 },
+    // A size left to the compositor (0, or unset: a layer surface's length)
+    // is the one GPUI's window has.
+    viewport: viewport ?? (width && height ? { width, height } : renderer.getWindowSize?.() ?? { width: width || 1024, height: height || 768 }),
   })
   const app = attached
   if (app.unsupported.length > 0 && process.env['FOLDKIT_GPUIX_DEBUG'] !== undefined) {

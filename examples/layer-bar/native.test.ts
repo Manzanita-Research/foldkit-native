@@ -3,6 +3,7 @@
 // of the bar's shape (macOS has no layer shell). On Linux the layer surface
 // itself is tested in a headless compositor (layer.test.ts).
 import { afterEach, describe, expect, test } from 'bun:test'
+import { isLayerShell } from 'foldkit-gpuix'
 
 import { type Headless, METAL, mountHeadless, openMetal } from '../../packages/foldkit-gpuix/test/support.ts'
 import { loadExample } from '../support/example.ts'
@@ -26,7 +27,8 @@ const open = async () => {
 describe('the window', () => {
   test('a top bar 40 px thick: anchored to the top and both sides, an exclusive zone of its thickness, keys on demand', () => {
     expect(barWindow).toMatchObject({
-      appId: 'dev.foldkit-native.layer-bar', width: 720, height: 40, resizable: false,
+      // As long as the compositor makes it on a layer surface; 720 as a window.
+      appId: 'dev.foldkit-native.layer-bar', width: isLayerShell() ? 0 : 720, height: 40, resizable: false,
       layerShell: { anchor: ['top', 'left', 'right'], exclusiveZone: 40, exclusiveEdge: 'top', keyboardInteractivity: 'on-demand' },
     })
   })

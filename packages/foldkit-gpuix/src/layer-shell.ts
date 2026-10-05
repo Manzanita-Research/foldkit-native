@@ -9,8 +9,10 @@
 //   const app = mountGpuix({ ...bar({ appId: 'dev.example.bar', edge: 'top', thickness: 36 }), css })
 //
 // On Wayland the compositor decides the length along the edge (the output's
-// width for a top bar), and the adapter follows the size it gives as a
-// resize, as with any window.
+// width for a top bar): the surface asks for 0 there, which is how
+// wlr-layer-shell says "you choose" (a length there would be kept: a 720
+// wide bar on a 1280 wide output). The adapter takes the size it's given
+// from GPUI, and follows it as a resize, as with any window.
 
 import type { LayerShellOptions, WindowOptions } from '@gpuix/native'
 
@@ -41,21 +43,28 @@ export type BarOptions = Readonly<{
   title?: string
 }>
 
+/** Whether gpuix would open a layer surface here: Linux, on Wayland. */
+export const isLayerShell = (env: Readonly<Record<string, string | undefined>> = process.env, platform: string = process.platform) =>
+  platform === 'linux' && (env['WAYLAND_DISPLAY'] ?? '') !== ''
+
 const ACROSS: Readonly<Record<Edge, readonly [Edge, Edge]>> = {
   top: ['left', 'right'], bottom: ['left', 'right'], left: ['top', 'bottom'], right: ['top', 'bottom'],
 }
 
 /** The window options for a bar on `edge`: a layer surface on Wayland, a
- *  small fixed window of the same shape elsewhere. */
-export const bar = (options: BarOptions): WindowOptions & { layerShell: LayerShellOptions } => {
+ *  small fixed window of the same shape elsewhere. `layered` is whether
+ *  it'll be a layer surface (`isLayerShell()`, by default). */
+export const bar = (options: BarOptions, layered: boolean = isLayerShell()): WindowOptions & { layerShell: LayerShellOptions } => {
   const { appId, edge = 'top', thickness = 36, exclusive = true, layer = 'top', keyboard = 'on-demand', fallbackLength = 720 } = options
   const namespace = options.namespace ?? appId
   const horizontal = edge === 'top' || edge === 'bottom'
+  // Along the edge: the compositor's choice (0) on a layer surface.
+  const length = layered ? 0 : fallbackLength
   return {
     appId,
     title: options.title ?? namespace,
-    width: horizontal ? fallbackLength : thickness,
-    height: horizontal ? thickness : fallbackLength,
+    width: horizontal ? length : thickness,
+    height: horizontal ? thickness : length,
     resizable: false,
     layerShell: {
       namespace,
@@ -68,7 +77,3 @@ export const bar = (options: BarOptions): WindowOptions & { layerShell: LayerShe
     },
   }
 }
-
-/** Whether gpuix would open a layer surface here: Linux, on Wayland. */
-export const isLayerShell = (env: Readonly<Record<string, string | undefined>> = process.env, platform: string = process.platform) =>
-  platform === 'linux' && (env['WAYLAND_DISPLAY'] ?? '') !== ''

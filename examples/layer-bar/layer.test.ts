@@ -80,10 +80,27 @@ describe.skipIf(!SESSION)('Layer bar, a layer-shell surface (headless compositor
     // Not one of sway's windows: a layer surface.
     expect(windows().has(barWindow.appId!)).toBe(false)
     // As wide as the output (the compositor's size, not the fallback's 720)
-    // and as thick as asked.
-    const tree = ((await bar.call('getTree')) as { tree: { bounds: Rect } }).tree
-    console.log('layer bar: output', JSON.stringify(output), 'bar', JSON.stringify(tree.bounds))
-    expect(tree.bounds).toMatchObject({ width: output.width, height: THICKNESS })
+    // and as thick as asked. The window's box (the tree's root) and the
+    // bar's own (the app's first element) at 0, 250 and 1000 ms, as the
+    // compositor's size arrives, then until both are the output's width.
+    type Box = { bounds: Rect; children?: Array<Box> }
+    const boxes = async () => {
+      const { tree } = (await bar.call('getTree')) as { tree: Box }
+      const app = tree.children?.find(child => child.bounds.width > 0 && child.bounds.height > 0)
+      return { window: tree.bounds, app: app?.bounds }
+    }
+    const started = performance.now()
+    for (const at of [0, 250, 1000]) {
+      await settle(Math.max(0, at - (performance.now() - started)))
+      console.log(`layer bar at ${at} ms: output ${JSON.stringify(output)}, ${JSON.stringify(await boxes())}`)
+    }
+    let sized = await boxes()
+    for (const until = performance.now() + 3000; performance.now() < until && (sized.window.width !== output.width || sized.app?.width !== output.width); await settle(100)) {
+      sized = await boxes()
+    }
+    console.log('layer bar:', JSON.stringify(sized))
+    expect(sized.window).toMatchObject({ width: output.width, height: THICKNESS })
+    expect(sized.app).toMatchObject({ width: output.width, height: THICKNESS })
     const alone = shoot('alone')
 
     // An ordinary window is tiled below the bar's exclusive zone.

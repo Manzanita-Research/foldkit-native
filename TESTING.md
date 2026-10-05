@@ -36,11 +36,18 @@ scripts/wayland-session.sh -- bun scripts/nightly.ts --class linux-m6
 FOLDKIT_NATIVE_EVIDENCE=out scripts/wayland-session.sh -- bun test packages/foldkit-gpuix/test/linux-session.test.ts   # + screenshots
 ```
 
-It needs `sway` and `grim` on the PATH (`FKN_SWAY`, `FKN_GRIM` name others),
-and gpuix's libraries (above). Inside, the session sets `WAYLAND_DISPLAY`,
-`FKN_SWAYSOCK` (`swaymsg -s "$FKN_SWAYSOCK" ...`), `FKN_WAYLAND_OUTPUT`,
+It needs `sway` and `grim` on the PATH (`FKN_SWAY`, `FKN_GRIM` name others;
+`FKN_SWAYMSG` names `swaymsg`, which is otherwise found beside sway), and
+gpuix's libraries (above). On a distribution that ships them as system
+libraries (Arch, for one) no extra shell is needed, and a sway from
+elsewhere (a Nix store path) works through `FKN_SWAY`: the session puts the
+directories of the `swaymsg` and `grim` it uses first on the command's PATH.
+Inside, the session sets `WAYLAND_DISPLAY`, `FKN_SWAYSOCK`
+(`swaymsg -s "$FKN_SWAYSOCK" ...`), `FKN_SWAYMSG`, `FKN_WAYLAND_OUTPUT`,
 `FKN_WAYLAND_SHOTS` and `FKN_LINUX_WINDOWS=1`. One tiled window fills the
-output (no gaps, no borders), so `grim` of the output is the window.
+output (no gaps, no borders), so `grim` of the output is the window. A
+layer-shell surface (`examples/layer-bar`) isn't one of sway's windows: its
+exclusive zone shows as where sway tiles the windows beside it.
 
 Why sway and not Hyprland: Hyprland 0.56 has no headless-only mode (it wants
 a DRM seat or a parent compositor), and a second Hyprland imports its

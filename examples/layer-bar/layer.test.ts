@@ -25,7 +25,7 @@ const shots = process.env['FOLDKIT_NATIVE_EVIDENCE'] ?? process.env['FKN_WAYLAND
 if (SESSION) mkdirSync(shots, { recursive: true })
 const THICKNESS = barWindow.height!
 
-const sway = (...args: Array<string>) => execFileSync('swaymsg', ['-s', process.env['FKN_SWAYSOCK']!, '-r', ...args], { encoding: 'utf8' })
+const sway = (...args: Array<string>) => execFileSync(process.env['FKN_SWAYMSG'] ?? 'swaymsg', ['-s', process.env['FKN_SWAYSOCK']!, '-r', ...args], { encoding: 'utf8' })
 const settle = (ms: number) => new Promise(done => setTimeout(done, ms))
 
 type Rect = { x: number; y: number; width: number; height: number }
@@ -99,8 +99,12 @@ describe.skipIf(!SESSION)('Layer bar, a layer-shell surface (headless compositor
       sized = await boxes()
     }
     console.log('layer bar:', JSON.stringify(sized))
-    expect(sized.window).toMatchObject({ width: output.width, height: THICKNESS })
-    expect(sized.app).toMatchObject({ width: output.width, height: THICKNESS })
+    // The window's box is the surface's. gpuix's tree gives an element's box
+    // from its content corner (the bar's 14px of left padding in) and less its
+    // border (39 of 40 high), the quirk the adapter's own bounds undo: its
+    // width is the bar's.
+    expect(sized.window).toMatchObject({ x: 0, y: 0, width: output.width, height: THICKNESS })
+    expect(sized.app?.width).toBe(output.width)
     const alone = shoot('alone')
 
     // An ordinary window is tiled below the bar's exclusive zone.

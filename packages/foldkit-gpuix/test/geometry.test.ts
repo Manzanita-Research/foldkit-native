@@ -83,6 +83,46 @@ describe('reading the layout', () => {
   })
 })
 
+describe('after a scroll, before GPUI paints it', () => {
+  test('a box read straight after the host scrolls is where it will be drawn: inside the area, nested too; clipped by it; clamped as GPUI clamps', async () => {
+    app = mountHeadless()
+    build(app, app.document.body, [
+      { id: 'list', style: 'overflow-y: scroll; height: 100px', children: [
+        { id: 'a' }, { id: 'b' },
+        { id: 'nested', style: 'overflow-y: scroll; height: 40px', children: [{ id: 'deep' }] },
+        { id: 'c' },
+      ] },
+      { id: 'outside' },
+    ])
+    await app.settle()
+    place({
+      list: { x: 0, y: 100, width: 200, height: 100 },
+      a: { x: 0, y: 100, width: 200, height: 40 }, b: { x: 0, y: 140, width: 200, height: 40 },
+      nested: { x: 0, y: 180, width: 200, height: 40 }, deep: { x: 0, y: 180, width: 200, height: 20 },
+      c: { x: 0, y: 220, width: 200, height: 80 }, outside: { x: 0, y: 200, width: 200, height: 20 },
+    })
+    await app.settle()
+    expect(byId('b').getBoundingClientRect().y).toBe(140)
+    expect(ids(app.document.elementsFromPoint(10, 110))).toContain('a')
+    const reads = app.host.geometry().reads
+    byId('list').scrollTop = 40
+    // No frame since, no read: the boxes inside moved with the content.
+    expect(byId('b').getBoundingClientRect().y).toBe(100)
+    expect(byId('deep').getBoundingClientRect().y).toBe(140)
+    expect(byId('list').getBoundingClientRect().y).toBe(100)
+    expect(byId('outside').getBoundingClientRect().y).toBe(200)
+    expect(app.host.geometry().reads).toBe(reads)
+    // a is scrolled out of the list's view now: never under the pointer.
+    expect(ids(app.document.elementsFromPoint(10, 70))).not.toContain('a')
+    expect(ids(app.document.elementsFromPoint(10, 110))).toEqual(expect.arrayContaining(['b', 'list']))
+    // Past the end: GPUI stops at the content's end (100), and so do the boxes.
+    byId('list').scrollTop = 1000
+    expect(byId('list').scrollTop).toBe(100)
+    expect(byId('b').getBoundingClientRect().y).toBe(40)
+    expect(byId('c').getBoundingClientRect().y).toBe(120)
+  })
+})
+
 describe('document.elementsFromPoint', () => {
   test('topmost first: children over parents, later siblings over earlier, then <html>', async () => {
     app = mountHeadless()

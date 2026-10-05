@@ -2,11 +2,11 @@
 // an ordinary Model, Message and update, the way an app uses it. (The other
 // components' apps are in apps.ts; the runner gives every app its theme.)
 import { Schema } from 'effect'
-import { Command, type Update } from 'foldkit'
+import { Command, Subscription, type Update } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 
-import { Button, Checkbox, Popover, part } from '../src/index.ts'
+import { Button, Checkbox, Popover, Toast, part } from '../src/index.ts'
 
 const root = <Message>(h: HtmlBuilder<Message>, children: ReadonlyArray<Html>) =>
   h.div(part(h, 'root', undefined), [h.div([h.Style({ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '12px' })], children)])
@@ -84,3 +84,45 @@ export const Sharing = (() => {
   ])
   return { Model, Message, init, update, view }
 })()
+
+// TOAST
+// Each button shows one variant; the clock is the Toast's Subscription,
+// lifted into the app's.
+const notices = (duration: number) => {
+  const Model = Schema.Struct({ toasts: Toast.Model })
+  const Message = defineMessageUnion({
+    Showed: { variant: Toast.Variant },
+    GotToastMessage: { message: Toast.Message },
+  })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const toToast = (message: Toast.Message) => Message.GotToastMessage({ message })
+  const init: Model = { toasts: Toast.init({ id: 'toasts', duration }) }
+  const NOTICES: Readonly<Record<Toast.Variant, Toast.ShowConfig>> = {
+    info: { title: 'Syncing', description: 'Your board is up to date in a moment.' },
+    success: { title: 'Saved', description: '3 files written.' },
+    warning: { title: 'Disk nearly full', description: '1.2 GB left.' },
+    error: { title: 'Couldn’t publish', description: 'The server said no. Try again?' },
+  }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> => {
+    const next = message._tag === 'Showed'
+      ? Toast.show(model.toasts, { ...NOTICES[message.variant], variant: message.variant })
+      : Toast.update(model.toasts, message.message)
+    return { model: { toasts: next.model }, commands: Command.mapMessages(next.commands ?? [], toToast) }
+  }
+  const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
+    h.div([h.Style({ display: 'flex', 'flex-direction': 'row', gap: '8px', 'flex-wrap': 'wrap' })],
+      (['info', 'success', 'warning', 'error'] as const).map(variant =>
+        Button.view({ label: `Show ${variant}`, id: `show-${variant}`, onClick: Message.Showed({ variant }) }, h))),
+    h.input([h.Id('field'), h.Placeholder('Somewhere else')]),
+    Toast.view({ model: model.toasts, toParentMessage: toToast }, h),
+  ])
+  const subscriptions = Subscription.lift(Toast.subscriptions)<Model, Message>({
+    toChildModel: model => model.toasts,
+    toParentMessage: toToast,
+  })
+  return { Model, Message, init, update, view, subscriptions }
+}
+export const Notices = notices(4000)
+/** Toasts that go in 300 ms, for the clock's tests. */
+export const QuickNotices = notices(300)

@@ -28,7 +28,7 @@ describe.skipIf(!WINDOWS)('Pixel Art, native window, two launches', () => {
     const app = await launch({
       command: process.execPath, args: ['examples/open.ts', 'pixel-art'],
       cwd: resolve(import.meta.dir, '../..'),
-      env: { ...process.env, FOLDKIT_NATIVE_RENDERER: 'gpuix', FOLDKIT_NATIVE_DATA_DIR: dataDir },
+      env: { ...process.env, FOLDKIT_NATIVE_RENDERER: 'gpuix', FOLDKIT_NATIVE_DATA_DIR: dataDir, FOLDKIT_NATIVE_AUTOMATION: '1' },
     })
     await app.getByText('PixelForge').waitFor({ timeoutMs: 10_000 })
     // The sidebar paints a frame or two after the header.

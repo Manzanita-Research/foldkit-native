@@ -242,12 +242,28 @@ export type NativeOptions = WindowOptions & AttachOptions & {
   createRenderer?: (callback: (error: Error | null, event: EventPayload) => void) => WindowRenderer
   /** After each frame: how long the adapter and GPUI took on it, in ms. */
   onFrame?: (ms: number) => void
+  /** Serve gpuix's automation over stdin and stdout: whoever writes to the
+   *  process's stdin can then click, type, read the tree and the painted
+   *  text, and take screenshots. Off unless asked: `true` here, or
+   *  `FOLDKIT_NATIVE_AUTOMATION=1` in the environment (the test drivers and
+   *  scripts set it). gpuix's own default serves it whenever stdin isn't a
+   *  terminal, so a shipped app started with a pipe would. */
+  automation?: boolean
 }
+
+/** The environment variable that turns automation on (`=1`) for a process
+ *  a test or script starts. */
+export const AUTOMATION_ENV = 'FOLDKIT_NATIVE_AUTOMATION'
+
+/** Whether to serve automation: asked for in the options, or else in the
+ *  environment. Never by default. */
+export const automationRequested = (asked: boolean | undefined, env: Readonly<Record<string, string | undefined>> = process.env) =>
+  asked ?? env[AUTOMATION_ENV] === '1'
 
 /** Opens a native window with FoldKit drawn in it. Returns the app: its
  *  container, `own()` for its runtimes, and `close()`. */
 export const mountGpuix = (options: NativeOptions = {}) => {
-  const { css, sheets, tokens, viewport, onSynced, onClose, onError, dataDir, exitOnClose = true, createRenderer, onFrame, now, ...windowOptions } = options
+  const { css, sheets, tokens, viewport, onSynced, onClose, onError, dataDir, exitOnClose = true, createRenderer, onFrame, now, automation, ...windowOptions } = options
   let attached: ReturnType<typeof attachGpuix> | undefined
   const report = (phase: ErrorPhase, error: unknown, context: Record<string, unknown> = {}) => {
     if (attached !== undefined) attached.window.report(phase, error, context)
@@ -278,8 +294,10 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     process.exit(1)
   }
   // gpuix's automation (scripts/record.ts, the window tests) talks over
-  // stdin when it isn't a terminal, as gpuix's createNativeRenderer does.
-  if (createRenderer === undefined && process.stdin.isTTY !== true) gpuix.runtime.enableAutomation(renderer as never)
+  // stdin, only when asked for (see `automation`). The renderer here is
+  // gpuix's own GpuixRenderer, not createNativeRenderer's, which would serve
+  // it whenever stdin isn't a terminal.
+  if (automationRequested(automation)) gpuix.runtime.enableAutomation(renderer as never)
 
   const { width, height } = windowOptions
   attached = attachGpuix(renderer, {

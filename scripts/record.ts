@@ -49,7 +49,7 @@ const { demo, ready } = demoFile === undefined
   ? { demo: (async (_app, pause) => pause(3000)) as Demo, ready: undefined }
   : ((await import(demoFile)) as { demo: Demo; ready?: string })
 
-const app = await launch({ command: process.execPath, args: [...entry.command], cwd: root })
+const app = await launch({ command: process.execPath, args: [...entry.command], cwd: root, env: { FOLDKIT_NATIVE_AUTOMATION: '1' } })
 // The app is its own process: close it however this script ends (a demo
 // that throws, a \`ready\` that never shows, Ctrl-C), or its window stays open.
 process.once('SIGINT', () => void app.close().finally(() => process.exit(130)))

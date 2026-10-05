@@ -19,7 +19,7 @@ const BUDGET = { launchToFirstTextMs: 5000, clickToTextMs: 1000 }
 const open = async (example: string, env: Record<string, string> = {}) => {
   const { launch } = await import('@gpuix/native/automation')
   const started = performance.now()
-  const app = await launch({ command: process.execPath, args: [`examples/${example}.ts`], cwd: resolve(import.meta.dir, '../..'), env: { ...process.env, ...env } })
+  const app = await launch({ command: process.execPath, args: [`examples/${example}.ts`], cwd: resolve(import.meta.dir, '../..'), env: { ...process.env, FOLDKIT_NATIVE_AUTOMATION: '1', ...env } })
   return { app, started }
 }
 

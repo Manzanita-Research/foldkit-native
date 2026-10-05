@@ -30,7 +30,7 @@ type Opened = Awaited<ReturnType<typeof open>>
 const open = async (args: Array<string>, env: Record<string, string> = {}) => {
   const { launch } = await import('@gpuix/native/automation')
   const started = performance.now()
-  const app = await launch({ command: process.execPath, args, cwd: root, env: { ...process.env, ...env } })
+  const app = await launch({ command: process.execPath, args, cwd: root, env: { ...process.env, FOLDKIT_NATIVE_AUTOMATION: '1', ...env } })
   const call = (method: string, params: Record<string, unknown> = {}) =>
     (app as unknown as { call: (method: string, params: Record<string, unknown>) => Promise<unknown> }).call(method, params)
   const texts = async () => ((await call('getAllText')) as { text: Array<string> }).text

@@ -91,7 +91,7 @@ const once = async (app: App, run: number): Promise<{ samples: Samples; signal: 
   const marker = `--nightly-${app.id}-${run}-${process.pid}`
   const started = performance.now()
   const window = await launch({
-    command: process.execPath, args: [...app.command, marker], cwd: root, env: { ...process.env, ...app.env },
+    command: process.execPath, args: [...app.command, marker], cwd: root, env: { ...process.env, FOLDKIT_NATIVE_AUTOMATION: '1', ...app.env },
   })
   const samples: Samples = {}
   const record = (key: string, value: number) => (samples[key] ??= []).push(value)

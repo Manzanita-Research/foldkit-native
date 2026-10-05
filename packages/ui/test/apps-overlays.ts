@@ -1,12 +1,12 @@
 // Apps for the overlay components (Popover, Toast) and VirtualList: each in
 // an ordinary Model, Message and update, the way an app uses it. (The other
 // components' apps are in apps.ts; the runner gives every app its theme.)
-import { Schema } from 'effect'
+import { Option, Schema } from 'effect'
 import { Command, Subscription, type Update } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 
-import { Button, Checkbox, Popover, Toast, part } from '../src/index.ts'
+import { Button, Checkbox, Popover, Toast, VirtualList, part } from '../src/index.ts'
 
 const root = <Message>(h: HtmlBuilder<Message>, children: ReadonlyArray<Html>) =>
   h.div(part(h, 'root', undefined), [h.div([h.Style({ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '12px' })], children)])
@@ -126,3 +126,42 @@ const notices = (duration: number) => {
 export const Notices = notices(4000)
 /** Toasts that go in 300 ms, for the clock's tests. */
 export const QuickNotices = notices(300)
+
+// VIRTUAL LIST
+// Ten thousand tracks; the chosen one shows under the list.
+export const TRACK_COUNT = 10_000
+const tracks = (shape: { rowHeight: number; height: number }) => {
+  const Model = Schema.Struct({ list: VirtualList.Model, picked: Schema.Option(Schema.Number) })
+  const Message = defineMessageUnion({ GotListMessage: { message: VirtualList.Message } })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const toList = (message: VirtualList.Message) => Message.GotListMessage({ message })
+  const init: Model = { list: VirtualList.init({ id: 'tracks' }), picked: Option.none() }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> => {
+    const next = VirtualList.update(model.list, message.message)
+    const picked = VirtualList.chosen(message.message)
+    return {
+      model: { list: next.model, picked: Option.isSome(picked) ? picked : model.picked },
+      commands: Command.mapMessages(next.commands ?? [], toList),
+    }
+  }
+  const minutes = (index: number) => `${2 + (index * 7) % 5}:${String((index * 37) % 60).padStart(2, '0')}`
+  const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
+    Button.view({ label: 'Before', id: 'before' }, h),
+    VirtualList.view({
+      model: model.list, label: 'Tracks', count: TRACK_COUNT, ...shape,
+      selected: Option.getOrUndefined(model.picked),
+      row: index => [
+        h.span([h.Style({ width: '48px', 'flex-shrink': '0' }), h.AriaHidden(true)], [String(index + 1)]),
+        h.span([h.Style({ 'flex-grow': '1' })], [`Track ${index + 1}`]),
+        h.span([h.AriaHidden(true)], [minutes(index)]),
+      ],
+      toParentMessage: toList,
+    }, h),
+    h.p([h.Id('picked')], [Option.match(model.picked, { onNone: () => 'Nothing picked', onSome: index => `Picked: Track ${index + 1}` })]),
+  ])
+  return { Model, Message, init, update, view }
+}
+export const Tracks = tracks({ rowHeight: 32, height: 200 })
+/** Big List's shape (44 px rows, its 538 px list), to compare the two. */
+export const BigTracks = tracks({ rowHeight: 44, height: 538 })

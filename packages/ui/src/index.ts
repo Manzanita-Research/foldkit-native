@@ -21,6 +21,7 @@ export * as Input from './input.ts'
 export * as Textarea from './textarea.ts'
 export * as Disclosure from './disclosure.ts'
 export * as Toast from './toast.ts'
+export * as VirtualList from './virtual-list.ts'
 export { type Theme, type TokenName, defineTheme, dusk, paper, themeStyle, themeTokens, token, uiCss } from './theme.ts'
 export { part } from './parts.ts'
 

@@ -349,4 +349,18 @@ ${ui('toast', 'dismiss')} {
 }
 ${ui('toast', 'dismiss')}:hover { background-color: ${t('color.highlight')}; color: ${t('color.text')}; }
 ${ui('toast', 'dismiss')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+
+${ui('virtual-list')} {
+  display: flex; flex-direction: column; padding: ${t('space.1')}; background-color: ${t('color.surface')};
+  border: 1px solid ${t('color.border')}; border-radius: ${t('radius.control')};
+}
+${ui('virtual-list')}:focus-visible { border-color: ${t('color.focus')}; box-shadow: 0 0 0 1px ${t('color.focus')}; }
+${ui('virtual-list', 'viewport')} { flex-grow: 1; min-height: 0; }
+${ui('virtual-list', 'row')} {
+  display: flex; flex-direction: row; align-items: center; gap: ${t('space.3')}; flex-shrink: 0; width: 100%;
+  padding: 0 ${t('space.3')}; border-radius: 6px; cursor: pointer;
+}
+${ui('virtual-list', 'row')}:hover { background-color: ${t('color.highlight')}; }
+${ui('virtual-list', 'row')}[data-highlighted] { background-color: ${t('color.highlight')}; }
+${ui('virtual-list', 'row')}[data-selected] { color: ${t('color.accent')}; font-weight: ${t('font.weight.strong')}; }
 `

@@ -36,6 +36,7 @@ import {
 import {
   type Host,
   NativeComment,
+  NativeCustomEvent,
   NativeDocument,
   NativeDocumentFragment,
   NativeElement,
@@ -59,6 +60,8 @@ import { type Declared, INHERITED, type Sheet, type State, type Viewport, declar
 const HOVER_SIGNALS = ['mouseEnter', 'mouseLeave']
 const DOM_TO_NATIVE: Readonly<Record<string, ReadonlyArray<string>>> = {
   click: ['click'], dblclick: ['click'],
+  // A virtual list's rows on screen (`detail: { start, end }`, end exclusive).
+  visiblerange: ['visibleRange'],
   // GPUI sends a press with another button as `auxClick`, before its release.
   contextmenu: ['auxClick'], auxclick: ['auxClick'],
   mouseup: ['mouseUp'], pointerup: ['mouseUp'],
@@ -110,9 +113,14 @@ const refusePasswords = (node: NativeNode) => {
  *  `anchored` one: GPUI places its content beside its parent (a popover's
  *  trigger), flips it to fit the window, and paints it over everything. Its
  *  value is gpuix's options as JSON (`{"side":"bottom","align":"start",
- *  "gap":4}`); decided when the element is created. */
+ *  "gap":4}`); decided when the element is created. `data-fn-virtual-list`
+ *  makes a `virtual-list`: GPUI's list, which lays out and paints only the
+ *  rows near its viewport. Its value is gpuix's options as JSON
+ *  (`{"itemCount":10000,"estimatedItemHeight":32,"windowStart":120}`); its
+ *  children are the rows from `windowStart` on, the window the app renders. */
 const nativeType = (element: NativeElement): string => {
   if (element.hasAttribute('data-fn-anchored')) return 'anchored'
+  if (element.hasAttribute('data-fn-virtual-list')) return 'virtual-list'
   switch (element.localName) {
     case 'input': return TEXT_INPUT_TYPES.has((element.getAttribute('type') ?? '').toLowerCase()) ? 'input' : 'div'
     case 'textarea': return 'textarea'
@@ -306,8 +314,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       const under = backdrop(element)
       if (under !== undefined) style['backgroundColor'] = under
     }
-    // Hover and press are GPUI's own states, so they need no round trip.
-    for (const name of ['hover', 'active'] as const) {
+    // Hover and press are GPUI's own states, so they need no round trip
+    // (gpuix's list has neither: a row's own box takes them).
+    if (nativeType(element) !== 'virtual-list') for (const name of ['hover', 'active'] as const) {
       if (!own.has(name)) continue
       const merged = new Map([...values, ...resolved(fold(own, [...states, name]), inherited)])
       const change = diff(toStyle(merged, true), toStyle(values, true))
@@ -536,6 +545,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       }
       for (const [key, value] of Object.entries(options)) props.set(key, value)
     }
+    if (nativeType(element) === 'virtual-list') {
+      for (const [key, value] of Object.entries(listOptions(element))) props.set(key, value)
+      // GPUI scrolling it is a `scroll` (and a `visiblerange`), heard or not.
+      listenNatively(element, 'visibleRange')
+    }
     const motion = element.getAttribute('data-fn-motion')
     if (motion !== null) {
       try {
@@ -698,7 +712,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   }
 
   // TREE
-  const holdsChildren = (element: NativeElement) => nativeType(element) === 'div' || nativeType(element) === 'anchored'
+  const holdsChildren = (element: NativeElement) => ['div', 'anchored', 'virtual-list'].includes(nativeType(element))
   const mount = (node: NativeNode) => {
     if (node.nativeId !== 0 || node instanceof NativeComment || node instanceof NativeDocumentFragment) return
     const id = nextId++
@@ -1103,6 +1117,15 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         return
       }
       case 'scroll': return wheel(element, event, init)
+      case 'visibleRange': {
+        // The list moved: a scroll, as a browser's scroll area fires one
+        // (its scrollTop is the list's), and the rows on screen.
+        const range = { start: event.startIndex ?? 0, end: event.endIndex ?? 0 }
+        layout.moved()
+        element.dispatchEvent(new NativeEvent('scroll'))
+        element.dispatchEvent(new NativeCustomEvent('visiblerange', { detail: range }))
+        return
+      }
       case 'motionComplete':
         settled(element)
         layout.moved()
@@ -1417,6 +1440,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const offsets = new WeakMap<NativeElement, [number, number]>()
   const offsetOf = (element: NativeElement): [number, number] => {
     if (element.nativeId === 0) return [0, 0]
+    if (nativeType(element) === 'virtual-list') return listOffset(element)
     const read = renderer.getScrollOffset === undefined ? undefined : guard.ask('scroll', () => renderer.getScrollOffset!(element.nativeId))
     if (read !== undefined) offsets.set(element, [read?.[0] ?? 0, read?.[1] ?? 0])
     return offsets.get(element) ?? [0, 0]
@@ -1425,6 +1449,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
    *  scrolled (it clamps to the content, at once): a box read straight
    *  after is where it's going to be drawn, as in a browser. */
   const scrollTo = (element: NativeElement, x: number, y: number) => {
+    if (nativeType(element) === 'virtual-list') return scrollListTo(element, y)
     const [fromX, fromY] = offsets.get(element) ?? offsetOf(element)
     renderer.scrollTo?.(element.nativeId, x, y)
     const read = renderer.getScrollOffset === undefined ? undefined : guard.ask('scroll', () => renderer.getScrollOffset!(element.nativeId))
@@ -1525,6 +1550,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
    *  far enough to show it. */
   const reveal = (element: NativeElement, block: ScrollBlock = 'nearest') => {
     if (element.nativeId === 0) return
+    const list = element.parentElement
+    if (list !== null && list.nativeId !== 0 && nativeType(list) === 'virtual-list') return revealInList(list, element, block)
     let area = element.parentElement
     while (area !== null && (area.nativeId === 0 || !scrollable(area))) area = area.parentElement
     if (area === null) return
@@ -1548,6 +1575,58 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       scrollTo(area, x, Math.min(0, next))
       area.dispatchEvent(new NativeEvent('scroll'))
     }
+  }
+
+  // VIRTUAL LISTS: GPUI scrolls one by row (its rows' heights are measured
+  // as they're laid out), so a row is revealed by its index, the window's
+  // start plus its place among the rows the app rendered. Where the list
+  // is scrolled comes from its anchor (gpuix's getListScrollTop: the top
+  // row, how far into it, the viewport's height); the list itself has no
+  // box in GPUI's layout, and its visibleRange lags a frame.
+  /** A list's scroll offset, as a scroll area's: its anchor row times the
+   *  estimated row height, plus how far into that row (exact when the rows
+   *  are the height estimated). */
+  const listOffset = (list: NativeElement): [number, number] => {
+    const anchor = guard.ask('list', () => listOf(renderer).getListScrollTop?.(list.nativeId) ?? null)
+    if (anchor === undefined || anchor === null) return offsets.get(list) ?? [0, 0]
+    const offset: [number, number] = [0, -((anchor[0] ?? 0) * (listOptions(list).estimatedItemHeight ?? 0) + (anchor[1] ?? 0))]
+    offsets.set(list, offset)
+    return offset
+  }
+  /** `scrollTop = y` on a list: the row at that height, and into it. */
+  const scrollListTo = (list: NativeElement, y: number) => {
+    const estimate = listOptions(list).estimatedItemHeight ?? 0
+    const top = Math.max(0, -y)
+    const index = estimate > 0 ? Math.floor(top / estimate) : 0
+    listOf(renderer).scrollToItem?.(list.nativeId, index, top - index * estimate)
+    offsets.set(list, [0, -top])
+    layout.moved()
+  }
+  const revealInList = (list: NativeElement, row: NativeElement, block: ScrollBlock) => {
+    const options = listOptions(list)
+    const at = list.children.indexOf(row)
+    if (at === -1) return
+    const index = (options.windowStart ?? 0) + at
+    const anchor = guard.ask('list', () => listOf(renderer).getListScrollTop?.(list.nativeId) ?? null) ?? null
+    const estimate = options.estimatedItemHeight ?? 0
+    const height = boundsOf(row)?.height || estimate
+    const viewport = anchor?.[2] ?? 0
+    // Where the row goes: its top at the list's top (offset 0), or the
+    // viewport's top above it so it sits at the bottom or in the middle.
+    const end = -Math.max(0, viewport - height)
+    let offset: number | undefined
+    if (block === 'start' || anchor === null) offset = 0
+    else if (block === 'end') offset = end
+    else if (block === 'center') offset = end / 2
+    else {
+      // The row's top in the viewport, counted from the anchor's row.
+      const top = (index - anchor[0]!) * (estimate || height) - anchor[1]!
+      if (top < 0) offset = 0
+      else if (top + height > viewport) offset = end
+    }
+    if (offset === undefined) return
+    listOf(renderer).scrollToItem?.(list.nativeId, index, offset)
+    layout.moved()
   }
 
   // THE HOST INTERFACE (what the document calls)
@@ -1873,6 +1952,19 @@ const aspectOf = (value: string | undefined): number | undefined => {
   const ratio = Number(match[1]) / Number(match[2] ?? 1)
   return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined
 }
+
+/** A virtual list's options (`data-fn-virtual-list`); not JSON: none. */
+const listOptions = (element: NativeElement): { itemCount?: number; estimatedItemHeight?: number; windowStart?: number } & Record<string, unknown> => {
+  try {
+    const options = JSON.parse(element.getAttribute('data-fn-virtual-list') || '{}') as unknown
+    return typeof options === 'object' && options !== null ? options as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+/** gpuix's virtual-list calls, which NativeRenderer's type leaves out. */
+const listOf = (renderer: NativeRenderer) =>
+  renderer as { scrollToItem?: (id: number, index: number, offsetInItem?: number) => void; getListScrollTop?: (id: number) => Array<number> | null }
 
 const treeOf = (renderer: NativeRenderer) => {
   const reader = renderer as { getAutomationTree?: () => string }

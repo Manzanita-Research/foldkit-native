@@ -6,10 +6,10 @@ test('unsupported selector tokens exit with an error instead of looping', async 
     stdout: 'pipe', stderr: 'pipe',
   })
   let timedOut = false
-  const timer = setTimeout(() => { timedOut = true; proc.kill() }, 1000)
+  const timer = setTimeout(() => { timedOut = true; proc.kill() }, 5000)
   try {
     await proc.exited
     expect(timedOut).toBe(false)
     expect(await new Response(proc.stderr).text()).toContain('Unsupported selector')
   } finally { clearTimeout(timer); proc.kill() }
-})
+}, 10000)

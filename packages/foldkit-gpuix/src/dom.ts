@@ -1152,6 +1152,10 @@ export type Selector = Array<Complex>
 const cache = new Map<string, Selector>()
 export const cssEscape = (value: string) => value.replace(/([^\w-])/g, '\\$1')
 
+/** A selector this engine can't read: what a browser's querySelector throws
+ *  (a SyntaxError), and the sheet reports as `selector`. */
+const unreadable = (source: string) => new SyntaxError(`'${source}' is not a selector FoldKit on gpuix can read`)
+
 export const parseSelector = (source: string): Selector => {
   const found = cache.get(source)
   if (found !== undefined) return found
@@ -1190,6 +1194,7 @@ export const parseSelector = (source: string): Selector => {
           if (quote === '"' || quote === "'") {
             at++
             const end = source.indexOf(quote, at)
+            if (end === -1) throw unreadable(source)
             value = source.slice(at, end)
             at = end + 1
           } else value = ident()
@@ -1228,7 +1233,11 @@ export const parseSelector = (source: string): Selector => {
     if (char === ',') { at++; list.push(complex); complex = []; combinator = ''; continue }
     if (char === '>') { at++; combinator = '>'; continue }
     if (char === '' ) break
+    const start = at
     complex.push({ compound: compound(), combinator })
+    // A character no part of a selector starts with (`+`, `~`, `|`, `!`…):
+    // nothing was read, and reading on would never end.
+    if (at === start) throw unreadable(source)
     const before = at
     space()
     combinator = at > before && peek() !== ',' && peek() !== '>' ? ' ' : ''

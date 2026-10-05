@@ -326,7 +326,9 @@ instead of guessing:
   `:last-child`, Tailwind's `space-y-*`);
 - a state on an ancestor (`group-hover:`);
 - pseudo-elements;
-- media features other than sizes, hover, pointer and orientation.
+- media features other than sizes, hover, pointer and orientation;
+- a selector it can't read at all (`a!`, an unclosed quote), which
+  `querySelector` throws a SyntaxError for, as a browser does.
 
 ## gpuix behaviours the host works around
 

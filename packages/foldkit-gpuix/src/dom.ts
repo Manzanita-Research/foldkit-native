@@ -14,6 +14,8 @@
 // use. No cascade and no layout engine: GPUI lays out, and styles come from
 // inline styles and a flat sheet (sheet.ts).
 
+export type ScrollBlock = 'start' | 'center' | 'end' | 'nearest'
+
 /** What a document reports to whoever draws it (host.ts). */
 import { Equal } from 'effect'
 
@@ -39,9 +41,17 @@ export interface Host {
   /** Whether the focused element shows its focus (`:focus-visible`). */
   focusVisible(): boolean
   bounds(element: NativeElement): { x: number; y: number; width: number; height: number }
+  /** The box inside the borders and padding, as the last sent style has
+   *  them, at `bounds`' corner (ResizeObserver's content box). */
+  contentBox(element: NativeElement): { x: number; y: number; width: number; height: number }
+  /** The declarations that apply to `element` at rest, from the sheet and
+   *  inline style, var()s resolved, inherited ones included. */
+  computedStyle(element: NativeElement): ReadonlyMap<string, string>
+  /** GPUI's own animations running on `element` (a `data-fn-motion` one). */
+  animations(element: NativeElement): Array<{ finished: Promise<unknown> }>
   /** Every element painted under the point, topmost first. */
   elementsFromPoint(x: number, y: number): Array<NativeElement>
-  scrollIntoView(element: NativeElement): void
+  scrollIntoView(element: NativeElement, block?: ScrollBlock): void
   scrollOffset(element: NativeElement): [number, number]
   scrollTo(element: NativeElement, x: number, y: number): void
   /** The text GPUI has selected, and clearing it (GPUI owns selection). */
@@ -616,17 +626,35 @@ export class NativeElement extends NativeNode {
   getClientRects() { return [this.getBoundingClientRect()] }
   get offsetWidth() { return this.getBoundingClientRect().width }
   get offsetHeight() { return this.getBoundingClientRect().height }
-  get clientWidth() { return this.getBoundingClientRect().width }
-  get clientHeight() { return this.getBoundingClientRect().height }
+  // The root's client size is the viewport's, less scrollbars; GPUI's
+  // scrollbars overlay, so all of it (`Dom.lockScroll` measures the
+  // scrollbar this way).
+  get clientWidth() { return this.isRoot() ? this.ownerDocument.defaultView?.innerWidth ?? 0 : this.getBoundingClientRect().width }
+  get clientHeight() { return this.isRoot() ? this.ownerDocument.defaultView?.innerHeight ?? 0 : this.getBoundingClientRect().height }
   get offsetLeft() { return 0 }
   get offsetTop() { return 0 }
-  checkVisibility() {
+  private isRoot() { return this === this.ownerDocument.documentElement }
+  /** Not under `display: none` (the sheet's or inline), and with
+   *  `visibilityProperty`, not `visibility: hidden`. */
+  checkVisibility(options: { visibilityProperty?: boolean; checkVisibilityCSS?: boolean } = {}) {
+    if (!this.isConnected) return false
+    const host = this.ownerDocument.host
+    const style = (element: NativeElement) => host?.computedStyle(element) ?? element.inline
     for (let at: NativeElement | null = this; at !== null; at = at.parentElement) {
-      if (at.hasAttribute('hidden') || at.inline.get('display') === 'none') return false
+      if (at.hasAttribute('hidden') || style(at).get('display') === 'none') return false
     }
-    return this.isConnected
+    if (options.visibilityProperty === true || options.checkVisibilityCSS === true) {
+      const visibility = style(this).get('visibility')
+      if (visibility === 'hidden' || visibility === 'collapse') return false
+    }
+    return true
   }
-  scrollIntoView() { this.ownerDocument.host?.scrollIntoView(this) }
+  /** Where it lands, as a browser has it: `start` with no options (or
+   *  `true`), `end` for `false`, else `block`. */
+  scrollIntoView(options?: boolean | { block?: ScrollBlock }) {
+    const block = options === undefined || options === true ? 'start' : options === false ? 'end' : options.block ?? 'start'
+    this.ownerDocument.host?.scrollIntoView(this, block)
+  }
   get scrollTop() { return -(this.ownerDocument.host?.scrollOffset(this)[1] ?? 0) || 0 }
   set scrollTop(value: number) { this.ownerDocument.host?.scrollTo(this, -this.scrollLeft, -value) }
   get scrollLeft() { return -(this.ownerDocument.host?.scrollOffset(this)[0] ?? 0) || 0 }
@@ -641,7 +669,9 @@ export class NativeElement extends NativeNode {
   showModal() { this.setAttribute('open', '') }
   close() { this.removeAttribute('open') }
   animate() { return { finished: Promise.resolve(), cancel: () => {}, onfinish: null } }
-  getAnimations() { return [] }
+  /** GPUI's motion running on it (`data-fn-motion`), finishing when GPUI
+   *  says it reached its target; CSS transitions don't run natively. */
+  getAnimations() { return this.ownerDocument.host?.animations(this) ?? [] }
   attachShadow(): never { throw new Error('FoldKit on gpuix: no shadow DOM') }
 }
 
@@ -688,6 +718,9 @@ export class NativeDocument extends NativeNode {
   visibilityState = 'visible'
   hidden = false
   readonly styleSheets: Array<never> = []
+  /** ResizeObservers watching something in this document: the host
+   *  delivers them after each frame GPUI draws. */
+  readonly resizeObservers = new Set<NativeResizeObserver>()
   constructor() {
     super(undefined as unknown as NativeDocument, 9, '#document')
     ;(this as { ownerDocument: NativeDocument }).ownerDocument = this
@@ -774,8 +807,29 @@ export class NativeWindow extends NativeEventTarget {
       dispatchEvent: () => true,
     }
   }
+  /** As a browser's, for the platform's checks (`Dom.lockScroll` asks for
+   *  iOS): no touch, and the platform as browsers name it. */
+  readonly navigator = {
+    platform: process.platform === 'darwin' ? 'MacIntel' : process.platform === 'win32' ? 'Win32' : 'Linux x86_64',
+    userAgent: `FoldKit on gpuix (${process.platform})`,
+    language: 'en-US', languages: ['en-US'], maxTouchPoints: 0, onLine: true,
+  }
+  /** What applies to the element at rest: the sheet's rules and inline
+   *  style, var()s resolved, inherited properties included, read as a
+   *  browser's (`getPropertyValue('overflow-y')`, `.overflowY`). Rules for
+   *  states (`:hover`) aren't in it, and nothing is laid out: values are as
+   *  declared (`auto` overflow reads `scroll`, GPUI's only kind), with CSS's
+   *  initial values for the rest. */
   getComputedStyle(element: NativeElement) {
-    return { getPropertyValue: (name: string) => element.inline.get(name) ?? '' } as unknown as CSSStyleDeclaration
+    const values = this.document.host?.computedStyle(element) ?? element.inline
+    const read = (name: string) => values.get(name) ?? INITIAL[name] ?? ''
+    return new Proxy({ getPropertyValue: read } as Record<string, unknown>, {
+      get: (target, key) => {
+        if (typeof key !== 'string') return undefined
+        if (key in target) return target[key]
+        return read(kebab(key))
+      },
+    }) as unknown as CSSStyleDeclaration
   }
   // The window itself never scrolls (the root element does).
   scrollTo() {}
@@ -817,6 +871,12 @@ export class NativeWindow extends NativeEventTarget {
   cancelAnimationFrame(handle: number) { this.#frames.delete(handle) }
   /** Drops every pending frame callback (the window is going away). */
   cancelAllFrames() { this.#frames.clear() }
+}
+
+/** CSS's initial values, for what a computed style reads when nothing set it. */
+const INITIAL: Readonly<Record<string, string>> = {
+  display: 'block', position: 'static', visibility: 'visible', opacity: '1',
+  'overflow-x': 'visible', 'overflow-y': 'visible', 'pointer-events': 'auto',
 }
 
 const memoryHistory = (window: NativeWindow) => {
@@ -934,6 +994,80 @@ export class NativeMutationObserver {
         })
       }
       return
+    }
+  }
+}
+
+// RESIZE OBSERVERS
+//
+// From where GPUI last painted things (layout.ts): after each frame GPUI
+// draws, each observed element's box is compared with the size last
+// reported, and the changed ones are delivered together, as a browser does
+// between layout and paint. Here it's just after the paint, so what a
+// callback changes shows a frame later. Observing reports the first size
+// (unless it's 0×0), as in a browser. `Dom.detectElementMovement` waits
+// with one.
+
+type Size = { inlineSize: number; blockSize: number }
+type Box = { x: number; y: number; width: number; height: number }
+export type NativeResizeObserverEntry = {
+  target: NativeElement
+  contentRect: Box & { top: number; left: number; right: number; bottom: number }
+  contentBoxSize: ReadonlyArray<Size>
+  borderBoxSize: ReadonlyArray<Size>
+  devicePixelContentBoxSize: ReadonlyArray<Size>
+}
+
+export class NativeResizeObserver {
+  readonly #callback: (entries: Array<NativeResizeObserverEntry>, observer: NativeResizeObserver) => void
+  /** Each target, which box it watches, and the size last reported. */
+  readonly #targets = new Map<NativeElement, { box: 'content-box' | 'border-box' | 'device-pixel-content-box'; last: Size }>()
+  constructor(callback: (entries: Array<NativeResizeObserverEntry>, observer: NativeResizeObserver) => void) {
+    this.#callback = callback
+  }
+  observe(target: NativeElement, options: { box?: 'content-box' | 'border-box' | 'device-pixel-content-box' } = {}) {
+    this.#targets.set(target, { box: options.box ?? 'content-box', last: { inlineSize: 0, blockSize: 0 } })
+    target.ownerDocument.resizeObservers.add(this)
+  }
+  unobserve(target: NativeElement) {
+    this.#targets.delete(target)
+    if (![...this.#targets.keys()].some(other => other.ownerDocument === target.ownerDocument)) target.ownerDocument.resizeObservers.delete(this)
+  }
+  disconnect() {
+    for (const target of this.#targets.keys()) target.ownerDocument.resizeObservers.delete(this)
+    this.#targets.clear()
+  }
+  /** @internal After a frame: the targets whose watched box changed size. */
+  deliver(host: Host) {
+    const entries: Array<NativeResizeObserverEntry> = []
+    for (const [target, watch] of this.#targets) {
+      const border = target.isConnected ? host.bounds(target) : { x: 0, y: 0, width: 0, height: 0 }
+      const content = target.isConnected ? host.contentBox(target) : border
+      const ratio = target.ownerDocument.defaultView?.devicePixelRatio ?? 1
+      const sizes = {
+        'border-box': { inlineSize: border.width, blockSize: border.height },
+        'content-box': { inlineSize: content.width, blockSize: content.height },
+        'device-pixel-content-box': { inlineSize: Math.round(content.width * ratio), blockSize: Math.round(content.height * ratio) },
+      }
+      const now = sizes[watch.box]
+      if (now.inlineSize === watch.last.inlineSize && now.blockSize === watch.last.blockSize) continue
+      watch.last = now
+      // The content rect is at the padding's offset inside the border box.
+      const x = content.x - border.x
+      const y = content.y - border.y
+      entries.push({
+        target,
+        contentRect: { x, y, width: content.width, height: content.height, top: y, left: x, right: x + content.width, bottom: y + content.height },
+        contentBoxSize: [sizes['content-box']],
+        borderBoxSize: [sizes['border-box']],
+        devicePixelContentBoxSize: [sizes['device-pixel-content-box']],
+      })
+    }
+    if (entries.length === 0) return
+    try {
+      this.#callback(entries, this)
+    } catch (error) {
+      entries[0]!.target.ownerDocument.defaultView?.report('listener', error, { type: 'ResizeObserver' })
     }
   }
 }

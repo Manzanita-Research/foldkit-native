@@ -245,10 +245,10 @@ describe('browser APIs: behave, or say they don\'t', () => {
     }
   })
 
-  test('ResizeObserver and IntersectionObserver are absent, so feature detection says so', async () => {
+  test('IntersectionObserver is absent, so feature detection says so; ResizeObserver is there (platform-commands.test.ts)', async () => {
     await open()
-    expect(typeof ResizeObserver).toBe('undefined')
     expect(typeof IntersectionObserver).toBe('undefined')
+    expect(typeof ResizeObserver).toBe('function')
   })
 
   test('matchMedia: widths against the window, a desktop pointer, no preferences', async () => {

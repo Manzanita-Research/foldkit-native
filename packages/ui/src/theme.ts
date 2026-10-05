@@ -103,6 +103,8 @@ export const themeStyle = (theme: Theme): Record<string, string> =>
 const ui = (component: string, part?: string) =>
   `[data-ui="${component}"]${part === undefined ? ':not([data-part])' : `[data-part="${part}"]`}`
 const t = token
+/** Hover only on a control that takes input: not disabled, not read-only. */
+const live = ':not([data-disabled]):not([data-readonly])'
 
 /** The components' rules: one element per selector, states as attributes. */
 export const uiCss = `
@@ -132,11 +134,16 @@ ${ui('switch', 'track')} {
   background-color: ${t('switch.track', t('color.border-strong'))}; cursor: pointer;
 }
 ${ui('switch', 'track')}[data-checked] { justify-content: flex-end; background-color: ${t('switch.track-on', t('color.accent'))}; }
-${ui('switch', 'track')}:hover { background-color: ${t('switch.track-hover', t('color.text-muted'))}; }
-${ui('switch', 'track')}[data-checked]:hover { background-color: ${t('switch.track-on-hover', t('color.accent-hover'))}; }
+${ui('switch', 'track')}${live}:hover { background-color: ${t('switch.track-hover', t('color.text-muted'))}; }
+${ui('switch', 'track')}[data-checked]${live}:hover { background-color: ${t('switch.track-on-hover', t('color.accent-hover'))}; }
 ${ui('switch', 'track')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+${ui('switch', 'track')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; cursor: default; }
+${ui('switch', 'track')}[data-readonly] { cursor: default; }
 ${ui('switch', 'thumb')} { width: 18px; height: 18px; border-radius: ${t('radius.full')}; background-color: ${t('switch.thumb', '#ffffff')}; }
+${ui('switch', 'text')} { display: flex; flex-direction: column; gap: 2px; }
 ${ui('switch', 'label')} { cursor: pointer; }
+${ui('switch', 'label')}[data-disabled] { color: ${t('color.text-muted')}; cursor: default; }
+${ui('switch', 'label')}[data-readonly] { cursor: default; }
 ${ui('switch', 'description')} { font-size: ${t('font.size.sm')}; color: ${t('color.text-muted')}; }
 
 ${ui('scroll-area')} { overflow-y: auto; min-height: 0; }
@@ -195,9 +202,32 @@ ${ui('button')} {
   border-radius: ${t('radius.control')}; border: 1px solid ${t('color.border')};
   background-color: ${t('color.surface')}; color: ${t('color.text')}; cursor: pointer;
 }
-${ui('button')}:hover { border-color: ${t('color.border-strong')}; }
+${ui('button')}${live}:hover { border-color: ${t('color.border-strong')}; }
 ${ui('button')}[data-variant="primary"] { background-color: ${t('color.accent')}; border-color: ${t('color.accent')}; color: ${t('color.accent-text')}; }
-${ui('button')}[data-variant="primary"]:hover { background-color: ${t('color.accent-hover')}; }
+${ui('button')}[data-variant="primary"]${live}:hover { background-color: ${t('color.accent-hover')}; border-color: ${t('color.accent-hover')}; }
 ${ui('button')}[data-variant="danger"] { background-color: ${t('color.danger')}; border-color: ${t('color.danger')}; color: #ffffff; }
+${ui('button')}[data-variant="danger"]${live}:hover { border-color: ${t('color.danger')}; }
 ${ui('button')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+${ui('button')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; cursor: default; }
+
+${ui('checkbox')} { display: flex; flex-direction: row; align-items: flex-start; gap: ${t('space.2')}; }
+${ui('checkbox', 'control')} {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 18px; height: 18px; margin-top: 1px; padding: 0; border-radius: ${t('checkbox.radius', '5px')};
+  background-color: ${t('checkbox.background', t('color.surface'))}; border: 1px solid ${t('checkbox.border', t('color.border-strong'))};
+  color: ${t('checkbox.mark', t('color.accent-text'))}; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+${ui('checkbox', 'control')}${live}:hover { border-color: ${t('checkbox.border-hover', t('color.text-muted'))}; }
+${ui('checkbox', 'control')}[data-checked] { background-color: ${t('checkbox.checked', t('color.accent'))}; border-color: ${t('checkbox.checked', t('color.accent'))}; }
+${ui('checkbox', 'control')}[data-indeterminate] { background-color: ${t('checkbox.checked', t('color.accent'))}; border-color: ${t('checkbox.checked', t('color.accent'))}; }
+${ui('checkbox', 'control')}[data-checked]${live}:hover { background-color: ${t('checkbox.checked-hover', t('color.accent-hover'))}; border-color: ${t('checkbox.checked-hover', t('color.accent-hover'))}; }
+${ui('checkbox', 'control')}[data-indeterminate]${live}:hover { background-color: ${t('checkbox.checked-hover', t('color.accent-hover'))}; border-color: ${t('checkbox.checked-hover', t('color.accent-hover'))}; }
+${ui('checkbox', 'control')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+${ui('checkbox', 'control')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; cursor: default; }
+${ui('checkbox', 'control')}[data-readonly] { cursor: default; }
+${ui('checkbox', 'text')} { display: flex; flex-direction: column; gap: 2px; }
+${ui('checkbox', 'label')} { cursor: pointer; }
+${ui('checkbox', 'label')}[data-disabled] { color: ${t('color.text-muted')}; cursor: default; }
+${ui('checkbox', 'label')}[data-readonly] { cursor: default; }
+${ui('checkbox', 'description')} { font-size: ${t('font.size.sm')}; color: ${t('color.text-muted')}; }
 `

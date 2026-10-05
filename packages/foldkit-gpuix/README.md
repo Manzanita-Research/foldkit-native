@@ -208,6 +208,17 @@ macOS:
   name for fd -1` and a wgpu `ERROR_SURFACE_LOST_KHR` line on start and exit.
   Both are harmless.
 
+## Accessibility
+
+Each element's role (its `role`, or the one its tag implies) and name reach
+AccessKit. The name is a browser's: `aria-label`, then `aria-labelledby`,
+then a `<label for>`, then, for the roles WAI-ARIA names from their content
+(a button, link, tab, option, radio, checkbox, switch, heading…), the text
+inside, leaving out what's `aria-hidden`. A text change renames the control
+it's in. `aria-expanded` and `aria-selected` go as they are. gpuix has no
+checked state yet, so `aria-checked` goes as the value: `on`, `off`, or
+`mixed`.
+
 ## Disabled and read-only
 
 `disabled` means what HTML says: it applies to form controls (`button`,

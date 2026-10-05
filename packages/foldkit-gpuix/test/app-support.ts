@@ -21,6 +21,15 @@ export const createFakeWindow = (options: { init?: (options?: WindowOptions | nu
     ...fake.renderer,
     init: windowOptions => options.init?.(windowOptions),
     requiresTick: () => open,
+    // As gpuix's on Linux: once the window's gone, its queries throw.
+    getWindowSize: () => {
+      if (!open) throw new Error('GPUI application is not initialized')
+      return { width: 1024, height: 768 }
+    },
+    setWindowKeyEvents: (...args: Parameters<NonNullable<WindowRenderer['setWindowKeyEvents']>>) => {
+      if (!open) throw new Error('GPUI application is not initialized')
+      return fake.renderer.setWindowKeyEvents?.(...args)
+    },
     tick: () => {
       if (tickError !== undefined) {
         const error = tickError

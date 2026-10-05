@@ -13,9 +13,16 @@
 //   back as "The GPUI UI thread panicked during initialization: …": with no
 //   compositor to connect to it's wayland-client's `NoCompositor`.
 //
+// - Nothing to connect to, which on Linux gpuix doesn't report. With neither
+//   WAYLAND_DISPLAY nor DISPLAY set, GPUI starts *headless*: no window, no
+//   error, and the app runs unseen. The same goes for a DISPLAY that names no
+//   X server. `preflightDisplay` says so before `init` (FKN-26, seen on m6).
+//
 // Everything else stays as gpuix said it, typed so a caller can tell.
 
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { isAbsolute, join } from 'node:path'
 
 export type StartFailure = 'NoDisplay' | 'MissingLibrary' | 'Other'
 
@@ -25,6 +32,8 @@ export class NativeStartError extends Error {
     super(message, options)
   }
 }
+
+const NO_DISPLAY = 'There is no display to open a window on: start the app from a Wayland or X11 session (WAYLAND_DISPLAY or DISPLAY must be set).'
 
 /** Every message in an error and its causes (napi-rs chains the loader's). */
 const messages = (error: unknown): Array<string> => {
@@ -49,7 +58,7 @@ export const explainStartError = (error: unknown): NativeStartError => {
     return new NativeStartError('MissingLibrary', `GPUI needs ${library}, which isn't installed: install your distribution's package for it and start the app again.`, { cause: error })
   }
   if (/NoCompositor|cannot open display|XOpenDisplay|no (?:wayland )?compositor/i.test(text)) {
-    return new NativeStartError('NoDisplay', 'There is no display to open a window on: start the app from a Wayland or X11 session (WAYLAND_DISPLAY or DISPLAY must be set).', { cause: error })
+    return new NativeStartError('NoDisplay', NO_DISPLAY, { cause: error })
   }
   const first = (messages(error)[0] ?? 'unknown error').split('\n')[0]
   return new NativeStartError('Other', `GPUI couldn't open a window: ${first}`, { cause: error })
@@ -65,5 +74,28 @@ export const loadGpuix = () => {
     }
   } catch (error) {
     throw explainStartError(error)
+  }
+}
+
+/** Whether a Linux process has a display to open a window on: a Wayland
+ *  socket that exists, or a local X server's socket. GPUI starts headless
+ *  without either (see the top), so this is the only place it's said.
+ *  Anything it can't judge (an X display on another host) counts as there. */
+export const hasDisplay = (env: Readonly<Record<string, string | undefined>>, exists: (path: string) => boolean = existsSync): boolean => {
+  const wayland = env['WAYLAND_DISPLAY']
+  if (wayland !== undefined && wayland !== '') {
+    const runtime = env['XDG_RUNTIME_DIR']
+    if (isAbsolute(wayland) ? exists(wayland) : runtime !== undefined && runtime !== '' && exists(join(runtime, wayland))) return true
+  }
+  const x11 = env['DISPLAY']
+  if (x11 === undefined || x11 === '') return false
+  const local = /^(?:unix)?:(\d+)(?:\.\d+)?$/.exec(x11)
+  return local === null || exists(`/tmp/.X11-unix/X${local[1]}`)
+}
+
+/** On Linux, throws the `NoDisplay` error when there's nothing to draw on. */
+export const preflightDisplay = (env: Readonly<Record<string, string | undefined>> = process.env, platform: string = process.platform, exists?: (path: string) => boolean): void => {
+  if (platform === 'linux' && !hasDisplay(env, exists)) {
+    throw new NativeStartError('NoDisplay', NO_DISPLAY, { cause: new Error('neither WAYLAND_DISPLAY nor DISPLAY names a running compositor') })
   }
 }

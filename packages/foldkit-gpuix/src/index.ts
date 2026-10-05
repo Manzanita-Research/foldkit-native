@@ -40,7 +40,7 @@ import {
 } from './dom.ts'
 import { type HostTimings, createHost } from './host.ts'
 import { type Sheet, sheetFromCss, sheetFromObject } from './sheet.ts'
-import { NativeStartError, explainStartError, loadGpuix } from './start.ts'
+import { NativeStartError, explainStartError, loadGpuix, preflightDisplay } from './start.ts'
 import { type NativeStorage, dataDirFor, fileStorage } from './storage.ts'
 
 export { type ErrorPhase, type ErrorReport, type HostTimings, type NativeStorage, type Sheet, sheetFromCss, sheetFromObject }
@@ -183,12 +183,12 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
      *  Mounts, Commands and listeners stop, and FoldKit empties the
      *  container), pending animation frames, the native tree and GPUI
      *  handlers (gpuix's retained count goes to zero), then the globals. */
-    detach: () => {
+    detach: (options: { windowGone?: boolean } = {}) => {
       if (detached) return
       detached = true
       for (const handle of owned.splice(0).reverse()) handle.dispose()
       window.cancelAllFrames()
-      host.detach()
+      host.detach(options)
       restore()
     },
   }
@@ -256,6 +256,7 @@ export const mountGpuix = (options: NativeOptions = {}) => {
   const stdinBefore = new Set(process.stdin.listeners('data'))
   try {
     gpuix = loadGpuix()
+    if (createRenderer === undefined) preflightDisplay()
     const callback = (error: Error | null, event: EventPayload) => {
       if (error !== null) return report('native', error)
       try {
@@ -307,11 +308,12 @@ export const mountGpuix = (options: NativeOptions = {}) => {
       }
     }
   }
+  let windowGone = false
   const finish = () => {
     if (done) return
     done = true
     loop.stop()
-    app.detach()
+    app.detach({ windowGone })
     // The automation listener gpuix put on stdin, so it can't hold the process.
     const added = process.stdin.listeners('data').filter(listener => !stdinBefore.has(listener))
     for (const listener of added) process.stdin.off('data', listener as never)
@@ -346,7 +348,9 @@ export const mountGpuix = (options: NativeOptions = {}) => {
       const started = performance.now()
       app.host.frame()
       const more = renderer.tick()
-      app.host.drawn()
+      // A window that's gone has drawn nothing, and gpuix on Linux then throws
+      // from every query ("GPUI application is not initialized"): say it ended.
+      if (more) app.host.drawn()
       onFrame?.(performance.now() - started)
       return more
     },
@@ -355,6 +359,7 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     // The window went: nothing to keep open, but handlers may still save.
     onTerminated: () => {
       if (done) return
+      windowGone = true
       closing = ask(new CloseRequest('window', false)).then(() => (finish(), true))
     },
     onError: error => report('frame', error, { frame: frames }),

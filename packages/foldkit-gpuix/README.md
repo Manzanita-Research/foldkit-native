@@ -52,6 +52,16 @@ between the app and the machine.
   never serve it passes `automation: false`, which the environment can't
   override. `test/automation.test.ts` starts a real app with a pipe both
   ways.
+- **What automation serves, when asked** (`src/automation.ts`): the tree
+  with no field values (gpuix's has none today; any that appear are taken
+  off, and a test fails if gpuix starts sending them), and never a secret
+  field's text. A field is secret by its `autocomplete`
+  (`current-password`, `new-password`, `one-time-code`, `cc-number`,
+  `cc-csc`): in the painted text, all the text and the selection, its text
+  is bullets, one per character. Other fields' text is served as painted,
+  as a screenshot would show it. The window itself still shows a secret
+  field's text (no masked input), and AccessKit gets it as the field's
+  value, as a screen reader needs.
 - **Password fields are refused** (see Text fields, below): gpuix has no
   masked input, so a secret would show as it's typed.
 

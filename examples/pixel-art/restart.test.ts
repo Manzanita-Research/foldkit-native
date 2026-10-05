@@ -1,5 +1,5 @@
 // Pixel Art's saved canvas survives a restart (FKN-22): FoldKit on gpuix in a
-// real macOS window, a separate process driven through gpuix's automation.
+// real window, a separate process driven through gpuix's automation.
 // Change the canvas, end the process the way automation does (SIGTERM, with
 // no chance to save at close), start it again over the same data folder, and
 // the canvas is the one that was saved. The change is the selected colour,
@@ -8,21 +8,21 @@
 // the swatches have no height yet (gpuix has no aspect-ratio, M0 memo), so a
 // person can't click one; painting and saving are covered headlessly
 // (native.test.ts).
-// Needs a logged-in macOS session; FOLDKIT_NATIVE_NO_WINDOW=1 skips it.
+// Needs a logged-in macOS session (FOLDKIT_NATIVE_NO_WINDOW=1 skips it), or
+// Linux inside scripts/wayland-session.sh.
 import { afterAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { WINDOWS, screenshotWindow } from '../../test/support/windows.ts'
 import { STORAGE_KEY } from './constant'
-
-const windows = process.platform === 'darwin' && process.env['FOLDKIT_NATIVE_NO_WINDOW'] === undefined
 
 const dataDir = mkdtempSync(join(tmpdir(), 'pixel-art-data-'))
 afterAll(() => rmSync(dataDir, { recursive: true, force: true }))
 const evidence = process.env['FOLDKIT_NATIVE_EVIDENCE']
 
-describe.skipIf(!windows)('Pixel Art, macOS window, two launches', () => {
+describe.skipIf(!WINDOWS)('Pixel Art, native window, two launches', () => {
   const launchOnce = async () => {
     const { launch } = await import('@gpuix/native/automation')
     const app = await launch({
@@ -62,7 +62,7 @@ describe.skipIf(!windows)('Pixel Art, macOS window, two launches', () => {
       // Written through: on disk before anything closes.
       for (let i = 0; i < 20 && !existsSync(file); i++) await settle(100)
       expect(JSON.parse(JSON.parse(readFileSync(file, 'utf8'))[STORAGE_KEY]).selectedColorIndex).toBe(1)
-      if (evidence !== undefined) await first.app.screenshot({ path: join(evidence, 'pixel-art-restart-1-picked.png') })
+      if (evidence !== undefined) await screenshotWindow(first.app, join(evidence, 'pixel-art-restart-1-picked.png'))
     } finally {
       // gpuix's automation ends the app with SIGTERM: no close, no flush.
       await first.app.close()
@@ -74,7 +74,7 @@ describe.skipIf(!windows)('Pixel Art, macOS window, two launches', () => {
       const after = await second.colour()
       console.log(`Pixel Art restart: #262427 at the first start, ${picked} picked, ${after} at the second start`)
       expect(after).toBe(picked)
-      if (evidence !== undefined) await second.app.screenshot({ path: join(evidence, 'pixel-art-restart-2-relaunched.png') })
+      if (evidence !== undefined) await screenshotWindow(second.app, join(evidence, 'pixel-art-restart-2-relaunched.png'))
     } finally {
       await second.app.close()
     }

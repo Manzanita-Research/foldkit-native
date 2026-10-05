@@ -178,6 +178,36 @@ too. No `[data-focus-visible]` attribute is needed. When gpuix gains a
 `focusVisible` style state, the sheet can hand it the rule rather than
 restyling on focus.
 
+## Linux
+
+The adapter runs on gpuix's Linux binary (Wayland, or X11 through XWayland),
+needing libxkbcommon, libwayland-client and EGL/Vulkan from the system. Eight
+examples and the Pixel Art restart test were checked in real windows on
+Wayland (m6, a headless sway; TESTING.md has the session). What differs from
+macOS:
+
+- **No offscreen renderer, no frame read-back.** gpuix 0.10 has no
+  `TestRenderer` and its `screenshot` is macOS and Windows only ("wgpu cannot
+  read a rendered image back yet"). So Linux tests are whole processes in a
+  window, and pixels come from the compositor (`grim`).
+- **`getPaintedText` is always empty** (it's probably a thread-local read from
+  the wrong thread: GPUI paints on its own thread there). Automation waits
+  that mean "on screen" use `getAllText`, the retained tree, up to a frame
+  early. `test/linux-session.test.ts` pins this, so it fails when gpuix
+  fixes it.
+- **The compositor sizes the window.** A tiling compositor gives a window
+  its own size, not the one asked for; `innerWidth`, `vh` and `@media` follow
+  the real size (a resize event, as in a browser).
+- **A sleeping display stalls automation, not the app.** GPUI draws on the
+  compositor's frame callbacks, and a compositor sends none to an output
+  that's off (DPMS). Once the app asks for a frame, gpuix's UI-thread queries
+  (`getTree`, `getBounds`, a click's lookup) wait for it and time out after 2
+  seconds. The app's JavaScript keeps running (no stalls measured). Run window
+  tests on a headless output, which never sleeps.
+- **Startup noise.** gpuix prints `MESA-EGL: warning: failed to get driver
+  name for fd -1` and a wgpu `ERROR_SURFACE_LOST_KHR` line on start and exit.
+  Both are harmless.
+
 ## Disabled and read-only
 
 `disabled` means what HTML says: it applies to form controls (`button`,

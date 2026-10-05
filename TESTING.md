@@ -20,6 +20,43 @@ library it links against isn't found. On NixOS, run inside a shell that
 provides them (nixos-config's `nix develop .#render`). Checked on m6 under
 headless Sway: 353 pass, 26 skip (the Metal-only tests), 0 fail.
 
+## Linux: a test session on a headless compositor
+
+gpuix 0.10 can't read frames back on Linux (no `TestRenderer`, no
+`screenshot`), so the real-GPU checks there are real windows driven through
+gpuix's automation, and the pixels come from the compositor. A window must
+never open on the desktop you're sitting at, so those tests skip unless they
+run inside `scripts/wayland-session.sh`: a throwaway **headless sway** (wlroots'
+headless backend: no screen, no DRM seat, no input devices; its own socket,
+`DISPLAY` unset), started for one command and killed after it.
+
+```sh
+scripts/wayland-session.sh -- bun test            # everything, windows included
+scripts/wayland-session.sh -- bun scripts/nightly.ts --class linux-m6
+FOLDKIT_NATIVE_EVIDENCE=out scripts/wayland-session.sh -- bun test packages/foldkit-gpuix/test/linux-session.test.ts   # + screenshots
+```
+
+It needs `sway` and `grim` on the PATH (`FKN_SWAY`, `FKN_GRIM` name others),
+and gpuix's libraries (above). Inside, the session sets `WAYLAND_DISPLAY`,
+`FKN_SWAYSOCK` (`swaymsg -s "$FKN_SWAYSOCK" ...`), `FKN_WAYLAND_OUTPUT`,
+`FKN_WAYLAND_SHOTS` and `FKN_LINUX_WINDOWS=1`. One tiled window fills the
+output (no gaps, no borders), so `grim` of the output is the window.
+
+Why sway and not Hyprland: Hyprland 0.56 has no headless-only mode (it wants
+a DRM seat or a parent compositor), and a second Hyprland imports its
+environment into the systemd and D-Bus user session, which would repoint the
+desktop's launchers at it. Distributions' sway configs often do that too, so the session
+uses its own empty config.
+
+**Why a window on a real desktop "didn't paint for automation" (FKN-26).**
+Two things, found on m6: with the display asleep (DPMS off) the compositor
+stops sending frame callbacks, GPUI stops drawing, and once the app asks for a
+frame gpuix's UI-thread queries (`getTree`, `getBounds`, a click's lookup)
+time out after 2 seconds, while `getAllText` (read from JavaScript) answers.
+And separately, `getPaintedText` is empty on Linux whether or not the display
+is awake. A headless output can't sleep, which is the workaround; the test
+turns the output off and on again to show it.
+
 ## What's tested today
 
 | Layer | File | What it proves | Runs on |
@@ -30,6 +67,7 @@ headless Sway: 353 pass, 26 skip (the Metal-only tests), 0 fail.
 | App CSS | `test/css.test.ts` | `bun run css` turns Tailwind 4 into CSS happy-dom reads: no cascade layers, nesting, `oklch()` or logical properties left, and Tailwind's utilities reach GPUI (padding, colour, radius, shadow, opacity colours). | anywhere, headless |
 | Styles and tokens | `test/style.test.ts` | CSS → GPUI style: flex, grid, spacing, sizes, colours, borders, radius, gradients (angles and `to bottom right`), shadows (Tailwind's stacked lists), `calc()`, unitless line heights, fonts (including `system-ui`), `:hover`/`:active` as GPUI states. (`:focus-visible` is sent as a state too, but gpuix's style has no such state and drops it: `test/native/metal.test.ts` shows nothing changes on screen when an element takes focus.) UI text isn't selectable by default, and `user-select: text` opts back in. Tokens resolve in colours, lengths and shadows, switch live, work in a scoped subtree, and follow the root's `data-theme`. | anywhere, headless |
 | Real GPUI, offscreen | `test/native/metal.test.ts` | A FoldKit counter drawn by GPUI's Metal renderer with no window. The pixels are right (background, button colour and position). A click goes through **GPUI's own hit test** and changes the model. GPUI's own text selection skips UI text and buttons and selects text that opted in. A contract test replays the headless tests' mutations into real GPUI and checks both trees match, so the fake can't drift. | macOS |
+| Real windows, Linux | `packages/foldkit-gpuix/test/linux-session.test.ts`, and the window tests below | Every example drawn by real GPUI in a window on a headless Wayland compositor, read back with `grim`; a window the compositor closes ends the app (handlers run, `exitOnClose` exits); a sleeping display stalls automation's UI-thread queries (the m6 "non-painting" session, reproduced and pinned); `getPaintedText` is empty on Linux (pinned). | Linux, inside `scripts/wayland-session.sh` |
 | Real windows | `test/native/window.test.ts` | Both examples launch as real apps in real windows and are driven through gpuix's automation channel. The counter draws, clicks change the count, and Reset works. The theme switch swaps every token, read back from the window's own frames. Loose time budgets: first text within 5 s, click → text within 1 s. | macOS with a logged-in desktop |
 
 The headless layers run against a **fake GPUI tree** (`test/support/fake-gpui.ts`)

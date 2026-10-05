@@ -1,15 +1,15 @@
 // The real thing: the examples as separate processes, in real windows, driven
 // through gpuix's automation channel (stdin/stdout) and read back from the
 // window's own Metal frames. Needs a logged-in macOS desktop session; set
-// FOLDKIT_NATIVE_NO_WINDOW=1 to skip on a Mac without one.
+// FOLDKIT_NATIVE_NO_WINDOW=1 to skip on a Mac without one. On Linux they run
+// inside scripts/wayland-session.sh (a headless Hyprland), read back with grim.
 import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { near, readPng, rgb } from '../support/png.ts'
-
-const windows = process.platform === 'darwin' && process.env['FOLDKIT_NATIVE_NO_WINDOW'] === undefined
+import { WINDOWS, screenshotWindow } from '../support/windows.ts'
 const out = mkdtempSync(join(tmpdir(), 'foldkit-native-window-'))
 afterAll(() => rmSync(out, { recursive: true, force: true }))
 
@@ -23,14 +23,14 @@ const open = async (example: string, env: Record<string, string> = {}) => {
   return { app, started }
 }
 
-describe.skipIf(!windows)('macOS window', () => {
+describe.skipIf(!WINDOWS)('native window', () => {
   test('counter: launches, draws, and a click changes the model', async () => {
     const { app, started } = await open('counter')
     try {
       await app.getByText('Count: 0').waitFor({ timeoutMs: BUDGET.launchToFirstTextMs })
       const firstText = performance.now() - started
       const first = join(out, 'counter-0.png')
-      await app.screenshot({ path: first })
+      await screenshotWindow(app, first)
       const image = readPng(first)
       expect(near(image.pixel(image.width - 5, image.height - 5), rgb('#1d1d21'))).toBe(true)
 
@@ -55,7 +55,7 @@ describe.skipIf(!windows)('macOS window', () => {
       await app.getByText('switch theme (dusk)').waitFor({ timeoutMs: BUDGET.launchToFirstTextMs })
       const corner = async (name: string) => {
         const path = join(out, `${name}.png`)
-        await app.screenshot({ path })
+        await screenshotWindow(app, path)
         const image = readPng(path)
         return image.pixel(image.width - 5, image.height - 5)
       }

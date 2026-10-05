@@ -1,16 +1,17 @@
-// native-ui in a real macOS window (FoldKit on gpuix, a separate process),
+// native-ui in a real window (FoldKit on gpuix, a separate process),
 // driven through gpuix's automation channel. A button activates on Space's
 // key-up, as in a browser. gpuix's `keystrokes` sends key-down only, in a
 // live window as offscreen, so a whole "space" keystroke from automation
 // does nothing; key-down then key-up activates once, on the release. (A
 // physical keyboard sends both; that part still wants a person.)
-// Needs a logged-in macOS session; FOLDKIT_NATIVE_NO_WINDOW=1 skips it.
+// Needs a logged-in macOS session (FOLDKIT_NATIVE_NO_WINDOW=1 skips it), or
+// Linux inside scripts/wayland-session.sh.
 import { describe, expect, test } from 'bun:test'
 import { resolve } from 'node:path'
 
-const windows = process.platform === 'darwin' && process.env['FOLDKIT_NATIVE_NO_WINDOW'] === undefined
+import { WINDOWS } from '../../test/support/windows.ts'
 
-describe.skipIf(!windows)('native-ui, macOS window', () => {
+describe.skipIf(!WINDOWS)('native-ui, native window', () => {
   test('Tab reaches the switch; Space flips the theme once, on its release', async () => {
     const { launch } = await import('@gpuix/native/automation')
     const app = await launch({

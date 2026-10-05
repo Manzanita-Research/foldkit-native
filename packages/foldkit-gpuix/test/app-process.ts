@@ -9,6 +9,7 @@
 //   bun app-process.ts real-no-display   the real gpuix with no display (Linux)
 //   bun app-process.ts real-close-host   close() on a real window (Metal)
 //   bun app-process.ts real-native-close the window closes as a person's click does
+//   bun app-process.ts real-window-gone-host|-exit   Linux: the compositor closes it
 
 import { dlopen, FFIType } from 'bun:ffi'
 
@@ -37,6 +38,18 @@ if (mode === 'no-compositor') {
   } catch (error) {
     say(`threw ${(error as Error).name}: ${(error as Error).message}`)
   }
+} else if (mode === 'real-window-gone-host' || mode === 'real-window-gone-exit') {
+  // Linux: the test asks the compositor to close this window (xdg_toplevel
+  // close, as a person's click on its close button), and GPUI's loop ends.
+  const app = mountGpuix({
+    title: 'app-process', appId: 'dev.foldkit-native.app-process', width: 240, height: 160, focus: false,
+    exitOnClose: mode === 'real-window-gone-exit', onClose: request => void say(`onClose ${request.reason}`),
+  })
+  app.container.textContent = 'hello'
+  await frames(10)
+  say('ready')
+  await app.closed
+  say('closed')
 } else if (mode === 'close-host' || mode === 'close-host-busy' || mode === 'close-exit') {
   const { app } = openApp(mode === 'close-exit' ? { exitOnClose: true } : {})
   if (mode === 'close-host-busy') setTimeout(() => say('other work done'), 1500)

@@ -510,10 +510,11 @@ const dataset = (element: NativeElement) =>
 // ELEMENTS
 
 /** Attributes that are also properties (FoldKit's props module sets them as
- *  properties; snabbdom's attributes module as attributes). */
+ *  properties; snabbdom's attributes module as attributes). `href` and
+ *  `target` are NativeElement's own (Links). */
 const REFLECTED: Readonly<Record<string, string>> = {
   id: 'id', className: 'class', title: 'title', role: 'role', lang: 'lang', dir: 'dir',
-  name: 'name', placeholder: 'placeholder', type: 'type', href: 'href', src: 'src', alt: 'alt',
+  name: 'name', placeholder: 'placeholder', type: 'type', src: 'src', alt: 'alt',
   htmlFor: 'for', min: 'min', max: 'max', step: 'step', autocomplete: 'autocomplete',
 }
 const BOOLEAN_REFLECTED: Readonly<Record<string, string>> = {
@@ -642,6 +643,20 @@ export class NativeElement extends NativeNode {
   /** A value GPUI's own input already shows: no echo back to it. */
   setValueFromNative(value: string) { this.#value = value }
   get form(): NativeElement | null { return this.closest('form') }
+  // Links: `href` resolved against the window's location, as a browser
+  // reflects it (FoldKit's router reads it from every link click).
+  get href(): string {
+    const own = this.getAttribute('href')
+    if (own === null) return ''
+    try {
+      return new URL(own, this.ownerDocument.defaultView?.location.href).href
+    } catch {
+      return own
+    }
+  }
+  set href(value: string) { this.setAttribute('href', value) }
+  get target(): string { return this.getAttribute('target') ?? '' }
+  set target(value: string) { this.setAttribute('target', value) }
   get tabIndex(): number {
     const own = this.getAttribute('tabindex')
     if (own !== null && own !== '' && !Number.isNaN(Number(own))) return Number(own)

@@ -13,6 +13,7 @@ export const meta: ExampleMeta = {
   source: 'https://github.com/foldkit/foldkit/tree/main/examples/shopping-cart',
   width: 760,
   height: 820,
+  renderer: 'gpuix',
 }
 
 export const start = (container: HTMLElement) =>

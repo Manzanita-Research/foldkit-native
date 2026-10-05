@@ -13,6 +13,7 @@ export const meta: ExampleMeta = {
   source: 'https://github.com/foldkit/foldkit/tree/main/examples/form',
   width: 520,
   height: 760,
+  renderer: 'gpuix',
 }
 
 export const start = (container: HTMLElement) =>

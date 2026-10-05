@@ -151,8 +151,8 @@ export type HeadlessOptions = { onSynced?: (timings: Synced) => void }
 
 export const openHeadless = async (id: string, options: HeadlessOptions = {}): Promise<Headless> =>
   (await rendererFor(id)) === 'gpuix' ? gpuixHeadless(id, options) : mirrorHeadless(id, options)
-export const openMetal = async (id: string, size?: { width: number; height: number }): Promise<Metal> =>
-  (await rendererFor(id)) === 'gpuix' ? gpuixMetal(id, size) : mirrorMetal(id, size)
+export const openMetal = async (id: string, size?: { width: number; height: number }, options: HeadlessOptions = {}): Promise<Metal> =>
+  (await rendererFor(id)) === 'gpuix' ? gpuixMetal(id, size, options) : mirrorMetal(id, size, options)
 
 /** The element and its native twin, walking up to the nearest one that
  *  listens for `event`, as GPUI's hit test would reach it: an element on the
@@ -288,11 +288,13 @@ const gpuixHeadless = async (id: string, options: HeadlessOptions): Promise<Head
   }
 }
 
-const gpuixMetal = async (id: string, size?: { width: number; height: number }): Promise<Metal> => {
+const gpuixMetal = async (id: string, size: { width: number; height: number } | undefined, options: HeadlessOptions): Promise<Metal> => {
   const example = await loadExample(id)
   const width = size?.width ?? example.meta.width
   const height = size?.height ?? example.meta.height
-  const app = await openGpuixMetal(shotName(id, 'gpuix'), { width, height }, { css: example.css })
+  const app = await openGpuixMetal(shotName(id, 'gpuix'), { width, height }, {
+    css: example.css, ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
+  })
   example.start(app.container)
   await app.settle()
   await app.settle()
@@ -379,13 +381,15 @@ export const mirrorHeadless = async (id: string, options: HeadlessOptions = {}):
   }
 }
 
-export const mirrorMetal = async (id: string, size?: { width: number; height: number }): Promise<Metal> => {
+export const mirrorMetal = async (id: string, size?: { width: number; height: number }, options: HeadlessOptions = {}): Promise<Metal> => {
   const example = await loadExample(id)
   const { TestRenderer } = await import('@gpuix/native/testing')
   const width = size?.width ?? example.meta.width
   const height = size?.height ?? example.meta.height
   const renderer = new TestRenderer({ width, height })
-  const dom = attachDom(renderer as unknown as NativeRenderer, { css: example.css, viewport: { width, height } })
+  const dom = attachDom(renderer as unknown as NativeRenderer, {
+    css: example.css, viewport: { width, height }, ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
+  })
   example.start(dom.container)
   const document = dom.window.document as unknown as Document
   const settle = async () => {

@@ -47,6 +47,7 @@ import {
   type NativeNode,
   NativePointerEvent,
   NativeText,
+  NativeWheelEvent,
   type ScrollBlock,
   isDisabled,
   isNaturallyFocusable,
@@ -54,18 +55,29 @@ import {
 import { type Box, createGuard, createLayout } from './layout.ts'
 import { type Declared, INHERITED, type Sheet, type State, type Viewport, declarations, declared, fold, resolveVars, textStyle, toStyle } from './sheet.ts'
 
-/** DOM event → the gpuix events that produce it (as the mirror had it). */
+/** DOM event → the gpuix events that produce it. EVENTS.md is the contract. */
+const HOVER_SIGNALS = ['mouseEnter', 'mouseLeave']
 const DOM_TO_NATIVE: Readonly<Record<string, ReadonlyArray<string>>> = {
-  click: ['click'], contextmenu: ['click'], dblclick: ['click'], auxclick: ['auxClick'],
+  click: ['click'], dblclick: ['click'],
+  // GPUI sends a press with another button as `auxClick`, before its release.
+  contextmenu: ['auxClick'], auxclick: ['auxClick'],
   mouseup: ['mouseUp'], pointerup: ['mouseUp'],
   // GPUI sends a press's moves and release only to the pressed element (as
-  // pointer capture does): whatever hears a press hears the whole gesture,
-  // and listeners on document get it from there (PRESSES below).
+  // pointer capture does): whatever hears a press hears the whole gesture
+  // (PRESSES below).
   mousedown: ['mouseDown', 'mouseMove', 'mouseUp'], pointerdown: ['mouseDown', 'mouseMove', 'mouseUp'],
-  mouseenter: ['mouseEnter'], mouseleave: ['mouseLeave'], mouseover: ['mouseEnter'], mouseout: ['mouseLeave'],
-  pointerenter: ['mouseEnter'], pointerleave: ['mouseLeave'],
-  mousemove: ['mouseMove'], pointermove: ['mouseMove'], scroll: ['scroll'],
+  // Hover is the host's, from where the pointer is (HOVER below); GPUI's own
+  // enter and leave only say that it moved.
+  mouseenter: HOVER_SIGNALS, mouseleave: HOVER_SIGNALS, mouseover: HOVER_SIGNALS, mouseout: HOVER_SIGNALS,
+  pointerenter: HOVER_SIGNALS, pointerleave: HOVER_SIGNALS, pointerover: HOVER_SIGNALS, pointerout: HOVER_SIGNALS,
+  mousemove: ['mouseMove'], pointermove: ['mouseMove'],
+  // GPUI's `scroll` is the wheel, after GPUI scrolled.
+  scroll: ['scroll'], wheel: ['scroll'],
 }
+/** `MouseEvent.button` → its bit in `buttons`: main 1, auxiliary (middle) 4, secondary (right) 2. */
+const BUTTONS: ReadonlyArray<number> = [1, 4, 2]
+/** DOM events whose target depends on where the pointer is. */
+const HOVER_TYPES = new Set(['mouseenter', 'mouseleave', 'mouseover', 'mouseout', 'pointerenter', 'pointerleave', 'pointerover', 'pointerout', 'mousemove', 'pointermove'])
 
 /** gpuix key names → `KeyboardEvent.key`. */
 const KEY_NAMES: Readonly<Record<string, string>> = {
@@ -156,6 +168,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     restyled = 0
     pass = new Map()
     viewport = options.viewport()
+    if (rootChanged) {
+      rootChanged = false
+      const now = rootReach()
+      if (now !== rootReached) dirty.add(body)
+      rootReached = now
+    }
     for (const element of dirty) {
       let covered = false
       for (let at = element.parentElement; at !== null && !covered; at = at.parentElement) covered = dirty.has(at)
@@ -173,6 +191,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     options.onSynced?.({ syncMs: performance.now() - started, restyled, mutations: pending, ...(inputAt === undefined ? {} : { inputAt }) })
     inputAt = undefined
   }
+
+  // <html>: what of its style reaches the body, so a change to anything
+  // else on it (FoldKit's document attributes) restyles nothing.
+  let rootChanged = false
+  const rootReach = () => {
+    const own = declared(document.documentElement, sheets, viewport).base
+    return JSON.stringify([...own].filter(([name]) =>
+      name.startsWith('--') || name.startsWith('overflow') || (INHERITED as ReadonlyArray<string>).includes(name)))
+  }
+  let rootReached = ''
 
   // STYLE
   // Per sync pass: each element's declarations and inherited text values.
@@ -414,6 +442,9 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const base = info(element).declared.base
     hitStyles.set(element, { display: base.get('display'), visibility: base.get('visibility'), pointer: base.get('pointer-events') })
     mutations.setStyle(element.nativeId, style)
+    // GPUI hit-tests an element with a hover or press style: it has to say
+    // where the pointer went, as a listening one does (TRACKING).
+    if ((style as { hover?: unknown }).hover !== undefined || (style as { active?: unknown }).active !== undefined) track(element)
     rehome(element, (style as { position?: string }).position)
     syncProps(element)
     for (const child of element.childNodes) {
@@ -707,6 +738,15 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const after = Math.max(0, before + delta)
     counts.set(native, after)
     if (node.nativeId !== 0 && (before === 0) !== (after === 0)) syncListener(node, native, after > 0)
+    if (after > 0 && node instanceof NativeElement) track(node)
+  }
+  /** GPUI sends the pointer's moves (and its leaving) only to the topmost
+   *  element it hit-tests, which is one that listens for something. So each
+   *  of those, and the body under them all, tells the host where the pointer
+   *  went (HOVER). */
+  const TRACKING: ReadonlyArray<string> = ['mouseMove', 'mouseLeave']
+  const track = (element: NativeElement) => {
+    for (const native of TRACKING) listenNatively(element, native)
   }
   const listenNatively = (node: NativeNode, native: string) => {
     const set = implicit.get(node) ?? new Set<string>()
@@ -866,6 +906,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   // Keys come from GPUI's window key events only (no element listens for
   // keys natively), so each keystroke arrives once. GPUI sends several in
   // one task when they queue up; each is its own event.
+  let armed: NativeElement | undefined
   const key = (event: EventPayload, type: 'keydown' | 'keyup') => {
     const name = event.key === undefined ? '' : KEY_NAMES[event.key] ?? event.key
     // Keys go where GPUI's focus is, even if it moved there by itself.
@@ -881,6 +922,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     })
     if (type === 'keydown' && name === 'Tab') tabbed(target)
     const proceed = target.dispatchEvent(keyboard)
+    // A button activates on Space's release only if its press wasn't
+    // prevented (the press arms it, as in a browser).
+    const released = type === 'keyup' && name === ' ' && armed === target
+    if (name === ' ') armed = type === 'keydown' && proceed ? target : undefined
     if (!proceed) return
     // The browser's default actions.
     if (type === 'keydown' && name === 'Tab') {
@@ -893,7 +938,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       return
     }
     const activates = target.localName === 'button' || (target.localName === 'a' && target.hasAttribute('href'))
-    if (activates && ((type === 'keydown' && name === 'Enter') || (type === 'keyup' && name === ' ' && target.localName === 'button'))) {
+    if (activates && ((type === 'keydown' && name === 'Enter') || (released && target.localName === 'button'))) {
       target.click()
       return
     }
@@ -949,42 +994,53 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         keyboardModality = false
         inputAt = performance.now()
         const mouse = { ...init, button: event.button ?? 0, detail: event.clickCount ?? 1 }
-        // A press focuses the nearest focusable element, without a ring; one
-        // already focused by a key loses its ring, as in a browser.
-        const focusable = node instanceof NativeElement ? focusableAncestor(element) : null
-        if (focusable !== null && focusable !== focused) setFocus(focusable, false, false)
-        else if (focusable !== null && focusVisible && !takesText(focusable)) {
-          focusVisible = false
-          dirty.add(focusable)
-        }
-        if (event.isRightClick) {
-          element.dispatchEvent(new NativeMouseEvent('contextmenu', mouse))
-          return
-        }
-        const proceed = element.dispatchEvent(new NativeMouseEvent('click', mouse))
-        if (mouse.detail === 2) element.dispatchEvent(new NativeMouseEvent('dblclick', mouse))
+        pointerFocus(element)
+        // GPUI clicks what was pressed, wherever the release was. A browser
+        // clicks what the press and the release have in common: a press
+        // dragged off a button and let go elsewhere doesn't click it.
+        const at = clickTarget(element, init.clientX, init.clientY)
+        if (at !== element && disabledControl(at) !== null) return
+        const proceed = at.dispatchEvent(new NativeMouseEvent('click', mouse))
+        if (mouse.detail === 2) at.dispatchEvent(new NativeMouseEvent('dblclick', mouse))
         // A submit button submits its form.
-        const button = element.closest('button')
+        const button = at.closest('button')
         if (proceed && button !== null && ['', 'submit'].includes((button.getAttribute('type') ?? '').toLowerCase())) {
           button.form?.requestSubmit()
         }
         return
       }
-      case 'mouseDown': case 'mouseUp': case 'mouseMove':
-        return pointer(element, event, init)
-      case 'mouseEnter': case 'mouseLeave': {
-        const enter = event.eventType === 'mouseEnter'
-        // While a button's held the host says where the pointer is; after,
-        // GPUI's own late copies of what it already said are dropped.
-        if (pressed !== undefined) return
-        const said = told.get(element)
-        told.delete(element)
-        if (said === (enter ? 'enter' : 'leave')) return
-        element.dispatchEvent(new NativeMouseEvent(enter ? 'mouseenter' : 'mouseleave', { ...init, bubbles: false }))
-        element.dispatchEvent(new NativeMouseEvent(enter ? 'mouseover' : 'mouseout', init))
-        element.dispatchEvent(new NativeMouseEvent(enter ? 'pointerenter' : 'pointerleave', { ...init, bubbles: false, pointerType: 'mouse' }))
+      case 'auxClick': {
+        // Another button: GPUI sends it before the release. The right one
+        // opens the context menu there (macOS fires `contextmenu` on the
+        // press, before the release; there's no native menu to prevent);
+        // `auxclick` follows the release, in the same task.
+        if (lastClick !== undefined && lastClick.sameTask && node !== lastClick.node && node.contains(lastClick.node)) return
+        const click = { node, sameTask: true }
+        lastClick = click
+        queueMicrotask(() => {
+          click.sameTask = false
+        })
+        if (node instanceof NativeElement && disabledControl(element) !== null) return
+        keyboardModality = false
+        inputAt = performance.now()
+        const right = event.isRightClick === true || event.button === 2
+        const button = right ? 2 : event.button ?? 1
+        const mouse = { ...init, button, detail: event.clickCount ?? 1 }
+        const at = pressedAt(element)
+        if (right) {
+          pointerFocus(element)
+          at.dispatchEvent(new NativeMouseEvent('contextmenu', { ...mouse, buttons: BUTTONS[button] ?? 0 }))
+        }
+        queueMicrotask(() => {
+          const target = clickTarget(at, init.clientX, init.clientY)
+          if (target.isConnected) target.dispatchEvent(new NativeMouseEvent('auxclick', mouse))
+        })
         return
       }
+      case 'mouseDown': case 'mouseUp': case 'mouseMove':
+        return pointer(element, event, init)
+      case 'mouseEnter': case 'mouseLeave':
+        return hoverSignal(element, event.eventType === 'mouseEnter', init)
       case 'keyDown': return key(event, 'keydown')
       case 'keyUp': return key(event, 'keyup')
       case 'focus':
@@ -1023,10 +1079,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         element.form?.requestSubmit()
         return
       }
-      case 'scroll':
-        layout.moved()
-        element.dispatchEvent(new NativeEvent('scroll'))
-        return
+      case 'scroll': return wheel(element, event, init)
       case 'motionComplete':
         settled(element)
         layout.moved()
@@ -1036,27 +1089,44 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         element.dispatchEvent(new NativeEvent(event.eventType, init))
     }
   }
-  // PRESSES: GPUI sends a press's moves and its release only to the element
-  // it pressed, and nothing else hears them: no enter or leave for what the
-  // pointer crosses. A browser's drag code listens on document (@foldkit/ui's
-  // DragAndDrop, Pixel Art's mouseup) and hovers on (Pixel Art paints each
-  // cell a drag enters). So:
-  // - a press, its moves and its release are dispatched, pointer event then
-  //   mouse event as a browser fires them, on the pressed element whether or
-  //   not it listens for them itself, and bubble to whoever does;
-  // - if the app takes the pressed element out of the document mid-gesture
-  //   (a drag lifts the card out of its list), GPUI's element is held,
-  //   unseen and out of the layout, until the release, or GPUI would have
-  //   nowhere to send the rest; what it hears is dispatched on the body;
-  // - each move with the button held is hit-tested against the layout
-  //   (elementsFromPoint), and mouseout, mouseleave, mouseover and
-  //   mouseenter fire as the element under the pointer changes.
+  // POINTER (EVENTS.md is the contract)
+  //
+  // GPUI hit-tests for itself and tells only the topmost element that listens:
+  // its own enter and leave are exclusive (a parent "leaves" as the pointer
+  // goes onto a child that listens), and while a button's held it sends the
+  // moves and release only to what it pressed. A browser says where the
+  // pointer is from its hit test. So does the host: every move GPUI reports
+  // (to whatever it hit, TRACKING) is hit-tested against GPUI's last layout
+  // (elementsFromPoint), and the host fires the browser's boundary events as
+  // the element under the pointer changes:
+  // - pointerout, pointerleave (inner to outer), pointerover, pointerenter
+  //   (outer to inner), then mouseout, mouseleave, mouseover, mouseenter, then
+  //   the move itself, at the element under the pointer;
+  // - a press and its moves and release go to the element under the pointer
+  //   too (or the one with pointer capture), bubbling to document and window;
+  // - GPUI's enter and leave only say the pointer moved: they count when no
+  //   move came with them (the pointer left the window, or nothing reported).
+  // Where the layout has nothing at the point (not laid out yet), the element
+  // GPUI sent the event to stands in.
+  //
+  // If the app takes the pressed element out of the document mid-gesture (a
+  // drag lifts the card out of its list), GPUI's element is held, unseen and
+  // out of the layout, until the release, or GPUI would have nowhere to send
+  // the rest of the gesture.
   let pressed: { id: number; node: NativeElement; held: boolean } | undefined
-  /** The element under the pointer while a button's held, as the host has it. */
+  /** The element under the pointer, as the host last said. */
   let hovered: NativeElement | undefined
-  /** What the host said about hover during a press, so GPUI's late copies
-   *  (it never saw the pointer leave the pressed element) are dropped. */
-  const told = new Map<NativeElement, 'enter' | 'leave'>()
+  /** Where the pointer last was (window coordinates). */
+  let pointerAt: { x: number; y: number } | undefined
+  /** The deepest element under the pointer when the button went down. */
+  let pressDown: NativeElement | undefined
+  /** How many listeners care where the pointer is (HOVER_TYPES). */
+  let hoverListeners = 0
+  /** Pointer capture: the element that has it, and the change asked for
+   *  (`setPointerCapture`, `releasePointerCapture`) that takes effect before
+   *  the next pointer event, as the Pointer Events spec has it. */
+  let captured: NativeElement | undefined
+  let pendingCapture: NativeElement | null | undefined
   /** GPUI sends one press to every listening element under the pointer,
    *  innermost first; the innermost one's dispatch already bubbled. */
   let lastPointer: { node: NativeElement; type: string; sameTask: boolean } | undefined
@@ -1066,6 +1136,23 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     mouseDown: ['pointerdown', 'mousedown'], mouseMove: ['pointermove', 'mousemove'], mouseUp: ['pointerup', 'mouseup'],
   }
   type Init = { bubbles: boolean; cancelable: boolean; clientX: number; clientY: number; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean }
+  /** The current task: GPUI delivers what one input caused in one task. */
+  let currentTask: object | undefined
+  const thisTask = () => {
+    if (currentTask === undefined) {
+      const task = {}
+      currentTask = task
+      queueMicrotask(() => {
+        if (currentTask === task) currentTask = undefined
+      })
+    }
+    return currentTask
+  }
+  let movedIn: object | undefined
+  const wantsHover = () => hoverListeners > 0
+  /** The topmost element GPUI last painted at the point. */
+  const under = (x: number, y: number): NativeElement | undefined => elementsAt(x, y)[0]
+  const pointerInit = (init: Init) => ({ ...init, screenX: init.clientX, screenY: init.clientY, pointerId: 1, pointerType: 'mouse', isPrimary: true })
   const pointer = (node: NativeElement, event: EventPayload, init: Init) => {
     const type = event.eventType
     if (lastPointer?.sameTask === true && lastPointer.type === type && node !== lastPointer.node && node.contains(lastPointer.node)) return
@@ -1075,39 +1162,53 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (pressed !== undefined && ((type === 'mouseMove' && event.pressedButton == null) || type === 'mouseDown')) {
       const lost = pressed
       pointer(lost.node, { ...event, elementId: lost.id, eventType: 'mouseUp', button: 0, clickCount: 1 }, init)
-      if (pressed === lost) release()
+      if (pressed === lost) release(init)
     }
     const last = { node, type, sameTask: true }
     lastPointer = last
     queueMicrotask(() => {
       last.sameTask = false
     })
+    pointerAt = { x: init.clientX, y: init.clientY }
+    if (type === 'mouseMove') movedIn = thisTask()
+    const hit = wantsHover() || type !== 'mouseMove' || pressed !== undefined ? under(init.clientX, init.clientY) : undefined
     if (type === 'mouseDown') {
       pressed = { id: event.elementId, node, held: false }
-      told.clear()
-      // GPUI has told the DOM the pointer is over what it pressed.
-      hovered = elementsAt(init.clientX, init.clientY)[0] ?? node
+      pressDown = hit ?? node
     }
     const capturing = pressed !== undefined && pressed.id === event.elementId
-    if (type === 'mouseMove' && capturing && event.pressedButton != null) hoverTo(elementsAt(init.clientX, init.clientY)[0], init)
+    processCapture(init)
     // Out of the document (held): what's above it hears it, as in a browser.
-    const at = node.isConnected ? node : body
-    const mouse = {
-      ...init, screenX: init.clientX, screenY: init.clientY, button: event.button ?? 0,
-      buttons: type === 'mouseUp' ? 0 : 1, detail: type === 'mouseMove' ? 0 : event.clickCount ?? 1,
-    }
+    const over = captured ?? hit ?? (node.isConnected ? node : body)
+    if (wantsHover()) hoverTo(over, init)
+    const button = type === 'mouseMove' ? 0 : event.button ?? 0
+    const buttons = type === 'mouseUp' ? 0 : type === 'mouseDown' ? BUTTONS[button] ?? 0
+      : event.pressedButton == null ? 0 : BUTTONS[event.pressedButton] ?? 0
+    const mouse = { ...init, screenX: init.clientX, screenY: init.clientY, button, buttons, detail: type === 'mouseMove' ? 0 : event.clickCount ?? 1 }
     const [pointerType, mouseType] = POINTER_AND_MOUSE[type]!
-    at.dispatchEvent(new NativePointerEvent(pointerType, { ...mouse, pointerId: 1, pointerType: 'mouse', isPrimary: true }))
-    at.dispatchEvent(new NativeMouseEvent(mouseType, mouse))
-    if (type === 'mouseUp' && capturing) release()
+    over.dispatchEvent(new NativePointerEvent(pointerType, pointerInit(mouse)))
+    // The capture ends with the release, before its compatibility mouse event.
+    if (type === 'mouseUp' && (captured !== undefined || pendingCapture != null)) {
+      pendingCapture = null
+      processCapture(init)
+    }
+    over.dispatchEvent(new NativeMouseEvent(mouseType, mouse))
+    if (type === 'mouseUp' && capturing) release(init)
   }
-  /** The press is over: a held element goes, and listeners dropped during
-   *  the gesture stop now. */
-  const release = () => {
+  /** The press is over: a held element goes, listeners dropped during the
+   *  gesture stop now, and hover follows the pointer again. */
+  const release = (init: Init) => {
     const done = pressed
     pressed = undefined
-    hovered = undefined
+    if (captured !== undefined || pendingCapture != null) {
+      pendingCapture = null
+      processCapture(init)
+    }
     if (done === undefined) return
+    if (wantsHover() && pointerAt !== undefined) {
+      const now = under(pointerAt.x, pointerAt.y)
+      if (now !== undefined) hoverTo(now, init)
+    }
     if (!done.held) {
       for (const native of GESTURE) if ((nativeCounts.get(done.node)?.get(native) ?? 0) === 0 && done.node.nativeId === done.id) syncListener(done.node, native, false)
       return
@@ -1117,6 +1218,43 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       if (nodes.get(done.id) === done.node) nodes.delete(done.id)
       mutations.destroyElement(done.id)
       schedule()
+    })
+  }
+  /** A capture asked for takes effect: lostpointercapture where it was (at
+   *  the document if that element has gone), gotpointercapture where it's
+   *  going. */
+  const processCapture = (init: Init) => {
+    if (captured !== undefined && !captured.isConnected && pendingCapture === undefined) pendingCapture = null
+    if (pendingCapture === undefined) return
+    const next = pendingCapture ?? undefined
+    pendingCapture = undefined
+    if (next === captured) return
+    const previous = captured
+    captured = next
+    const event = (type: string) => new NativePointerEvent(type, { ...pointerInit(init), bubbles: true, cancelable: false })
+    if (previous !== undefined) (previous.isConnected ? previous : document).dispatchEvent(event('lostpointercapture'))
+    captured?.dispatchEvent(event('gotpointercapture'))
+  }
+  /** GPUI's enter or leave, with no position: if no move came in the same
+   *  task (which said exactly where the pointer went), the pointer entered
+   *  `element`, or left it for somewhere nothing reports (out of the window). */
+  let signal: { element: NativeElement; enter: boolean; task: object } | undefined
+  const hoverSignal = (element: NativeElement, enter: boolean, init: Init) => {
+    if (pressed !== undefined || !wantsHover()) return
+    const task = thisTask()
+    const queued = signal?.task === task
+    // An enter in the same task says more than a leave (GPUI sends both as
+    // the pointer crosses from one element to another).
+    if (!queued || enter || !signal!.enter) signal = { element, enter, task }
+    if (queued) return
+    queueMicrotask(() => {
+      const said = signal
+      signal = undefined
+      if (said === undefined || movedIn === task || pressed !== undefined) return
+      const at = pointerAt === undefined ? init : { ...init, clientX: pointerAt.x, clientY: pointerAt.y }
+      const hit = pointerAt === undefined ? undefined : under(pointerAt.x, pointerAt.y)
+      if (said.enter) hoverTo(hit !== undefined && said.element.contains(hit) ? hit : said.element, at)
+      else if (hovered !== undefined && said.element.contains(hovered)) hoverTo(hit !== undefined && !said.element.contains(hit) ? hit : undefined, at)
     })
   }
   /** The pressed element (or what holds it) leaves the document mid-gesture:
@@ -1132,8 +1270,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (outOf !== press.node) mutations.appendChild(body.nativeId, press.id)
     mutations.setStyle(press.id, HELD)
   }
-  /** The browser's out, leave, over and enter, as the pointer moves from the
-   *  hovered element to `next`. */
+  /** The browser's boundary events as the pointer moves from the hovered
+   *  element to `next`: pointer events first, then the mouse ones. */
   const hoverTo = (next: NativeElement | undefined, init: Init) => {
     const previous = hovered
     if (next === previous) return
@@ -1145,22 +1283,74 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     }
     const was = chain(previous)
     const now = chain(next)
-    const mouse = { ...init, screenX: init.clientX, screenY: init.clientY }
-    previous?.dispatchEvent(new NativeMouseEvent('mouseout', { ...mouse, relatedTarget: next ?? null }))
-    for (const element of was) {
-      if (now.includes(element)) continue
-      element.dispatchEvent(new NativeMouseEvent('mouseleave', { ...mouse, bubbles: false, relatedTarget: next ?? null }))
-      element.dispatchEvent(new NativePointerEvent('pointerleave', { ...mouse, bubbles: false, relatedTarget: next ?? null }))
-      told.set(element, 'leave')
-    }
-    next?.dispatchEvent(new NativeMouseEvent('mouseover', { ...mouse, relatedTarget: previous ?? null }))
-    for (const element of now.slice().reverse()) {
-      if (was.includes(element)) continue
-      element.dispatchEvent(new NativeMouseEvent('mouseenter', { ...mouse, bubbles: false, relatedTarget: previous ?? null }))
-      element.dispatchEvent(new NativePointerEvent('pointerenter', { ...mouse, bubbles: false, relatedTarget: previous ?? null }))
-      told.set(element, 'enter')
+    const left = was.filter(element => !now.includes(element))
+    const entered = now.filter(element => !was.includes(element)).reverse()
+    const mouse = { ...init, screenX: init.clientX, screenY: init.clientY, cancelable: false }
+    const out = { ...mouse, relatedTarget: next ?? null }
+    const over = { ...mouse, relatedTarget: previous ?? null }
+    previous?.dispatchEvent(new NativePointerEvent('pointerout', pointerInit(out)))
+    for (const element of left) element.dispatchEvent(new NativePointerEvent('pointerleave', { ...pointerInit(out), bubbles: false }))
+    next?.dispatchEvent(new NativePointerEvent('pointerover', pointerInit(over)))
+    for (const element of entered) element.dispatchEvent(new NativePointerEvent('pointerenter', { ...pointerInit(over), bubbles: false }))
+    previous?.dispatchEvent(new NativeMouseEvent('mouseout', { ...out, cancelable: true }))
+    for (const element of left) element.dispatchEvent(new NativeMouseEvent('mouseleave', { ...out, bubbles: false }))
+    next?.dispatchEvent(new NativeMouseEvent('mouseover', { ...over, cancelable: true }))
+    for (const element of entered) element.dispatchEvent(new NativeMouseEvent('mouseenter', { ...over, bubbles: false }))
+  }
+  /** Where a click lands: the nearest element both the press and the
+   *  release were over (UI Events), from GPUI's last layout. */
+  const clickTarget = (pressedOne: NativeElement, x: number, y: number): NativeElement => {
+    const down = pressedAt(pressedOne)
+    const up = under(x, y) ?? down
+    for (let at: NativeElement | null = down; at !== null; at = at.parentElement) if (at.contains(up)) return at
+    return down
+  }
+  /** The deepest element under the press, if GPUI's target agrees. */
+  const pressedAt = (pressedOne: NativeElement): NativeElement =>
+    pressDown !== undefined && (pressedOne.contains(pressDown) || !pressedOne.isConnected) ? pressDown : pressedOne
+  /** A press focuses the nearest focusable element, without a ring; one
+   *  already focused by a key loses its ring, as in a browser. */
+  const pointerFocus = (element: NativeElement) => {
+    const focusable = element instanceof NativeElement ? focusableAncestor(element) : null
+    if (focusable !== null && focusable !== focused) setFocus(focusable, false, false)
+    else if (focusable !== null && focusVisible && !takesText(focusable)) {
+      focusVisible = false
+      dirty.add(focusable)
     }
   }
+  /** GPUI's `scroll` is the wheel, sent to every listening element under the
+   *  pointer, innermost first, after GPUI has scrolled. A browser fires one
+   *  `wheel` at the element under the pointer, bubbling, and `scroll` at each
+   *  scroll area that moved. GPUI has already scrolled, so the wheel can't
+   *  be cancelled. */
+  let lastWheel: { node: NativeElement; sameTask: boolean } | undefined
+  const wheel = (element: NativeElement, event: EventPayload, init: Init) => {
+    layout.moved()
+    if (!(lastWheel?.sameTask === true && element !== lastWheel.node && element.contains(lastWheel.node))) {
+      const turn = { node: element, sameTask: true }
+      lastWheel = turn
+      queueMicrotask(() => {
+        turn.sameTask = false
+      })
+      pointerAt = { x: init.clientX, y: init.clientY }
+      const at = under(init.clientX, init.clientY) ?? element
+      // GPUI's deltas are how far the content moves (down is negative); a
+      // browser's are how far the view does.
+      at.dispatchEvent(new NativeWheelEvent('wheel', {
+        ...init, cancelable: false, screenX: init.clientX, screenY: init.clientY,
+        deltaX: -(event.deltaX ?? 0) || 0, deltaY: -(event.deltaY ?? 0) || 0, deltaMode: event.precise === false ? 1 : 0,
+      }))
+    }
+    if (!scrollable(element) || element.nativeId === 0) return
+    const before = announced.get(element)
+    const now = offsetOf(element)
+    if (before !== undefined && before[0] === now[0] && before[1] === now[1]) return
+    announced.set(element, now)
+    element.dispatchEvent(new NativeEvent('scroll'))
+  }
+  /** Each scroll area's offset as its last `scroll` event (or the host's own
+   *  scrolling) had it: a wheel at the end of the area fires none. */
+  const announced = new WeakMap<NativeElement, readonly [number, number]>()
 
   /** Text GPUI's editor took: the DOM's value, then `input`. */
   const typed = (element: NativeElement, value: string) => {
@@ -1202,6 +1392,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const scrollTo = (element: NativeElement, x: number, y: number) => {
     renderer.scrollTo?.(element.nativeId, x, y)
     offsets.set(element, [x, y])
+    announced.set(element, [x, y])
     layout.moved()
   }
   /** gpuix 0.10 reports a box from the content corner (moved by the left and
@@ -1275,7 +1466,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const out: Array<NativeElement> = []
     for (const id of layout.at(x, y)) {
       const node = nodes.get(id)
-      if (node instanceof NativeElement && hittable(node)) out.push(node)
+      // A pressed element held for GPUI after the app removed it is out of the document.
+      if (node instanceof NativeElement && node.isConnected && hittable(node)) out.push(node)
     }
     if (out.length > 0) out.push(document.documentElement)
     return out
@@ -1344,6 +1536,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
           if (back.isConnected && back.nativeId !== 0) setFocus(back, false)
         })
       }
+      // What was under the pointer goes: what held it is, until the pointer
+      // moves (a browser fires nothing for the removal itself).
+      const outer = parent instanceof NativeElement ? parent : undefined
+      if (hovered !== undefined && node.contains(hovered)) hovered = outer
+      if (pressDown !== undefined && node.contains(pressDown)) pressDown = outer
       const id = node.nativeId
       const away = homedWithin(node).map(element => element.nativeId)
       if (node instanceof NativeElement) homes.delete(node)
@@ -1363,7 +1560,13 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         schedule()
         return
       }
-      dirty.add(element.nativeId === 0 ? body : element)
+      if (element.nativeId !== 0) dirty.add(element)
+      // Not drawn: not in the document yet (snabbdom sets a new element up
+      // before it inserts it, and inserting it styles it), or in <head>,
+      // which GPUI doesn't draw. Only <html> reaches what's drawn: through
+      // what the body inherits from it, and its overflow (the viewport's).
+      else if (element === document.documentElement) rootChanged = true
+      else return
       schedule()
     },
     text: node => {
@@ -1383,7 +1586,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       const counts = domCounts.get(node) ?? new Map<string, number>()
       domCounts.set(node, counts)
       counts.set(type, Math.max(0, (counts.get(type) ?? 0) + delta))
-      for (const native of DOM_TO_NATIVE[type] ?? []) countNative(node, native, delta)
+      if (HOVER_TYPES.has(type)) hoverListeners = Math.max(0, hoverListeners + delta)
+      // What a listener on document (or window) hears bubbles up from the
+      // body, so GPUI sends it there.
+      const at = node instanceof NativeDocument ? body : node
+      for (const native of DOM_TO_NATIVE[type] ?? []) countNative(at, native, delta)
     },
     focus: (element, options) => {
       if (element.nativeId === 0 || !isFocusable(element)) return
@@ -1411,6 +1618,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     },
     selectedText: () => renderer.getSelectedText?.() ?? null,
     clearSelection: () => renderer.clearSelection?.(),
+    capture: (element, on) => {
+      // Only while a button's held (the spec's active buttons state).
+      if (on && pressed !== undefined) pendingCapture = element
+      else if (!on && (pendingCapture !== undefined ? pendingCapture : captured) === element) pendingCapture = null
+    },
+    hasCapture: element => (pendingCapture !== undefined ? pendingCapture : captured) === element,
     nextFrame: callback => {
       if (detached) return
       nextFrame(callback)
@@ -1431,6 +1644,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     registerEventHandler(eventHandlers, sentinel, 'mouseDownOutside', event => {
       keyboardModality = false
       guard.input()
+      // Where the press landed, for its click's target (and before any
+      // element hears it: GPUI runs this first).
+      if (event.x !== undefined && event.y !== undefined) {
+        pointerAt = { x: event.x, y: event.y }
+        pressDown = under(event.x, event.y)
+      }
       // Seen after GPUI dispatched the press, so its focus is committed.
       press(event.x, event.y)
     })
@@ -1455,6 +1674,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (body.nativeId !== 0) return
     refusePasswords(body)
     mount(body)
+    track(body)
     mountSentinel()
     mutations.setRoot(body.nativeId)
     schedule()
@@ -1468,6 +1688,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     onWindowKeyUp: event => key(event, 'keyup'),
   })
   renderer.setWindowKeyEvents?.(true, true, binding.windowKeyEventId)
+  rootReached = rootReach()
   sync()
 
   return {

@@ -37,6 +37,7 @@ import {
   NativeResizeObserver,
   NativeText,
   NativeUIEvent,
+  NativeWheelEvent,
   NativeWindow,
 } from './dom.ts'
 import { type HostTimings, createHost } from './host.ts'
@@ -71,7 +72,7 @@ const installGlobals = (window: NativeWindow) => {
     Text: NativeText, Comment: NativeComment, DocumentFragment: NativeDocumentFragment, Document: NativeDocument,
     EventTarget: NativeEventTarget, Event: NativeEvent, UIEvent: NativeUIEvent, CustomEvent: NativeCustomEvent,
     MouseEvent: NativeMouseEvent, PointerEvent: NativePointerEvent, KeyboardEvent: NativeKeyboardEvent,
-    FocusEvent: NativeFocusEvent, InputEvent: NativeInputEvent, DragEvent: NativeMouseEvent, WheelEvent: NativeMouseEvent,
+    FocusEvent: NativeFocusEvent, InputEvent: NativeInputEvent, DragEvent: NativeMouseEvent, WheelEvent: NativeWheelEvent,
     HTMLInputElement: tagClass('input'), HTMLTextAreaElement: tagClass('textarea'), HTMLButtonElement: tagClass('button'),
     HTMLFormElement: tagClass('form'), HTMLSelectElement: tagClass('select'), HTMLDialogElement: tagClass('dialog'),
     HTMLAnchorElement: tagClass('a'), HTMLImageElement: tagClass('img'), HTMLCanvasElement: tagClass('canvas'),

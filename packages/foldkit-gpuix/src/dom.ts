@@ -59,11 +59,21 @@ export interface Host {
   clearSelection(): void
   /** Runs `callback` before GPUI draws its next frame (requestAnimationFrame). */
   nextFrame(callback: () => void): void
+  /** `setPointerCapture` (on) and `releasePointerCapture` (off); whether
+   *  `element` has (or is about to get) the capture. */
+  capture(element: NativeElement, on: boolean): void
+  hasCapture(element: NativeElement): boolean
 }
 
 // EVENTS
+//
+// Dispatch as WHATWG DOM has it (EVENTS.md is the contract). A listener is
+// its callback and capture flag: adding the same pair twice adds it once. A
+// listener removed while an event is being dispatched doesn't run, even if
+// the dispatch had reached its target; one added doesn't run until the next
+// dispatch. At the target, capture listeners run before the others.
 
-type Listener = { callback: EventListenerOrEventListenerObject; capture: boolean; once: boolean }
+type Listener = { callback: EventListenerOrEventListenerObject; capture: boolean; once: boolean; passive: boolean; removed: boolean }
 
 export class NativeEvent {
   static readonly NONE = 0
@@ -86,6 +96,9 @@ export class NativeEvent {
   defaultPrevented = false
   stopped = false
   stoppedNow = false
+  /** Inside a passive listener, whose `preventDefault()` does nothing. */
+  passive = false
+  dispatching = false
   constructor(type: string, init: Record<string, unknown> = {}) {
     this.type = type
     this.bubbles = init['bubbles'] === true
@@ -96,11 +109,15 @@ export class NativeEvent {
     }
   }
   preventDefault() {
-    if (this.cancelable) this.defaultPrevented = true
+    if (this.cancelable && !this.passive) this.defaultPrevented = true
   }
+  get returnValue() { return !this.defaultPrevented }
+  set returnValue(value: boolean) { if (!value) this.preventDefault() }
   stopPropagation() {
     this.stopped = true
   }
+  get cancelBubble() { return this.stopped }
+  set cancelBubble(value: boolean) { if (value) this.stopped = true }
   stopImmediatePropagation() {
     this.stopped = true
     this.stoppedNow = true
@@ -141,6 +158,18 @@ export class NativePointerEvent extends NativeMouseEvent {
   declare pointerId: number
   declare pointerType: string
   declare isPrimary: boolean
+}
+/** A wheel turn: deltas in CSS pixels (`DOM_DELTA_PIXEL`) or lines, positive
+ *  towards the end (down, right), as a browser reports them. */
+export class NativeWheelEvent extends NativeMouseEvent {
+  static readonly DOM_DELTA_PIXEL = 0
+  static readonly DOM_DELTA_LINE = 1
+  static readonly DOM_DELTA_PAGE = 2
+  static override defaults = { ...NativeMouseEvent.defaults, deltaX: 0, deltaY: 0, deltaZ: 0, deltaMode: 0 }
+  declare deltaX: number
+  declare deltaY: number
+  declare deltaZ: number
+  declare deltaMode: number
 }
 export class NativeKeyboardEvent extends NativeUIEvent {
   static override defaults = { ...NativeUIEvent.defaults, ...MODIFIERS, key: '', code: '', repeat: false, isComposing: false }
@@ -186,17 +215,23 @@ export class NativeEventTarget {
     if (callback === null) return
     const capture = typeof options === 'boolean' ? options : options?.capture === true
     const once = typeof options === 'object' && options.once === true
+    const passive = typeof options === 'object' && options.passive === true
+    const signal = typeof options === 'object' ? options.signal : undefined
+    if (signal?.aborted === true) return
     const list = this.listeners.get(type) ?? []
     if (list.some(listener => listener.callback === callback && listener.capture === capture)) return
-    list.push({ callback, capture, once })
+    list.push({ callback, capture, once, passive, removed: false })
     this.listeners.set(type, list)
     this.listenersChanged(type, 1)
+    signal?.addEventListener('abort', () => this.removeEventListener(type, callback, capture), { once: true })
   }
   removeEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions) {
     const capture = typeof options === 'boolean' ? options : options?.capture === true
     const list = this.listeners.get(type)
     const index = list?.findIndex(listener => listener.callback === callback && listener.capture === capture) ?? -1
     if (list === undefined || index === -1) return
+    // A dispatch under way holds the list as it was: it skips this one.
+    list[index]!.removed = true
     list.splice(index, 1)
     this.listenersChanged(type, -1)
   }
@@ -204,16 +239,18 @@ export class NativeEventTarget {
   /** The DOM's three phases: capture down to the target, the target, bubble up. */
   dispatchEvent(event: NativeEvent | Event): boolean {
     const native = event as NativeEvent
+    if (native.dispatching) throw new DOMException('The event is already being dispatched.', 'InvalidStateError')
+    native.dispatching = true
     native.target = this
     const path = native.composedPath()
-    const run = (at: NativeEventTarget, phase: number) => {
+    const run = (at: NativeEventTarget, phase: number, capture: boolean) => {
       native.currentTarget = at
       native.eventPhase = phase
       for (const listener of [...(at.listeners.get(native.type) ?? [])]) {
-        if (phase === 1 && !listener.capture) continue
-        if (phase === 3 && listener.capture) continue
+        if (listener.removed || listener.capture !== capture) continue
         if (listener.once) at.removeEventListener(native.type, listener.callback, listener.capture)
         const { callback } = listener
+        native.passive = listener.passive
         // As a browser: a listener that throws is reported, and the event
         // goes on to the next one.
         try {
@@ -222,14 +259,19 @@ export class NativeEventTarget {
         } catch (error) {
           windowOf(at)?.report('listener', error, { type: native.type, target: describeTarget(at) })
         }
+        native.passive = false
         if (native.stoppedNow) break
       }
     }
-    for (let i = path.length - 1; i > 0 && !native.stopped; i--) run(path[i]!, 1)
-    if (!native.stopped) run(this, 2)
-    if (native.bubbles) for (let i = 1; i < path.length && !native.stopped; i++) run(path[i]!, 3)
+    for (let i = path.length - 1; i > 0 && !native.stopped; i--) run(path[i]!, 1, true)
+    if (!native.stopped) run(this, 2, true)
+    if (!native.stopped) run(this, 2, false)
+    if (native.bubbles) for (let i = 1; i < path.length && !native.stopped; i++) run(path[i]!, 3, false)
     native.currentTarget = null
     native.eventPhase = 0
+    native.stopped = false
+    native.stoppedNow = false
+    native.dispatching = false
     return !native.defaultPrevented
   }
 }
@@ -616,6 +658,17 @@ export class NativeElement extends NativeNode {
     if (isDisabled(this)) return
     this.dispatchEvent(new NativeMouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
   }
+  // Pointer capture (host.ts): there's one pointer, the mouse, id 1.
+  setPointerCapture(pointerId: number) {
+    if (pointerId !== 1) throw new DOMException(`No active pointer with id ${pointerId}.`, 'NotFoundError')
+    if (!this.isConnected) throw new DOMException('The element is not in a document.', 'InvalidStateError')
+    this.ownerDocument.host?.capture(this, true)
+  }
+  releasePointerCapture(pointerId: number) {
+    if (pointerId !== 1) throw new DOMException(`No active pointer with id ${pointerId}.`, 'NotFoundError')
+    if (this.hasPointerCapture(pointerId)) this.ownerDocument.host?.capture(this, false)
+  }
+  hasPointerCapture(pointerId: number) { return pointerId === 1 && this.ownerDocument.host?.hasCapture(this) === true }
   // Focus, layout, scroll: GPUI's (host.ts)
   focus(options?: { focusVisible?: boolean }) { this.ownerDocument.host?.focus(this, options) }
   blur() { this.ownerDocument.host?.blur(this) }
@@ -778,6 +831,10 @@ export class NativeWindow extends NativeEventTarget {
   constructor(readonly document: NativeDocument) {
     super()
     document.defaultView = this
+  }
+  /** What a listener here hears comes up through the document (host.ts). */
+  protected override listenersChanged(type: string, delta: number) {
+    this.document.host?.listening(this.document, type, delta)
   }
   /** A file per app once it has an `appId` (storage.ts, set by attachGpuix).
    *  Without one it's in memory, and the first write says so once: FoldKit's

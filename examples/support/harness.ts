@@ -117,6 +117,9 @@ export type Headless = {
   /** A window key with modifiers held: "ctrl-z", "cmd-shift-z". */
   shortcut: (keystroke: string) => Promise<void>
   settle: () => Promise<void>
+  /** Says GPUI laid out again, after a test gave the fake tree its boxes
+   *  (`gpui.setBounds`): the fake doesn't lay out. */
+  relayout: () => void
   /** GPUI's tree is what the document says it should be. */
   inSync: () => boolean
   close: () => Promise<void>
@@ -142,12 +145,23 @@ export type Metal = {
   /** Saves this frame as `<example>-<name>.png` and returns its pixels. */
   screenshot: (name: string) => { path: string } & ReturnType<typeof readPng>
   settle: () => Promise<void>
+  /** One frame, without waiting for the app to go idle (a drag's
+   *  requestAnimationFrame loop never does): GPUI draws, and what it got
+   *  from the simulated input reaches the app. */
+  frame: () => Promise<void>
   close: () => Promise<void>
 }
 
 /** How long each sync from the document to GPUI took, and what it sent. */
 export type Synced = { syncMs: number; mutations: number }
-export type HeadlessOptions = { onSynced?: (timings: Synced) => void }
+export type HeadlessOptions = {
+  onSynced?: (timings: Synced) => void
+  /** Put in `localStorage` before the app starts (what an earlier run saved). */
+  storage?: Readonly<Record<string, string>>
+}
+const seed = (storage: { setItem: (key: string, value: string) => void }, options: HeadlessOptions) => {
+  for (const [key, value] of Object.entries(options.storage ?? {})) storage.setItem(key, value)
+}
 
 export const openHeadless = async (id: string, options: HeadlessOptions = {}): Promise<Headless> =>
   (await rendererFor(id)) === 'gpuix' ? gpuixHeadless(id, options) : mirrorHeadless(id, options)
@@ -237,6 +251,7 @@ const gpuixHeadless = async (id: string, options: HeadlessOptions): Promise<Head
     css: example.css, viewport: { width: example.meta.width, height: example.meta.height },
     ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
   })
+  seed(app.window.localStorage, options)
   example.start(app.container)
   await app.settle()
   await app.settle()
@@ -273,9 +288,15 @@ const gpuixHeadless = async (id: string, options: HeadlessOptions): Promise<Head
       send(hitTarget(gpui, document, idFor, field, 'change'), { eventType: 'change', value })
       await app.settle()
     },
-    // GPUI sends keys as the window's: to whatever has focus.
+    // GPUI sends keys as the window's: to whatever has focus, so the key
+    // goes to the nearest focusable element showing `text`, focused first.
     key: async (key, text) => {
-      if (text !== undefined) (findElement(document, text) as unknown as NativeElement).focus()
+      if (text !== undefined) {
+        let at: NativeElement | null = findElement(document, text) as unknown as NativeElement
+        while (at !== null && at.tabIndex < 0) at = at.parentElement
+        if (at === null) throw new Error(`nothing focusable shows "${text}"`)
+        at.focus()
+      }
       await app.press(key)
     },
     shortcut: async keystroke => {
@@ -283,6 +304,7 @@ const gpuixHeadless = async (id: string, options: HeadlessOptions): Promise<Head
       await app.press(key, modifiers)
     },
     settle: app.settle,
+    relayout: () => host.relayout(),
     inSync: () => adapterInSync(gpui, app.document.body),
     close: async () => app.close(),
   }
@@ -295,6 +317,7 @@ const gpuixMetal = async (id: string, size: { width: number; height: number } | 
   const app = await openGpuixMetal(shotName(id, 'gpuix'), { width, height }, {
     css: example.css, ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
   })
+  seed(app.window.localStorage, options)
   example.start(app.container)
   await app.settle()
   await app.settle()
@@ -326,6 +349,7 @@ const gpuixMetal = async (id: string, size: { width: number; height: number } | 
       return { path, ...readPng(path) }
     },
     settle: app.settle,
+    frame: app.settle,
     close: async () => app.close(),
   }
 }
@@ -339,6 +363,7 @@ export const mirrorHeadless = async (id: string, options: HeadlessOptions = {}):
     css: example.css, viewport: { width: example.meta.width, height: example.meta.height },
     ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
   })
+  seed(mounted.window.localStorage, options)
   example.start(mounted.container)
   await mounted.settle()
   const { gpui, document } = mounted
@@ -376,6 +401,7 @@ export const mirrorHeadless = async (id: string, options: HeadlessOptions = {}):
       await mounted.settle()
     },
     settle: mounted.settle,
+    relayout: () => mounted.mirror.layoutChanged(),
     inSync: mounted.inSync,
     close: mounted.close,
   }
@@ -390,6 +416,7 @@ export const mirrorMetal = async (id: string, size?: { width: number; height: nu
   const dom = attachDom(renderer as unknown as NativeRenderer, {
     css: example.css, viewport: { width, height }, ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
   })
+  seed(dom.window.localStorage, options)
   example.start(dom.container)
   const document = dom.window.document as unknown as Document
   const settle = async () => {
@@ -436,6 +463,7 @@ export const mirrorMetal = async (id: string, size?: { width: number; height: nu
       return { path, ...readPng(path) }
     },
     settle,
+    frame: async () => renderer.flush(),
     close: async () => {
       dom.detach()
       await dom.window.happyDOM.abort()

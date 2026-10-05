@@ -66,6 +66,9 @@ const tagClass = (tag: string) =>
     }
   }
 
+/** There's no shadow DOM, so no node is ever one of these. */
+class NativeShadowRoot {}
+
 /** Makes `document`, `window` and the DOM classes global, as a browser has
  *  them; returns a function that puts the previous ones back. */
 const installGlobals = (window: NativeWindow) => {
@@ -83,6 +86,10 @@ const installGlobals = (window: NativeWindow) => {
     // (FKN-29's per-frame layout). IntersectionObserver isn't built yet:
     // absent, so feature detection says so.
     MutationObserver: NativeMutationObserver, ResizeObserver: NativeResizeObserver, IntersectionObserver: undefined,
+    // No shadow DOM, but the class, as every browser has it: @foldkit/ui's
+    // anchor asks `root instanceof ShadowRoot` (it threw without one, so no
+    // Listbox, Menu or Popover panel was ever placed), and nothing here is one.
+    ShadowRoot: NativeShadowRoot,
     navigator: window.navigator,
     requestAnimationFrame: window.requestAnimationFrame.bind(window),
     cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
@@ -95,6 +102,11 @@ const installGlobals = (window: NativeWindow) => {
   const previous = new Map(Object.keys(globals).map(name => [name, Object.getOwnPropertyDescriptor(target, name)]))
   for (const [name, value] of Object.entries(globals)) {
     Object.defineProperty(target, name, { value, configurable: true, writable: true, enumerable: true })
+  }
+  // A browser's window carries the DOM's classes too (`window.HTMLElement`):
+  // Floating UI checks `instanceof` against the node's own window.
+  for (const [name, value] of Object.entries(globals)) {
+    if (/^[A-Z]/.test(name) && !(name in window)) Object.defineProperty(window, name, { value, configurable: true, writable: true })
   }
   return () => {
     for (const [name, descriptor] of previous) {

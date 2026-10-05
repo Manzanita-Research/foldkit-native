@@ -746,3 +746,48 @@ describe('links', () => {
     expect(link.getAttribute('target')).toBe('_blank')
   })
 })
+
+describe('what Floating UI and @foldkit/ui expect of a browser', () => {
+  test('focus() doesn\'t land on an element that isn\'t rendered or is visibility: hidden', async () => {
+    app = mountHeadless()
+    const make = (style: string) => {
+      const element = app!.document.createElement('div')
+      element.setAttribute('tabindex', '0')
+      element.setAttribute('style', style)
+      app!.document.body.appendChild(element)
+      return element
+    }
+    const hidden = make('visibility: hidden')
+    const gone = make('display: none')
+    const shown = make('')
+    await app.settle()
+    for (const element of [hidden, gone]) {
+      element.focus()
+      expect(app.document.activeElement).not.toBe(element)
+    }
+    shown.focus()
+    expect(app.document.activeElement).toBe(shown)
+    // Shown, it takes focus (an anchored panel, once it's placed).
+    hidden.style.visibility = ''
+    await app.settle()
+    hidden.focus()
+    expect(app.document.activeElement).toBe(hidden)
+  })
+
+  test('ShadowRoot exists, as in every browser, and nothing is one; the window has the DOM classes', () => {
+    app = mountHeadless()
+    const element = app.document.createElement('div')
+    app.document.body.appendChild(element)
+    expect(typeof ShadowRoot).toBe('function')
+    expect(element.getRootNode() instanceof ShadowRoot).toBe(false)
+    const window = app.window as unknown as Record<string, unknown>
+    expect(element instanceof (window['HTMLElement'] as typeof HTMLElement)).toBe(true)
+    expect(element instanceof (window['Node'] as typeof Node)).toBe(true)
+    expect(window['ShadowRoot']).toBe(ShadowRoot)
+  })
+
+  test('a canvas has no 2D context yet: getContext is null, as a browser answers for one it can\'t give', () => {
+    app = mountHeadless()
+    expect(app.document.createElement('canvas').getContext('2d')).toBeNull()
+  })
+})

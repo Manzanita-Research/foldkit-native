@@ -657,6 +657,9 @@ export class NativeElement extends NativeNode {
   set href(value: string) { this.setAttribute('href', value) }
   get target(): string { return this.getAttribute('target') ?? '' }
   set target(value: string) { this.setAttribute('target', value) }
+  // <canvas>: no 2D context yet (gpuix's canvas element isn't mapped), so
+  // `null`, as a browser answers for a context it can't give: apps check.
+  getContext(_type: string): null { return null }
   get tabIndex(): number {
     const own = this.getAttribute('tabindex')
     if (own !== null && own !== '' && !Number.isNaN(Number(own))) return Number(own)

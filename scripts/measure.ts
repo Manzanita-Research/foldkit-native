@@ -57,7 +57,7 @@ const once = async (example: string, renderer: 'mirror' | 'gpuix', run: number):
   const started = performance.now()
   const app = await launch({
     command: process.execPath, args: ['examples/open.ts', example, marker], cwd: root,
-    env: { ...process.env, FOLDKIT_NATIVE_RENDERER: renderer },
+    env: { ...process.env, FOLDKIT_NATIVE_RENDERER: renderer, FOLDKIT_NATIVE_AUTOMATION: '1' },
   })
   const row: Record<string, Array<number>> = {}
   const record = (name: string, value: number) => (row[name] ??= []).push(value)

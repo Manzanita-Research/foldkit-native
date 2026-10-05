@@ -25,12 +25,43 @@ app.own(Runtime.embed(Runtime.makeElement({ Model, init, update, view, container
 
 `Runtime.run` works too, but it has no handle, so nothing can dispose it.
 
+## The trusted-process boundary
+
+An app on FoldKit on gpuix is one process. FoldKit, the app's code, the
+adapter and GPUI share it, with the rights of the person who started it,
+and nothing inside it is sandboxed from the rest. There is no browser
+between the app and the machine.
+
+- **Trusted**: the app's code and its dependencies, its stylesheet, the
+  environment it starts with, and its data folder. Whoever can change those
+  can already do anything the app can.
+- **Not trusted**: what reaches it while it runs: what a person types or
+  pastes, files and data it loads, and its stdin. A field's text is the
+  person's: the adapter's own reports (`onError`, or the console without
+  it) name an event's type and its element's tag and id, never a value.
+- **Automation is off unless asked for.** gpuix can serve automation over
+  stdin and stdout: whoever writes to the process's stdin can click, type,
+  read the tree and the painted text (what fields show included), and take
+  screenshots. gpuix's own `createNativeRenderer` serves it whenever stdin
+  isn't a terminal, so a shipped app started with a pipe (by a launcher, a
+  service manager or a parent process) would answer anyone writing to it.
+  Neither the adapter nor the mirror (`mountNative`) uses that default.
+  They serve automation only with `automation: true`, or with
+  `FOLDKIT_NATIVE_AUTOMATION=1` in the environment, which is how the window
+  tests and `scripts/` turn it on for the app they start. An app that must
+  never serve it passes `automation: false`, which the environment can't
+  override. `test/automation.test.ts` starts a real app with a pipe both
+  ways.
+- **Password fields are refused** (see Text fields, below): gpuix has no
+  masked input, so a secret would show as it's typed.
+
 ## Closing, errors and starting
 
 `app.close()` asks the close handlers, then releases everything the app
 owns: its runtimes, pending animation frames, the native tree (gpuix's
 retained element count goes to zero), GPUI handlers and window key events,
-the globals, the frame loop, and gpuix's automation listener on stdin. It
+the globals, the frame loop, and gpuix's automation listener on stdin (if
+it was asked for). It
 resolves `false` if a handler kept the window open.
 
 - **Close handlers**: `onClose(handler)` (or the `onClose` option). They run

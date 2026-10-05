@@ -16,7 +16,7 @@ describe.skipIf(!WINDOWS)('native-ui, native window', () => {
     const { launch } = await import('@gpuix/native/automation')
     const app = await launch({
       command: process.execPath, args: ['examples/open.ts', 'native-ui'],
-      cwd: resolve(import.meta.dir, '../..'), env: { ...process.env },
+      cwd: resolve(import.meta.dir, '../..'), env: { ...process.env, FOLDKIT_NATIVE_AUTOMATION: '1' },
     })
     type Call = (method: string, params: Record<string, unknown>) => Promise<unknown>
     const call = (app as unknown as { call: Call }).call.bind(app)

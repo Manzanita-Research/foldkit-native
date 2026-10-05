@@ -10,14 +10,14 @@
 // FoldKit renders into a DOM (happy-dom); the mirror copies that DOM into
 // gpuix's retained GPUI tree and turns clicks and keys back into DOM events.
 
-import type { WindowOptions } from '@gpuix/native'
+import { GpuixRenderer, type WindowOptions } from '@gpuix/native'
 import {
   type NativeRenderer,
   createMutationQueue,
   createRendererState,
   unregisterEventHandlers,
 } from '@gpuix/native/host'
-import { createNativeRenderer, startFrameLoop } from '@gpuix/native/runtime'
+import { enableAutomation, startFrameLoop } from '@gpuix/native/runtime'
 
 import { installDom } from './dom.ts'
 import { type MirrorTimings, createMirror } from './mirror.ts'
@@ -49,6 +49,10 @@ export type AttachOptions = {
 export type NativeOptions = WindowOptions & AttachOptions & {
   /** Called when a GPUI frame shows a DOM change. */
   onFrame?: (frame: FrameTiming) => void
+  /** Serve gpuix's automation over stdin and stdout (whoever writes to stdin
+   *  drives the app). Off unless asked: `true`, or
+   *  `FOLDKIT_NATIVE_AUTOMATION=1` in the environment, as foldkit-gpuix's. */
+  automation?: boolean
 }
 
 type Box = { x: number; y: number; width: number; height: number }
@@ -148,11 +152,19 @@ export const attachDom = (renderer: NativeRenderer, options: AttachOptions = {})
 
 /** Opens a native window and gives FoldKit a DOM drawn in it. */
 export const mountNative = (options: NativeOptions = {}) => {
-  const { css, tokens, onSynced, onFrame, ...windowOptions } = options
-  const renderer = createNativeRenderer({
-    onError: error => console.error('[foldkit-native] native event error', error),
+  const { css, tokens, onSynced, onFrame, automation, ...windowOptions } = options
+  // gpuix's createNativeRenderer, less its default of serving automation
+  // whenever stdin isn't a terminal.
+  const renderer: GpuixRenderer = new GpuixRenderer((error, event) => {
+    if (error !== null) return console.error('[foldkit-native] native event error', error)
+    try {
+      createRendererState(renderer).dispatch(event)
+    } catch (failed) {
+      console.error('[foldkit-native] native event error', failed)
+    }
   })
   renderer.init(windowOptions)
+  if (automation ?? process.env['FOLDKIT_NATIVE_AUTOMATION'] === '1') enableAutomation(renderer)
 
   // A DOM change is on screen at the end of the first GPUI tick after the
   // mirror flushed it.

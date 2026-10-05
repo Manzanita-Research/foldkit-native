@@ -39,7 +39,7 @@ const check = (step: string, ok: boolean, detail?: string) => {
 const { launch } = await import('@gpuix/native/automation')
 const app = await launch({
   command: process.execPath, args: ['examples/open.ts', 'form'], cwd: root,
-  env: { ...process.env, FOLDKIT_NATIVE_RENDERER: 'gpuix' },
+  env: { ...process.env, FOLDKIT_NATIVE_RENDERER: 'gpuix', FOLDKIT_NATIVE_AUTOMATION: '1' },
 })
 try {
   if (!(await paints(app, 'Join Our Waitlist', 15_000))) throw new Error('the Form never painted')

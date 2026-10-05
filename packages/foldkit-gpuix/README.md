@@ -80,6 +80,38 @@ gpuix upgrade that changes them fails there.
    handlers don't run then, and nothing can save at close. That's why
    `localStorage` writes through.
 
+## Native runtime and application limits
+
+The pinned `@gpuix/native` 0.10.0 is a **Node/Bun N-API addon**, not a
+platform-neutral GPUI bridge. Its published targets are macOS arm64, Linux
+x64 GNU and Windows x64 MSVC. The generated loader contains Android branches,
+but the package publishes no Android addon; there is no iOS artifact or
+loader target. A macOS arm64 `.node` is not an iOS arm64 library. Bun's
+[standalone executable targets](https://bun.sh/docs/bundler/executables)
+likewise cover macOS, Linux and Windows, not Android or iOS. The browser
+entry uses wasm-bindgen/WebGPU; it is not native gpui-mobile. Building a
+Rust gpui-mobile application does not supply the required JavaScript runtime,
+N-API bridge or mobile renderer integration for this adapter.
+
+An actual MyRemotely login bundle was mounted with its lowered CSS on macOS
+Metal. It reported 406 unsupported CSS selectors/features and painted login
+text only when the pre-existing diagnostic probe disabled DevTools. Retaining
+the server's `devTools: true` boot setting instead fails at `attachShadow`
+(`FoldKit on gpuix: no shadow DOM`) and paints nothing. A legitimate production
+boot may disable its development-only overlay, but overriding a development
+boot is not evidence of unchanged app support.
+
+Password fields are not functional secure inputs here: the current adapter
+refuses editing and sends an empty, read-only field rather than exposing the
+secret. [Foldkit-native PR31](https://github.com/Manzanita-Research/foldkit-native/pull/31)
+makes that refusal explicit; it does not add masking. The native engine
+requires a real secure-entry contract covering display/caret mapping,
+clipboard, protected accessibility and platform IME queries/lifecycle before
+password fields can be enabled. A synthetic-sentinel native input repro
+currently paints its value and exposes it as an accessibility `TextInput`
+value even if an unsupported `type: password` prop is sent. The upstream
+request is [gpuix #80](https://github.com/remorses/gpuix/issues/80).
+
 ## Durable data
 
 With an `appId`, `localStorage` is a file, `localStorage.json`, in the app's

@@ -7,7 +7,7 @@ import { defineMessageUnion } from 'foldkit/message'
 
 import { Option } from 'effect'
 
-import { Button, Checkbox, Dialog, Listbox, RadioGroup, ScrollArea, Select, Switch, Tabs, TextField, button, part, uiCss } from '../src/index.ts'
+import { Button, Checkbox, Dialog, Input, Listbox, RadioGroup, ScrollArea, Select, Switch, Tabs, TextField, Textarea, button, part, uiCss } from '../src/index.ts'
 
 // The theme's tokens come from the runner (run.ts), around the app.
 const root = <Message>(h: HtmlBuilder<Message>, children: ReadonlyArray<Html>) =>
@@ -322,3 +322,36 @@ const makeTabbed = (config: { activationMode: Tabs.ActivationMode; orientation: 
 }
 export const Settings = makeTabbed({ activationMode: 'Automatic', orientation: 'Horizontal' })
 export const Sidebar = makeTabbed({ activationMode: 'Manual', orientation: 'Vertical' })
+
+// INPUT AND TEXTAREA
+// A profile: a name, a handle that only shows (read-only), an invite code
+// that's off (disabled), and a bio of a few lines.
+export const Profile = (() => {
+  const Model = Schema.Struct({ name: Schema.String, bio: Schema.String })
+  const Message = defineMessageUnion({ ChangedName: { value: Schema.String }, ChangedBio: { value: Schema.String }, Ignored: { value: Schema.String } })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const init: Model = { name: '', bio: '' }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> =>
+    Message.match<Update.Return<Model, Message>>(message, {
+      ChangedName: ({ value }) => ({ model: { ...model, name: value } }),
+      ChangedBio: ({ value }) => ({ model: { ...model, bio: value } }),
+      Ignored: () => ({ model }),
+    })
+  const ignored = (value: string) => Message.Ignored({ value })
+  const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
+    Input.view({
+      id: 'name', label: 'Name', value: model.name, placeholder: 'Ada Lovelace', onInput: value => Message.ChangedName({ value }),
+      ...(model.name.length > 20 ? { error: 'At most 20 characters' } : { description: 'As it appears on your profile' }),
+    }, h),
+    h.div([h.Style({ display: 'flex', 'flex-direction': 'row', gap: '12px' })], [
+      h.div([h.Style({ flex: '1', 'min-width': '0' })], [Input.view({ id: 'handle', label: 'Handle', value: '@ada', isReadOnly: true, onInput: ignored }, h)]),
+      h.div([h.Style({ flex: '1', 'min-width': '0' })], [Input.view({ id: 'invite', label: 'Invite code', value: 'XK-42', isDisabled: true, onInput: ignored }, h)]),
+    ]),
+    Textarea.view({
+      id: 'bio', label: 'Bio', value: model.bio, rows: 3, placeholder: 'A few lines about you',
+      description: `${model.bio.length} of 160`, isInvalid: model.bio.length > 160, onInput: value => Message.ChangedBio({ value }),
+    }, h),
+  ])
+  return { Model, Message, init, update, view }
+})()

@@ -121,7 +121,7 @@ ${ui('field', 'input')} {
   background-color: ${t('field.background', t('color.surface'))}; color: ${t('color.text')};
   border: 1px solid ${t('color.border')}; border-radius: ${t('radius.control')};
 }
-${ui('field', 'input')}:hover { border-color: ${t('color.border-strong')}; }
+${ui('field', 'input')}${live}:hover { border-color: ${t('color.border-strong')}; }
 ${ui('field', 'input')}:focus { border-color: ${t('color.focus')}; box-shadow: 0 0 0 1px ${t('color.focus')}; }
 ${ui('field', 'input')}[data-invalid] { border-color: ${t('color.danger')}; }
 ${ui('field', 'description')} { font-size: ${t('font.size.sm')}; color: ${t('color.text-muted')}; }
@@ -269,4 +269,18 @@ ${ui('tabs', 'tab')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('c
 ${ui('tabs', 'tab')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; cursor: default; }
 ${ui('tabs', 'panel')} { display: flex; flex-direction: column; gap: ${t('space.2')}; border-radius: ${t('radius.control')}; }
 ${ui('tabs', 'panel')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+
+${ui('field', 'input')}[data-readonly] { background-color: ${t('field.background-readonly', t('color.canvas'))}; }
+${ui('field', 'input')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; }
+${ui('field', 'label')}[data-disabled] { color: ${t('color.text-muted')}; }
+${ui('field', 'textarea')} {
+  padding: ${t('space.2')} ${t('space.3')}; line-height: 20px;
+  background-color: ${t('field.background', t('color.surface'))}; color: ${t('color.text')};
+  border: 1px solid ${t('color.border')}; border-radius: ${t('radius.control')};
+}
+${ui('field', 'textarea')}${live}:hover { border-color: ${t('color.border-strong')}; }
+${ui('field', 'textarea')}:focus { border-color: ${t('color.focus')}; box-shadow: 0 0 0 1px ${t('color.focus')}; }
+${ui('field', 'textarea')}[data-invalid] { border-color: ${t('color.danger')}; }
+${ui('field', 'textarea')}[data-readonly] { background-color: ${t('field.background-readonly', t('color.canvas'))}; }
+${ui('field', 'textarea')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; }
 `

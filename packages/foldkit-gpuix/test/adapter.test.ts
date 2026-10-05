@@ -192,6 +192,17 @@ describe('fixes from the first real-GPUI run', () => {
     expect(label('save')).toBe('Saved')
   })
 
+  test('Enter submits from an input and is a new line in a textarea: GPUI\'s textarea submits only if heard', async () => {
+    const { app } = await run({}, {
+      Model: Counter.Model, init: { count: 0 }, update: c => c,
+      view: (_, h) => h.form([], [h.input([h.Id('one')]), h.textarea([h.Id('many')])]),
+    })
+    const listens = (id: string) => app.gpui.node(app.document.getElementById(id)!.nativeId).listeners
+    expect(listens('one').has('submit')).toBe(true)
+    expect(listens('many').has('submit')).toBe(false)
+    expect(listens('many').has('change')).toBe(true)
+  })
+
   test('a password field throws as it\'s mounted, naming the gap, before any of it reaches GPUI', async () => {
     app = mountHeadless()
     const { document } = app

@@ -56,6 +56,7 @@ and [README.md](README.md) the reasons.
 | Styles | Structural pseudo-class (`:first-child`, `:nth-child`…) | rejected | Reported, as above | [adapter](test/adapter.test.ts) "sheetFromCss reports what a restyle can" |
 | Styles | Pseudo-element (`::before`, `::placeholder`…) | rejected | Reported, as above | [adapter](test/adapter.test.ts) "sheetFromCss reports what a restyle can" |
 | Styles | State on an ancestor (`.group:hover .x`, `:focus-within`) | rejected | Reported, as above | [adapter](test/adapter.test.ts) "sheetFromCss reports what a restyle can" |
+| Styles | A selector the engine can't read (`a!`, `$$`, an unclosed quote) | rejected | Reported as `selector`; `querySelector` throws a SyntaxError, as a browser's does | [selector](test/selector.test.ts) "selectors it can" |
 | Styles | Media query features other than sizes, hover, pointer and orientation | rejected | Reported, as above | [adapter](test/adapter.test.ts) "sheetFromCss reports what a restyle can" |
 | Layout | Absolute and fixed boxes under their CSS containing block | approximated | Drawn under it in GPUI's tree; a `fixed` box scrolls with the page | [sheet](test/sheet.test.ts) "an absolute box under a static parent is drawn under the nearest positioned ancestor" |
 | Layout | Anchored overlays (a Select's or a Popover's popup) | works | GPUI's `anchored`: placed, flipped to fit, painted on top | [ui select](../ui/test/select.test.ts) "the popup is an anchored element" |
@@ -88,6 +89,4 @@ need one before it can be called rejected here:
 - `z-index` (paint order is document order within a containing block);
 - `prefers-color-scheme` and `prefers-reduced-motion` (they never match);
 - a disabled state for AccessKit;
-- `document.startViewTransition` (absent; FoldKit feature-detects it);
-- a selector the engine can't read, reported as `selector` (some malformed
-  selectors loop the parser instead today).
+- `document.startViewTransition` (absent; FoldKit feature-detects it).

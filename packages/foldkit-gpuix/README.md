@@ -190,11 +190,13 @@ macOS:
   `TestRenderer` and its `screenshot` is macOS and Windows only ("wgpu cannot
   read a rendered image back yet"). So Linux tests are whole processes in a
   window, and pixels come from the compositor (`grim`).
-- **`getPaintedText` is always empty** (it's probably a thread-local read from
-  the wrong thread: GPUI paints on its own thread there). Automation waits
-  that mean "on screen" use `getAllText`, the retained tree, up to a frame
-  early. `test/linux-session.test.ts` pins this, so it fails when gpuix
-  fixes it.
+- **`getPaintedText` is always empty**, awake or not (probably a
+  thread-local read from the wrong thread: GPUI paints on its own thread
+  there). So on Linux, automation waits that mean "on screen" use
+  `getAllText`, the retained tree, up to a frame early (`scripts/nightly.ts`,
+  `window-app.ts`). The fact is pinned by `test/linux-session.test.ts`,
+  "getPaintedText is empty on Linux although the window is painted": it
+  fails the day gpuix fixes it, and then Linux can wait on painted text.
 - **The compositor sizes the window.** A tiling compositor gives a window
   its own size, not the one asked for; `innerWidth`, `vh` and `@media` follow
   the real size (a resize event, as in a browser).

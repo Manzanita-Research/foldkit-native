@@ -5,7 +5,7 @@ import { NativeDocument } from '../packages/foldkit-gpuix/src/index.ts'
 
 const document = new NativeDocument()
 const host = document.createElement('div')
-host.id = 'foldkit-devtools'
+host.setAttribute('id', 'foldkit-devtools')
 document.body.appendChild(host)
 
 // FoldKit's browser-facing consumer uses this DOM operation with these options.

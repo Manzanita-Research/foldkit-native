@@ -102,7 +102,63 @@ After a contract is accepted, public behavior regressions should cover:
 5. Unchanged actual MyRemotely boot retaining `devTools: true`, not a
    synthetic UI or absence-of-throw test alone.
 
-Secure password entry (gpuix #80, pending permission) and native mobile
-JavaScript/N-API renderer integration (gpuix #81) remain independent
+Secure password entry ([gpuix #80](https://github.com/remorses/gpuix/issues/80),
+pending permission) and native mobile JavaScript/N-API renderer integration
+([gpuix #81](https://github.com/remorses/gpuix/issues/81)) remain independent
 prerequisites. This investigation changes neither secure input nor fetch,
 application flags, authentication, or platform runtime code.
+
+## Current upstream and actual-application evidence (2026-10-05)
+
+GitHub API state was checked directly, including prerequisite issue comments.
+All following issues are open; all linked implementation PRs are open and
+unmerged. Local fixes are not an upstream release:
+
+| Failure | Issue | Existing implementation / remaining prerequisite |
+|---|---|---|
+| Negated interaction selectors crash mirror startup | [#35](https://github.com/Manzanita-Research/foldkit-native/issues/35) | [PR39](https://github.com/Manzanita-Research/foldkit-native/pull/39); single terminal states supported, unsafe nested/negated/ancestor/combined states skipped without broadening |
+| Pixel Art live-window drag loses cells | [#36](https://github.com/Manzanita-Research/foldkit-native/issues/36) | Reported failure remains unresolved; no cause or fix claimed |
+| Unsupported selector token loops without progress | [#37](https://github.com/Manzanita-Research/foldkit-native/issues/37) | [PR38](https://github.com/Manzanita-Research/foldkit-native/pull/38); same fix cherry-picked into PR39 |
+| Direct window lacks host-backed fetch | [#40](https://github.com/Manzanita-Research/foldkit-native/issues/40) | [PR42](https://github.com/Manzanita-Research/foldkit-native/pull/42); real local-server behavior regressions, also included in PR39 |
+| DevTools requires isolated Shadow DOM | [#41](https://github.com/Manzanita-Research/foldkit-native/issues/41) | Architectural request and executable reduced diagnostic; no accepted contract or implementation PR |
+| Native password entry | [gpuix #80](https://github.com/remorses/gpuix/issues/80) | [PR31](https://github.com/Manzanita-Research/foldkit-native/pull/31) explicitly refuses passwords; it does not implement masking |
+| Native Android/iOS JS/N-API renderer | [gpuix #81](https://github.com/remorses/gpuix/issues/81) | No published mobile addon/runtime contract; unrelated to a Rust mobile shell or a system WebView |
+
+Fresh all-state shadow issue/PR searches identify #41 as the matching
+architectural request. Password/masked searches in remorses/gpuix identify
+#80, not an implemented secure editor. No maintainer permission/contract
+response was present on #41, gpuix #80 or #81 at this check. No duplicate
+issue or display-only, fragment-flattening, or runtime-stub PR was opened.
+
+The existing boot-faithful MyRemotely probe now uses the adapter's own fetch,
+without the obsolete caller-side stringification polyfill. It loads the
+actual manifest bundle `/front/app.a195d073e2e9.js`, lowers 305253 bytes of
+CSS, reports 406 unsupported CSS features/selectors, preserves the raw
+server boot payload (`devTools: true`), and uses gpuix's macOS Metal
+TestRenderer at 390 × 844. Result: fetch is a function, but boot reports
+`FoldKit on gpuix: no shadow DOM` at `dom.ts:640`; native painted text is
+`[]`. The diagnostic exits 1 for empty paint and saves the actual blank
+native frame. This is an actual-application failed smoke, not a DOM pass,
+authentication pass, supported mobile result, or upstream example.
+
+Focused final verification on the fixed #35 branch, Bun 1.4.0/macOS arm64:
+
+```sh
+bun test --timeout 30000 test/state-selectors.test.ts test/style.test.ts \
+  packages/foldkit-gpuix/test/sheet.test.ts \
+  packages/foldkit-gpuix/test/selector-progress.test.ts \
+  packages/foldkit-gpuix/test/adapter.test.ts \
+  packages/foldkit-gpuix/test/fetch.test.ts
+```
+
+Result: 93 pass, 0 fail, 266 expectations across six files. These test public
+mirror attach/refresh, selector parser subprocess termination, real HTTP
+transport and safe password refusal, not source-text assertions. An earlier
+full `bun test` was stopped by a 30-second command timeout and is **not** a
+successful full-suite run. The first final typecheck exposed the diagnostic's
+unsupported `NativeElement.id` TypeScript property; using its supported
+`setAttribute('id', ...)` operation fixes that diagnostic without changing
+the shadow failure or the consumer contract.
+The corrected `bun run typecheck` completed successfully (exit 0; 600-second
+command deadline). The reduced shadow diagnostic still exits 1 at
+`attachShadow`, as intended; it is not a passing feature regression.

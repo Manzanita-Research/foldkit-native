@@ -25,6 +25,9 @@ if (renderer === 'gpuix') {
   const native = mountGpuix({
     title: example.meta.title, width: example.meta.width, height: example.meta.height, css: example.css,
     appId: `dev.foldkit-native.${id}`, ...(dataDir === undefined ? {} : { dataDir }),
+    // The example's own window options win (a layer surface's size is the
+    // compositor's).
+    ...example.meta.window,
   })
   example.start(native.container)
 } else {

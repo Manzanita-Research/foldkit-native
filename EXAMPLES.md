@@ -23,6 +23,7 @@ bun run example weather      # open one example directly
 | **Pixel Art** | Undo, redo and time-travel history, `@foldkit/ui` Dialog, RadioGroup, Switch and Listbox, saved state passed in as Flags | Thousands of live cells repainting under a dragging pointer | FoldKit `examples/pixel-art` |
 | **Shopping Cart** | Routing between pages, Submodels for each page, a cart that survives navigation | Page changes, scrolling product lists, hover states | FoldKit `examples/shopping-cart` |
 | **Big List** | A live filter and keyboard selection over 10,000 rows, theme tokens switched at runtime | Smooth scrolling of a long list, theming, shadows and rounded layers | New, written here |
+| **Layer bar** | A clock Subscription, buttons from `@foldkit-native/ui`, a theme switched at runtime | A Wayland layer-shell surface along the top of the screen, with an exclusive zone (a small window elsewhere), from foldkit-gpuix's `bar()` | New, written here |
 
 The existing **Counter** and **Themes** demos stay in the gallery too.
 

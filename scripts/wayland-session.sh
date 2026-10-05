@@ -12,7 +12,10 @@
 #   FKN_WAYLAND_OUTPUT  the output's name, for `output NAME power off|on`
 #   FKN_WAYLAND_SHOTS   a folder for compositor screenshots (grim)
 #   FKN_LINUX_WINDOWS=1 the window tests may run (see test/support/windows.ts)
-# sway and grim come from PATH (FKN_SWAY / FKN_GRIM name other ones).
+# sway and grim come from PATH (FKN_SWAY / FKN_GRIM name other ones; FKN_SWAYMSG
+# names swaymsg, or it's found beside sway). The directories of the swaymsg
+# and grim used go first on COMMAND's PATH, so a test that runs `swaymsg` or
+# `grim` gets the same ones.
 #
 # Why a headless compositor: gpuix 0.10 can't read frames back on Linux, so
 # pixels come from the compositor (grim). And a headless output can't sleep:
@@ -100,8 +103,11 @@ output="$("$swaymsg" -s "$ipc" -t get_outputs -r | grep -o '"name": *"[^"]*"' | 
 [[ -n "$output" ]] || { echo "wayland-session: the compositor has no output" >&2; exit 1; }
 echo "wayland-session: $socket, output $output ($size), sway pid $pid" >&2
 
+tools="$(dirname "$(command -v "$swaymsg")"):$(dirname "$(command -v "$grim")")"
+
 set +e
 env -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE \
+  PATH="$tools:$PATH" FKN_SWAYMSG="$(command -v "$swaymsg")" \
   WAYLAND_DISPLAY="$socket" FKN_SWAYSOCK="$ipc" FKN_WAYLAND_OUTPUT="$output" FKN_WAYLAND_SHOTS="$shots" \
   FKN_LINUX_WINDOWS=1 "$@"
 status=$?

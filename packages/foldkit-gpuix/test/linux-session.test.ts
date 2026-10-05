@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-import { exampleIds } from '../../../examples/support/example.ts'
+import { exampleIds, loadExample } from '../../../examples/support/example.ts'
 import { readPng } from '../../../test/support/png.ts'
 import { WINDOWS, screenshotWindow } from '../../../test/support/windows.ts'
 
@@ -51,6 +51,12 @@ const colours = (path: string) => {
   return seen.size
 }
 
+/** Examples that open a layer-shell surface, which isn't one of sway's
+ *  windows: examples/layer-bar/layer.test.ts tests those. */
+const layered = new Set(SESSION
+  ? (await Promise.all(exampleIds().map(async id => ((await loadExample(id)).meta.window?.layerShell === undefined ? [] : [id])))).flat()
+  : [])
+
 const windows = () => (sway('-t', 'get_tree').match(/"app_id": "([^"]*)"/g) ?? []).map(entry => entry.slice(11, -1))
 
 describe.skipIf(!SESSION)('FoldKit on gpuix, a real window on Linux (headless compositor)', () => {
@@ -59,7 +65,7 @@ describe.skipIf(!SESSION)('FoldKit on gpuix, a real window on Linux (headless co
     for (const each of opened) await each.app.close()
   })
 
-  for (const id of exampleIds()) {
+  for (const id of exampleIds().filter(id => !layered.has(id))) {
     test(`${id}: paints in a window, and the compositor's frame shows it`, async () => {
       const win = await open(['examples/open.ts', id], { FOLDKIT_NATIVE_RENDERER: 'gpuix' })
       opened.push(win)

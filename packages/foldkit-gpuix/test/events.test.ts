@@ -489,6 +489,56 @@ describe('default actions', () => {
   })
 })
 
+describe('focus: the default action of mousedown', () => {
+  test('a press focuses after its mousedown and before its release, as a browser\'s does', async () => {
+    const s = await scene(['pointerdown', 'mousedown', 'focus', 'pointerup', 'mouseup', 'click'])
+    await s.move(540, 70)
+    await release(s, await press(s, 540, 70), 540, 70)
+    expect(s.take().filter(line => line.includes('@btn'))).toEqual([
+      'pointerdown@btn t=btn', 'mousedown@btn t=btn', 'focus@btn t=btn', 'pointerup@btn t=btn', 'mouseup@btn t=btn', 'click@btn t=btn',
+    ])
+    expect(s.document.activeElement).toBe(s.btn)
+  })
+
+  test('a prevented mousedown keeps focus where it was, in the DOM and in GPUI; the click still comes', async () => {
+    const s = await scene(['click'])
+    const field = s.document.createElement('input')
+    s.document.body.appendChild(field)
+    await s.app.settle()
+    s.layOut()
+    field.focus()
+    await s.app.settle()
+    s.btn.addEventListener('mousedown', event => event.preventDefault())
+    await s.app.settle()
+    // GPUI focuses what it pressed, before any element hears the press.
+    s.app.fake.renderer.focusElement?.(s.btn.nativeId)
+    await release(s, await press(s, 540, 70), 540, 70)
+    expect(s.take()).toEqual(['click@btn t=btn'])
+    expect(s.document.activeElement).toBe(field)
+    expect(s.app.gpuiFocus()).toBe(field)
+  })
+
+  test('a prevented pointerdown: no mouse events until the release, but the click and the focus still come', async () => {
+    const s = await scene(['mousedown', 'mouseup', 'click', 'focus'])
+    s.btn.addEventListener('pointerdown', event => event.preventDefault())
+    await s.app.settle()
+    await release(s, await press(s, 540, 70), 540, 70)
+    expect(s.take()).toEqual(['focus@btn t=btn', 'click@btn t=btn'])
+  })
+
+  test('a press on nothing focusable leaves focus to GPUI, and one on a focusable child\'s text focuses the control', async () => {
+    const s = await scene()
+    const label = s.document.createElement('span')
+    s.btn.appendChild(label)
+    await s.app.settle()
+    s.layOut()
+    s.app.gpui.setBounds(label.nativeId, { x: 510, y: 55, width: 40, height: 20 })
+    s.app.host.relayout()
+    await release(s, await press(s, 520, 60), 520, 60)
+    expect(s.document.activeElement).toBe(s.btn)
+  })
+})
+
 describe('restyles: only what can reach what\'s drawn', () => {
   test('<head>, unrelated <html> attributes and elements not yet inserted restyle nothing; <html>\'s custom properties restyle the body', async () => {
     const timings: Array<HostTimings> = []
@@ -599,6 +649,31 @@ describe.skipIf(!METAL)('real GPUI (Metal): what its dispatch decides', () => {
       await metal.settle()
       expect(take()).toEqual(['wheel@inner t=inner', 'wheel@outer t=inner', 'scroll@outer t=outer'])
       expect(outer.scrollTop).toBe(50)
+    } finally {
+      metal.close()
+    }
+  })
+
+  test('focus moves after mousedown; a prevented one keeps it where it was, in GPUI too', async () => {
+    const { metal, log, take, btn } = await open(['mousedown', 'focus', 'mouseup', 'click'])
+    try {
+      const field = metal.document.createElement('input')
+      field.setAttribute('id', 'field')
+      field.setAttribute('style', 'position: absolute; left: 500px; top: 200px; width: 200px; height: 30px')
+      field.addEventListener('focus', () => log.push('focus@field'))
+      metal.document.body.appendChild(field)
+      await metal.settle()
+      await metal.click(btn)
+      expect(take()).toEqual(['mousedown@btn t=btn', 'focus@btn t=btn', 'mouseup@btn t=btn', 'click@btn t=btn'])
+      await metal.click(field)
+      expect(metal.document.activeElement).toBe(field)
+      take()
+      btn.addEventListener('mousedown', event => event.preventDefault())
+      await metal.settle()
+      await metal.click(btn)
+      expect(take()).toEqual(['mousedown@btn t=btn', 'mouseup@btn t=btn', 'click@btn t=btn'])
+      expect(metal.document.activeElement).toBe(field)
+      expect(metal.gpuiFocus()).toBe(field)
     } finally {
       metal.close()
     }

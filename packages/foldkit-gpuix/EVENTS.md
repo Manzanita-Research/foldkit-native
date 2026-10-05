@@ -74,10 +74,10 @@ GPUI sent the event to stands in.
     and the child's `mouseover` bubbling, and no `mouseleave`. Straight onto
     the child from outside, the parent hears `mouseenter` before the child.
     The sequence is Chrome's, headless [E](test/events.test.ts#L220) and on
-    Metal [E](test/events.test.ts#L545).
+    Metal [E](test/events.test.ts#L595).
 12. **Out through a child that listens for something else**, the parent hears
     it leave, and come back. (On GPUI's own hover it heard neither.)
-    [E](test/events.test.ts#L234), Metal [E](test/events.test.ts#L563)
+    [E](test/events.test.ts#L234), Metal [E](test/events.test.ts#L613)
 13. **GPUI's enter or leave with no move in the same task** (the pointer left
     the window, or crossed something that doesn't report) counts: an enter
     hovers that element (or what the layout has under the pointer inside
@@ -98,14 +98,14 @@ GPUI sent the event to stands in.
 17. **The click goes to what the press and the release have in common.**
     Dragged off a button and let go elsewhere, the button isn't clicked (the
     body is); `mouseup` goes to what's under the pointer.
-    [E](test/events.test.ts#L320), Metal [E](test/events.test.ts#L607)
+    [E](test/events.test.ts#L320), Metal [E](test/events.test.ts#L682)
 18. **The click's target is the deepest element pressed**, not the listening
     ancestor GPUI picked. [E](test/events.test.ts#L340)
 19. **`dblclick`** follows the second click of a double click (GPUI's click
     count).
 20. **The right button:** `pointerdown`, `mousedown`, `contextmenu` (on the
     press, as macOS fires it), `pointerup`, `mouseup`, `auxclick`; no `click`.
-    [E](test/events.test.ts#L349), Metal [E](test/events.test.ts#L577).
+    [E](test/events.test.ts#L349), Metal [E](test/events.test.ts#L627).
     Nested `OnContextMenu`s: the inner one's runs, and bubbles.
     [E](test/events.test.ts#L372)
 21. **The middle button:** `auxclick` after the release, `button` 1.
@@ -147,7 +147,7 @@ GPUI sent the event to stands in.
 29. **One `wheel` per turn, at the element under the pointer, bubbling.**
     `deltaX`/`deltaY` are positive towards the end (down, right), in pixels
     (`deltaMode` 0) from a trackpad or lines (1) from a wheel.
-    [E](test/events.test.ts#L442), Metal [E](test/events.test.ts#L592)
+    [E](test/events.test.ts#L442), Metal [E](test/events.test.ts#L642)
 30. **`scroll` only at a scroll area that moved**, not at the elements the
     wheel went through, and none when it was already at the end. It doesn't
     bubble. [E](test/events.test.ts#L442)
@@ -168,20 +168,29 @@ GPUI sent the event to stands in.
     ([adapter.test.ts](test/adapter.test.ts#L601))
 34. **A click's default action:** a submit button submits its form, unless
     the click was prevented.
-35. **A press focuses** the nearest focusable element under it, without a
-    focus ring. See [Can't](#cant) for when.
+35. **A press focuses as `mousedown`'s default action:** after the
+    `mousedown` is dispatched and before the release, the nearest focusable
+    element under the press, without a focus ring. A prevented `mousedown`
+    keeps focus where it was, in GPUI too (GPUI moves its own focus as it
+    takes the press; the host puts it back). The click still comes.
+    [E](test/events.test.ts#L493), [E](test/events.test.ts#L503), Metal
+    [E](test/events.test.ts#L657). A press on a focusable control's child
+    focuses the control. [E](test/events.test.ts#L529)
+36. **A prevented `pointerdown`** means no compatibility mouse events
+    (`mousedown`, its moves, `mouseup`) until the release; the click and the
+    focus still come (Pointer Events). [E](test/events.test.ts#L521)
 
 ## What a change restyles
 
 Not an event, but the other half of an update: what GPUI is told after the
 DOM changes.
 
-36. **A change in `<head>`, an `<html>` attribute that doesn't reach the body,
+37. **A change in `<head>`, an `<html>` attribute that doesn't reach the body,
     or a change to an element not yet in the document restyles nothing.**
     snabbdom sets each new element up before inserting it, and inserting it
     styles it. `<html>`'s custom properties, inherited text styles and
     overflow (the viewport's) restyle the body when they change.
-    [E](test/events.test.ts#L493)
+    [E](test/events.test.ts#L543)
 
 ## Can't
 
@@ -189,11 +198,8 @@ DOM changes.
   JavaScript, so `wheel` is dispatched with `cancelable: false`. A zoomable
   canvas that prevents the wheel to keep the page still needs a gpuix change
   (an upstream ask: let the app see the wheel first).
-- **Focus moves on the click, not on `mousedown`.** In a browser, focus moves
-  as the default action of `mousedown`, so it comes before the release, and a
-  prevented `mousedown` keeps focus where it was. Here focus moves with the
-  click, after `mouseup` (a press into a field moves it at once: GPUI's
-  editor takes it). Next to fix.
+- **A press into a text field** focuses it whether or not its `mousedown`
+  is prevented: GPUI's editor takes the press, and no element hears it.
 - **Leaving the window** is what GPUI reports. Offscreen (Metal tests) there's
   no window edge to cross, so that path is checked headless only.
 - **One pointer, the mouse.** No touch or pen, no `pointercancel`.

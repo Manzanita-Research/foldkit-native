@@ -283,4 +283,19 @@ ${ui('field', 'textarea')}:focus { border-color: ${t('color.focus')}; box-shadow
 ${ui('field', 'textarea')}[data-invalid] { border-color: ${t('color.danger')}; }
 ${ui('field', 'textarea')}[data-readonly] { background-color: ${t('field.background-readonly', t('color.canvas'))}; }
 ${ui('field', 'textarea')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; }
+
+${ui('disclosure')} { display: flex; flex-direction: column; }
+${ui('disclosure', 'trigger')} {
+  display: flex; flex-direction: row; align-items: center; gap: ${t('space.2')}; height: ${t('size.control')}; padding: 0 ${t('space.2')};
+  background-color: ${t('disclosure.trigger', t('color.canvas'))}; color: ${t('color.text')}; font-size: ${t('font.size.md')};
+  font-weight: ${t('font.weight.strong')}; border: 0; border-radius: ${t('radius.control')}; cursor: pointer;
+}
+${ui('disclosure', 'trigger')}${live}:hover { background-color: ${t('disclosure.trigger-hover', t('color.highlight'))}; }
+${ui('disclosure', 'trigger')}:focus-visible { box-shadow: 0 0 0 ${t('focus.ring')} ${t('color.focus')}; }
+${ui('disclosure', 'trigger')}[data-disabled] { opacity: ${t('control.disabled-opacity', '0.5')}; cursor: default; }
+${ui('disclosure', 'icon')} { width: 12px; color: ${t('color.text-muted')}; font-size: ${t('font.size.md')}; }
+${ui('disclosure', 'panel')} {
+  display: flex; flex-direction: column; gap: ${t('space.2')};
+  padding: ${t('space.1')} ${t('space.2')} ${t('space.3')} calc(${t('space.2')} * 2 + 12px); color: ${t('color.text-muted')};
+}
 `

@@ -7,7 +7,7 @@ import { defineMessageUnion } from 'foldkit/message'
 
 import { Option } from 'effect'
 
-import { Button, Checkbox, Dialog, Input, Listbox, RadioGroup, ScrollArea, Select, Switch, Tabs, TextField, Textarea, button, part, uiCss } from '../src/index.ts'
+import { Button, Checkbox, Dialog, Disclosure, Input, Listbox, RadioGroup, ScrollArea, Select, Switch, Tabs, TextField, Textarea, button, part, uiCss } from '../src/index.ts'
 
 // The theme's tokens come from the runner (run.ts), around the app.
 const root = <Message>(h: HtmlBuilder<Message>, children: ReadonlyArray<Html>) =>
@@ -352,6 +352,29 @@ export const Profile = (() => {
       id: 'bio', label: 'Bio', value: model.bio, rows: 3, placeholder: 'A few lines about you',
       description: `${model.bio.length} of 160`, isInvalid: model.bio.length > 160, onInput: value => Message.ChangedBio({ value }),
     }, h),
+  ])
+  return { Model, Message, init, update, view }
+})()
+
+// DISCLOSURE
+// Questions that open to their answers; the last isn't available.
+export const Questions = (() => {
+  const Model = Schema.Struct({ open: Schema.Array(Schema.String) })
+  const Message = defineMessageUnion({ Toggled: { id: Schema.String, isOpen: Schema.Boolean } })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const init: Model = { open: ['what'] }
+  const update = (model: Model, { id, isOpen }: Message): Update.Return<Model, Message> =>
+    ({ model: { open: isOpen ? [...model.open, id] : model.open.filter(other => other !== id) } })
+  const question = (h: HtmlBuilder<Message>, model: Model, id: string, label: string, answer: string, isDisabled = false) =>
+    Disclosure.view({
+      id, label, isOpen: model.open.includes(id), isDisabled,
+      onToggle: isOpen => Message.Toggled({ id, isOpen }), content: [h.p([h.Style({ margin: '0' })], [answer])],
+    }, h)
+  const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
+    question(h, model, 'what', 'What is FoldKit Native?', 'FoldKit apps, drawn by GPUI in the same process.'),
+    question(h, model, 'linux', 'Does it run on Linux?', 'Yes, on Wayland, with the same components.'),
+    question(h, model, 'work', 'Can I use it at work?', 'Ask your administrator.', true),
   ])
   return { Model, Message, init, update, view }
 })()

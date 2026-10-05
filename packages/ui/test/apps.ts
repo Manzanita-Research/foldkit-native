@@ -7,7 +7,7 @@ import { defineMessageUnion } from 'foldkit/message'
 
 import { Option } from 'effect'
 
-import { Button, Checkbox, Dialog, Listbox, ScrollArea, Select, Switch, TextField, button, part, uiCss } from '../src/index.ts'
+import { Button, Checkbox, Dialog, Listbox, RadioGroup, ScrollArea, Select, Switch, Tabs, TextField, button, part, uiCss } from '../src/index.ts'
 
 // The theme's tokens come from the runner (run.ts), around the app.
 const root = <Message>(h: HtmlBuilder<Message>, children: ReadonlyArray<Html>) =>
@@ -239,3 +239,86 @@ export const Confirm = (() => {
   ])
   return { Model, Message, init, update, view }
 })()
+
+// RADIO GROUP
+// A plan to pick (Team isn't available), and a billing period that only
+// reports (read-only).
+export const Plans = (() => {
+  const plans = ['hobby', 'pro', 'team'] as const
+  const labels: Record<string, string> = { hobby: 'Hobby', pro: 'Pro', team: 'Team', monthly: 'Monthly', yearly: 'Yearly' }
+  const descriptions: Record<string, string> = { hobby: 'For side projects', pro: 'For one person, every feature', team: 'Coming soon' }
+  const Model = Schema.Struct({ plan: RadioGroup.Model, billing: RadioGroup.Model, chosen: Schema.String })
+  const Message = defineMessageUnion({ GotPlanMessage: { message: RadioGroup.Message }, GotBillingMessage: { message: RadioGroup.Message } })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const toPlan = (message: RadioGroup.Message) => Message.GotPlanMessage({ message })
+  const toBilling = (message: RadioGroup.Message) => Message.GotBillingMessage({ message })
+  const init: Model = { plan: RadioGroup.init({ id: 'plan' }), billing: RadioGroup.init({ id: 'billing' }), chosen: 'hobby' }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> =>
+    Message.match<Update.Return<Model, Message>>(message, {
+      GotPlanMessage: ({ message: child }) => {
+        const next = RadioGroup.update(model.plan, child)
+        return {
+          model: { ...model, plan: next.model, chosen: next.outMessage?.value ?? model.chosen },
+          commands: Command.mapMessages(next.commands, toPlan),
+        }
+      },
+      GotBillingMessage: ({ message: child }) => {
+        const next = RadioGroup.update(model.billing, child)
+        return { model: { ...model, billing: next.model }, commands: Command.mapMessages(next.commands, toBilling) }
+      },
+    })
+  const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
+    RadioGroup.view({
+      model: model.plan, options: plans, selectedValue: Option.some(model.chosen), ariaLabel: 'Plan', toParentMessage: toPlan,
+      optionLabel: value => labels[value]!, optionDescription: value => descriptions[value],
+      isOptionDisabled: value => value === 'team',
+    }, h),
+    RadioGroup.view({
+      model: model.billing, options: ['monthly', 'yearly'], selectedValue: Option.some('yearly'), ariaLabel: 'Billing',
+      toParentMessage: toBilling, optionLabel: value => labels[value]!, orientation: 'Horizontal', isReadOnly: true,
+    }, h),
+    h.p([h.Id('chosen')], [`Plan: ${labels[model.chosen]}`]),
+  ])
+  return { Model, Message, init, update, view }
+})()
+
+// TABS
+// Settings in tabs along the top (selected as the arrows reach them), with
+// Advanced not available; `activationMode` and `orientation` from the init.
+const makeTabbed = (config: { activationMode: Tabs.ActivationMode; orientation: Tabs.Orientation }) => {
+  const sections = ['general', 'privacy', 'advanced', 'about'] as const
+  const titles: Record<string, string> = { general: 'General', privacy: 'Privacy', advanced: 'Advanced', about: 'About' }
+  const Model = Schema.Struct({ tabs: Tabs.Model, section: Schema.String, name: Schema.String })
+  const Message = defineMessageUnion({ GotTabsMessage: { message: Tabs.Message }, ChangedName: { value: Schema.String } })
+  type Model = typeof Model.Type
+  type Message = typeof Message.Type
+  const toTabs = (message: Tabs.Message) => Message.GotTabsMessage({ message })
+  const init: Model = { tabs: Tabs.init({ id: 'settings', activationMode: config.activationMode }), section: 'general', name: 'Ada' }
+  const update = (model: Model, message: Message): Update.Return<Model, Message> =>
+    Message.match<Update.Return<Model, Message>>(message, {
+      GotTabsMessage: ({ message: child }) => {
+        const next = Tabs.update(model.tabs, child)
+        return {
+          model: { ...model, tabs: next.model, section: next.outMessage?.value ?? model.section },
+          commands: Command.mapMessages(next.commands, toTabs),
+        }
+      },
+      ChangedName: ({ value }) => ({ model: { ...model, name: value } }),
+    })
+  const panel = (h: HtmlBuilder<Message>, model: Model) => (value: string) => {
+    if (value === 'general') return [TextField.view({ id: 'name', label: 'Display name', value: model.name, onInput: value => Message.ChangedName({ value }) }, h)]
+    if (value === 'privacy') return [h.p([], ['Nobody sees your activity.'])]
+    return [h.p([], [`${titles[value]} settings`])]
+  }
+  const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
+    Tabs.view({
+      model: model.tabs, tabs: sections, selectedValue: model.section, ariaLabel: 'Settings', toParentMessage: toTabs,
+      tabLabel: value => titles[value]!, panel: panel(h, model), isTabDisabled: value => value === 'advanced',
+      orientation: config.orientation,
+    }, h),
+  ])
+  return { Model, Message, init, update, view }
+}
+export const Settings = makeTabbed({ activationMode: 'Automatic', orientation: 'Horizontal' })
+export const Sidebar = makeTabbed({ activationMode: 'Manual', orientation: 'Vertical' })

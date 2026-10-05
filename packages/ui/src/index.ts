@@ -14,6 +14,8 @@ export * as ScrollArea from './scroll-area.ts'
 export * as Select from './select.ts'
 export * as Switch from './switch.ts'
 export * as TextField from './text-field.ts'
+export * as RadioGroup from './radio-group.ts'
+export * as Tabs from './tabs.ts'
 export { type Theme, type TokenName, defineTheme, dusk, paper, themeStyle, themeTokens, token, uiCss } from './theme.ts'
 export { part } from './parts.ts'
 

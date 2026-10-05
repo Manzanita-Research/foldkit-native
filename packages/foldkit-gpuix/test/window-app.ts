@@ -5,7 +5,14 @@
 // a window isn't painting (each blocks for 2 s, then throws). Each frame's
 // time is recorded, and one JSON line of results is printed.
 //
+// On Linux, inside scripts/wayland-session.sh, the second phase is the real
+// thing instead of the simulation: the session's output is powered off (a
+// sleeping display), so the compositor sends no frame callbacks and gpuix's
+// own queries time out after 2 s (FKN-26).
+//
 //   bun packages/foldkit-gpuix/test/window-app.ts kanban
+import { execFileSync } from 'node:child_process'
+
 import { GpuixRenderer } from '@gpuix/native'
 
 import { loadExample } from '../../../examples/support/example.ts'
@@ -16,6 +23,13 @@ const example = await loadExample(id)
 const { width, height, title } = example.meta
 let live!: GpuixRenderer
 let realBounds!: GpuixRenderer['getElementBounds']
+/** A compositor to power off: the real not-painting phase. */
+const session = process.platform === 'linux' && process.env['FKN_SWAYSOCK'] !== undefined
+const power = (state: 'on' | 'off') => {
+  const sway = (...args: Array<string>) => execFileSync('swaymsg', ['-s', process.env['FKN_SWAYSOCK']!, '-r', ...args], { encoding: 'utf8' })
+  sway('output', process.env['FKN_WAYLAND_OUTPUT']!, 'power', state)
+  for (let waited = 0; sway('-t', 'get_outputs').includes(`"power": ${state === 'on'}`) === false && waited < 40; waited++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50)
+}
 // The app's view: GPUI not painting. (gpuix keys its event routing on the
 // renderer object itself, so the methods are swapped on it, not wrapped.)
 let answering = true
@@ -27,7 +41,18 @@ const notPainting = (): never => {
 const createRenderer = (callback: ConstructorParameters<typeof GpuixRenderer>[0]) => {
   live = new GpuixRenderer(callback)
   // The test's own view of the window, which keeps answering.
-  realBounds = live.getElementBounds.bind(live)
+  const raw = live.getElementBounds.bind(live)
+  if (session) {
+    // Real: nothing is swapped, the app's queries time out by themselves.
+    // The test's own reads come from what GPUI said while it answered.
+    const known = new Map<number, ReturnType<typeof raw>>()
+    realBounds = (elementId: number) => {
+      if (answering) known.set(elementId, raw(elementId))
+      return known.get(elementId) ?? null
+    }
+    return live
+  }
+  realBounds = raw
   const realTree = live.getAutomationTree.bind(live)
   live.getElementBounds = (elementId: number) => (answering ? realBounds(elementId) : notPainting())
   live.getAutomationTree = () => (answering ? realTree() : notPainting())
@@ -51,7 +76,8 @@ const native = mountGpuix({
 example.start(native.container)
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-const painted = () => live.getPaintedText()
+// (gpuix's painted-text read is empty on Linux: the retained tree says it's up.)
+const painted = () => (process.platform === 'linux' ? live.getAllText() : live.getPaintedText())
 const waitFor = async (done: () => boolean, ms = 5000) => {
   const end = performance.now() + ms
   while (!done()) {
@@ -104,6 +130,8 @@ const reads = { frames: 0, answered: 0 }
 let reading = 0
 
 type Scenario = {
+  /** Reads, while GPUI answers, every box `run` will want in the next phase. */
+  prime?: (phase: 'answering' | 'not painting') => void
   /** One frame's reads; true if they had an answer (undefined: nothing to
    *  read yet). */
   read: () => boolean | undefined
@@ -115,6 +143,13 @@ const gridOf = () => native.document.querySelector('.cursor-crosshair')!
 const scenarios: Record<string, Scenario> = {
   // DragAndDrop's read on each move: what's under the pointer.
   kanban: {
+    prime: () => {
+      for (const element of [
+        native.document.querySelector('[data-droppable-id="todo"] [data-draggable-id]')!,
+        native.document.querySelector('[data-droppable-id="in-progress"] [data-draggable-id]')!,
+        ...native.document.querySelectorAll('[data-droppable-id="todo"] [data-draggable-id]'),
+      ]) realBounds(element.nativeId)
+    },
     read: () => pointer.x === 0 ? undefined : native.document.elementsFromPoint(pointer.x, pointer.y).length > 0,
     run: async () => {
       // A pointer drag: To Do's first card, into In Progress, above its first.
@@ -143,6 +178,10 @@ const scenarios: Record<string, Scenario> = {
   },
   // Nothing besides the drag: its moves are hit-tested against the layout.
   'pixel-art': {
+    prime: phase => {
+      const y = phase === 'answering' ? 3 : 7
+      for (let at = 0; at < 14; at++) realBounds(gridOf().children[y]!.children[1 + at]!.nativeId)
+    },
     read: () => pointer.x === 0 ? undefined : native.document.elementsFromPoint(pointer.x, pointer.y).length > 0,
     run: async phase => {
       // A stroke along a row, a different one each phase.
@@ -179,6 +218,10 @@ try {
   const scenario = scenarios[id]
   if (scenario === undefined) throw new Error(`no scenario for ${id}`)
   for (const phase of ['answering', 'not painting'] as const) {
+    if (session && phase === 'not painting') {
+      scenario.prime?.(phase)
+      power('off')
+    }
     answering = phase === 'answering'
     const before = native.host.geometry()
     // GPUI stops answering: the app's next read finds out, waiting out
@@ -209,6 +252,7 @@ try {
 } catch (error) {
   results['error'] = String(error)
 } finally {
+  if (session) power('on')
   console.log(`RESULTS ${JSON.stringify(results)}`)
   await native.close({ force: true })
   process.exit(0)

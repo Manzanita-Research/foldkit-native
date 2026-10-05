@@ -17,6 +17,7 @@
 import type { EventPayload, WindowOptions } from '@gpuix/native'
 import { type NativeRenderer, createRendererState } from '@gpuix/native/host'
 
+import { redactingRenderer, secretValues } from './automation.ts'
 import {
   type ErrorPhase,
   type ErrorReport,
@@ -50,6 +51,7 @@ export { NativeStartError, type StartFailure, explainStartError } from './start.
 export { dataDirFor } from './storage.ts'
 export { NativeDocument, NativeElement } from './dom.ts'
 export { PASSWORD_UNSUPPORTED } from './host.ts'
+export { SECRET_AUTOCOMPLETE, isSecretField, redactTree, redactingRenderer, secretValues } from './automation.ts'
 
 /** Token name → CSS value (numbers are pixels), as `foldkit-native`'s theme. */
 export type Tokens = Readonly<Record<string, string | number>>
@@ -297,7 +299,11 @@ export const mountGpuix = (options: NativeOptions = {}) => {
   // stdin, only when asked for (see `automation`). The renderer here is
   // gpuix's own GpuixRenderer, not createNativeRenderer's, which would serve
   // it whenever stdin isn't a terminal.
-  if (automationRequested(automation)) gpuix.runtime.enableAutomation(renderer as never)
+  // It serves the renderer less a person's secrets (automation.ts).
+  if (automationRequested(automation)) {
+    const fields = () => attached?.document.querySelectorAll('input, textarea') ?? []
+    gpuix.runtime.enableAutomation(redactingRenderer(renderer, () => secretValues(fields() as never)) as never)
+  }
 
   const { width, height } = windowOptions
   attached = attachGpuix(renderer, {

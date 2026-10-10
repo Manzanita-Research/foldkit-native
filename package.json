@@ -23,6 +23,7 @@
     "css": "bun scripts/css.ts",
     "record": "bun scripts/record.ts",
     "typecheck": "tsc --noEmit",
+    "check:package-notices": "node --test --test-concurrency=1 test/package-notices.test.mjs",
     "test": "bun test"
   },
   "peerDependencies": {

@@ -13,10 +13,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Blacksmith is organization-only. Keep upstream's provisioned runners;
+  # forks use standard GitHub-hosted runners without additional setup.
   # Headless: FoldKit in happy-dom, the mirror against a fake GPUI tree. No
   # GPU, no window. test/native/* skips itself off macOS.
   unit:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ github.repository == 'Manzanita-Research/foldkit-native' && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -29,6 +31,7 @@ jobs:
       - run: npm ci
       - run: bun run typecheck
       - run: bun run css --check
+      - run: npm run check:release
       - run: bun test
       # The examples again on the DOM mirror, the comparator: the run above
       # takes each example's own renderer (FoldKit on gpuix, once ported).
@@ -39,7 +42,7 @@ jobs:
   # Real GPUI on Metal: offscreen (gpuix's TestRenderer) and in real windows
   # driven through gpuix's automation channel.
   macos:
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: ${{ github.repository == 'Manzanita-Research/foldkit-native' && 'blacksmith-6vcpu-macos-15' || 'macos-15' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

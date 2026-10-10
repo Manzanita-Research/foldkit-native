@@ -98,6 +98,100 @@ describe('localStorage in a file', () => {
     expect(storage.length).toBe(0)
   })
 
+  test.each(['removeItem', 'clear'] as const)('failed %s preserves values, key order and later writes', operation => {
+    const dir = scratch()
+    const path = join(dir, 'localStorage.json')
+    const temporary = `${path}.${process.pid}.tmp`
+    const storage = fileStorage(dir)
+    storage.setItem('saved', 'one')
+    storage.setItem('other', 'two')
+    const original = readFileSync(path, 'utf8')
+    const state = () => ({
+      saved: storage.getItem('saved'), other: storage.getItem('other'),
+      length: storage.length, keys: [storage.key(0), storage.key(1), storage.key(2)],
+    })
+    const before = state()
+    // Block the exact write destination without depending on OS permissions.
+    mkdirSync(temporary)
+    expect(() => storage.setItem('saved', 'replacement')).toThrow()
+    expect(state()).toEqual(before)
+    expect(() => storage.setItem('new', 'replacement')).toThrow()
+    expect(storage.getItem('new')).toBeNull()
+    expect(state()).toEqual(before)
+    // Removing an absent key remains a no-op even while writes are blocked.
+    expect(() => storage.removeItem('absent')).not.toThrow()
+    expect(() => operation === 'removeItem' ? storage.removeItem('saved') : storage.clear()).toThrow()
+    expect(state()).toEqual(before)
+    expect(readFileSync(path, 'utf8')).toBe(original)
+    expect(fileStorage(dir).getItem('saved')).toBe('one')
+
+    rmSync(temporary, { recursive: true })
+    storage.setItem('unrelated', 'three')
+    const expected = { saved: 'one', other: 'two', unrelated: 'three' }
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(expected)
+    const restarted = fileStorage(dir)
+    expect([restarted.key(0), restarted.key(1), restarted.key(2)]).toEqual(Object.keys(expected))
+    expect(restarted.length).toBe(3)
+    for (const [key, value] of Object.entries(expected)) expect(restarted.getItem(key)).toBe(value)
+    // Successful deletion and clearing still write through synchronously.
+    restarted.removeItem('saved')
+    expect(restarted.getItem('saved')).toBeNull()
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ other: 'two', unrelated: 'three' })
+    restarted.clear()
+    expect(restarted.length).toBe(0)
+    expect(restarted.key(0)).toBeNull()
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({})
+    expect(readdirSync(dir)).toEqual(['localStorage.json'])
+    mkdirSync(temporary)
+    expect(() => restarted.clear()).not.toThrow()
+    expect(() => restarted.removeItem('absent')).not.toThrow()
+    expect(readFileSync(path, 'utf8')).toBe('{}')
+  })
+
+  for (const [kind, value] of Object.entries({ number: 42, boolean: true, null: null, object: { nested: 'value' }, array: ['value'] })) {
+    for (const invalidFirst of [true, false]) {
+      test(`a ${kind} entry ${invalidFirst ? 'before' : 'after'} a valid entry rejects and preserves the whole store`, () => {
+        const dir = scratch()
+        const path = join(dir, 'localStorage.json')
+        const initial = JSON.stringify(invalidFirst ? { damaged: value, stable: 'keep' } : { stable: 'keep', damaged: value }, null, 2) + '\n'
+        writeFileSync(path, initial)
+        const reports: Array<ErrorReport> = []
+        app = mountHeadless({ dataDir: dir, onError: report => void reports.push(report) })
+        expect(localStorage.length).toBe(0)
+        expect(localStorage.key(0)).toBeNull()
+        expect(localStorage.getItem('stable')).toBeNull()
+        expect(localStorage.getItem('damaged')).toBeNull()
+        expect(reports.map(report => report.phase)).toEqual(['storage'])
+        expect(readFileSync(`${path}.unreadable`, 'utf8')).toBe(initial)
+        expect(existsSync(path)).toBe(false)
+        localStorage.setItem('new', 'value')
+        expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ new: 'value' })
+        expect(readFileSync(`${path}.unreadable`, 'utf8')).toBe(initial)
+        const restarted = fileStorage(dir)
+        expect(restarted.length).toBe(1)
+        expect(restarted.getItem('new')).toBe('value')
+        expect(restarted.getItem('stable')).toBeNull()
+        expect(reports.length).toBe(1)
+      })
+    }
+  }
+
+  test('a valid string map loads in order and survives the next write without a report', () => {
+    const dir = scratch()
+    const path = join(dir, 'localStorage.json')
+    writeFileSync(path, '{"stable":"keep","other":"42"}')
+    const reports: Array<ErrorReport> = []
+    app = mountHeadless({ dataDir: dir, onError: report => void reports.push(report) })
+    expect(localStorage.length).toBe(2)
+    expect([localStorage.key(0), localStorage.key(1)]).toEqual(['stable', 'other'])
+    expect(localStorage.getItem('stable')).toBe('keep')
+    expect(localStorage.getItem('other')).toBe('42')
+    localStorage.setItem('new', 'value')
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ stable: 'keep', other: '42', new: 'value' })
+    expect(reports).toEqual([])
+    expect(readdirSync(dir)).toEqual(['localStorage.json'])
+  })
+
   test('sessionStorage stays in memory', () => {
     const dir = scratch()
     app = mountHeadless({ dataDir: dir })

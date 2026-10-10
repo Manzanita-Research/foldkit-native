@@ -119,6 +119,39 @@ describe('headless', () => {
     expect(app.inSync()).toBe(true)
   })
 
+  test.each(['Continue Shopping', 'Products'])('places two orders after returning via %s', async returnLink => {
+    app = await openHeadless('shopping-cart')
+    await clickInRow(app, 'Apple', 'Add to Cart')
+    await app.click('Checkout')
+    await app.type('Special delivery instructions (optional)...', 'Leave at the door')
+    await app.click('Place Order')
+    expect(app.texts()).toContain('Order placed successfully!')
+    expect(app.texts().slice(0, 3)).toEqual(NAV)
+
+    // Navigation alone preserves the confirmation until a new cart begins.
+    await app.click(returnLink)
+    await app.click('Checkout')
+    expect(app.texts()).toContain('Order placed successfully!')
+    await app.click(returnLink)
+    await clickInRow(app, 'Bread', 'Add to Cart')
+    await app.click('Checkout')
+    expect(app.texts()).toContain('Cart (1)')
+    expect(app.texts()).toContain('Order Summary')
+    expect(app.texts()).toContain('Bread')
+    expect(app.texts()).not.toContain('Apple')
+    expect(app.texts()).not.toContain('Order placed successfully!')
+    expect(app.texts()).toContain('Place Order')
+    expect(app.document.querySelector('textarea')!.value).toBe('')
+    expect(app.inSync()).toBe(true)
+
+    await app.type('Special delivery instructions (optional)...', 'Ring twice')
+    await app.click('Place Order')
+    expect(app.texts()).toContain('Order placed successfully!')
+    expect(app.texts()).not.toContain('Place Order')
+    expect(app.texts().slice(0, 3)).toEqual(NAV)
+    expect(app.inSync()).toBe(true)
+  })
+
   test('back goes to the previous page, but only the app can ask for it', async () => {
     app = await openHeadless('shopping-cart')
     await app.click('Cart')

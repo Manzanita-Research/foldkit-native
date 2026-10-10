@@ -1,9 +1,9 @@
-// From FoldKit's examples/pixel-art/src/view/history.ts, unchanged (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
+// From FoldKit's examples/pixel-art/src/view/history.ts, adapted (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
 // https://github.com/foldkit/foldkit/tree/main/examples/pixel-art
 
 import clsx from 'clsx'
 import { Array, Option } from 'effect'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { createLazy, type Html, type HtmlBuilder } from 'foldkit/html'
 
 import { Button } from '@foldkit/ui'
 
@@ -11,6 +11,14 @@ import { THUMBNAIL_CELL_SIZE, VISIBLE_HISTORY_COUNT } from '../constant'
 import { Message } from '../message'
 import type { Grid } from '../model'
 import { type PaletteTheme, resolveColor } from '../palette'
+
+type ThumbnailGridView = (
+  grid: Grid,
+  gridSize: number,
+  theme: PaletteTheme,
+  h: HtmlBuilder<Message>,
+  label: string,
+) => Html
 
 const sectionLabel = (text: string, h: HtmlBuilder<Message>): Html =>
   h.div(
@@ -29,6 +37,7 @@ export const historyPanelView = (
   gridSize: number,
   theme: PaletteTheme,
   h: HtmlBuilder<Message>,
+  gridView: ThumbnailGridView = thumbnailGridView,
 ): Html => {
   const undoCount = undoStack.length
   const redoCount = redoStack.length
@@ -122,6 +131,7 @@ export const historyPanelView = (
             Option.none(),
             theme,
             h,
+            gridView,
           ),
           ...Array.map(
             Array.reverse(visibleUndoEntries),
@@ -135,6 +145,7 @@ export const historyPanelView = (
                 Option.some(Message.ClickedHistoryStep({ stepIndex })),
                 theme,
                 h,
+                gridView,
               )
             },
           ),
@@ -160,6 +171,7 @@ const thumbnailEntry = (
   maybeOnClick: Option.Option<Message>,
   theme: PaletteTheme,
   h: HtmlBuilder<Message>,
+  gridView: ThumbnailGridView = thumbnailGridView,
 ): Html =>
   h.div(
     [
@@ -182,26 +194,7 @@ const thumbnailEntry = (
       ...(Option.isSome(maybeOnClick) ? [h.Role('button'), h.Tabindex(0)] : []),
     ],
     [
-      h.div(
-        [
-          h.Class('flex-shrink-0'),
-          h.Style({
-            display: 'grid',
-            'grid-template-columns': `repeat(${gridSize}, ${THUMBNAIL_CELL_SIZE}px)`,
-          }),
-        ],
-        Array.flatMap(grid, row =>
-          Array.map(row, cell =>
-            h.div([
-              h.Style({
-                width: `${THUMBNAIL_CELL_SIZE}px`,
-                height: `${THUMBNAIL_CELL_SIZE}px`,
-                backgroundColor: resolveColor(cell, theme),
-              }),
-            ]),
-          ),
-        ),
-      ),
+      gridView(grid, gridSize, theme, h, label),
       h.span(
         [
           h.Class(
@@ -215,3 +208,69 @@ const thumbnailEntry = (
       ),
     ],
   )
+
+const thumbnailGridView = (
+  grid: Grid,
+  gridSize: number,
+  theme: PaletteTheme,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [
+      h.Class('flex-shrink-0'),
+      h.Style({
+        display: 'grid',
+        'grid-template-columns': `repeat(${gridSize}, ${THUMBNAIL_CELL_SIZE}px)`,
+      }),
+    ],
+    Array.flatMap(grid, row =>
+      Array.map(row, cell =>
+        h.div([
+          h.Style({
+            width: `${THUMBNAIL_CELL_SIZE}px`,
+            height: `${THUMBNAIL_CELL_SIZE}px`,
+            backgroundColor: resolveColor(cell, theme),
+          }),
+        ]),
+      ),
+    ),
+  )
+
+/** One cache per running app; each visible position owns an independent slot. */
+export const createHistoryPanelView = () => {
+  const slots = new Map<string, ReturnType<typeof createLazy>>()
+  let previousRedoCount = 0
+  const gridView: ThumbnailGridView = (grid, gridSize, theme, h, label) => {
+    let slot = slots.get(label)
+    if (slot === undefined) {
+      slot = createLazy()
+      slots.set(label, slot)
+    }
+    return slot(thumbnailGridView, [grid, gridSize, theme, h])!
+  }
+  return {
+    view: (
+      undoStack: ReadonlyArray<Grid>,
+      redoStack: ReadonlyArray<Grid>,
+      grid: Grid,
+      gridSize: number,
+      theme: PaletteTheme,
+      h: HtmlBuilder<Message>,
+    ): Html => {
+      // Entries are unkeyed. Forward insertion/removal shifts the DOM positions
+      // of Current and Back, so never reuse their attached VNodes across it.
+      if (redoStack.length !== previousRedoCount) {
+        slots.clear()
+        previousRedoCount = redoStack.length
+      }
+      const visible = Math.min(undoStack.length, VISIBLE_HISTORY_COUNT)
+      for (const key of slots.keys()) {
+        if (key !== 'Current' && Number(key.slice(5)) > visible) {
+          slots.delete(key)
+        }
+      }
+      return historyPanelView(undoStack, redoStack, grid, gridSize, theme, h, gridView)
+    },
+    dispose: () => slots.clear(),
+  }
+}

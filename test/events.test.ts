@@ -72,6 +72,92 @@ describe('listeners → native listeners', () => {
     expect(mounted.nativeOf(button).listeners.has('click')).toBe(true)
   })
 
+  test('unmatched removal preserves native delivery to the installed callback', async () => {
+    const { container, window } = await setup()
+    const button = el('button')
+    let clicks = 0
+    const listener = () => { clicks++ }
+    button.addEventListener('click', listener)
+    container.append(button)
+    await mounted.settle()
+    button.removeEventListener('click', () => {})
+    button.setAttribute('data-x', '1')
+    await mounted.settle()
+    button.dispatchEvent(new window.MouseEvent('click') as unknown as Event)
+    expect(clicks).toBe(1)
+    expect(mounted.send(button, { eventType: 'click' })).toBe(true)
+    expect(clicks).toBe(2)
+  })
+
+  test('duplicate callback and capture registrations do not leave ghost subscriptions', async () => {
+    const { container, window } = await setup()
+    const button = el('button')
+    let clicks = 0
+    const listener = { handleEvent: () => { clicks++ } }
+    button.addEventListener('click', listener)
+    button.addEventListener('click', listener, { once: true, passive: true })
+    button.addEventListener('click', listener, true)
+    button.addEventListener('click', listener, { capture: true })
+    container.append(button)
+    await mounted.settle()
+    expect(mounted.send(button, { eventType: 'click' })).toBe(true)
+    expect(clicks).toBe(2)
+    // Pinned happy-dom removes bubbling first, even when capture is requested.
+    button.removeEventListener('click', listener, true)
+    button.setAttribute('data-x', '1')
+    await mounted.settle()
+    expect(mounted.nativeOf(button).listeners.has('click')).toBe(true)
+    button.dispatchEvent(new window.MouseEvent('click') as unknown as Event)
+    expect(clicks).toBe(3)
+    button.removeEventListener('click', listener, false)
+    button.setAttribute('data-x', '2')
+    await mounted.settle()
+    expect(mounted.send(button, { eventType: 'click' })).toBe(false)
+    expect(mounted.nativeOf(button).listeners.has('click')).toBe(false)
+    button.dispatchEvent(new window.MouseEvent('click') as unknown as Event)
+    expect(clicks).toBe(3)
+  })
+
+  test('once and abort removals keep remaining listeners and remove the last subscription', async () => {
+    const { container, window } = await setup()
+    const button = el('button')
+    const controller = new window.AbortController()
+    let once = 0; let persistent = 0
+    button.addEventListener('click', () => { once++ }, { once: true })
+    button.addEventListener('click', () => { persistent++ }, { signal: controller.signal as unknown as AbortSignal })
+    container.append(button)
+    await mounted.settle()
+    mounted.send(button, { eventType: 'click' })
+    button.setAttribute('data-x', '1')
+    await mounted.settle()
+    expect(mounted.nativeOf(button).listeners.has('click')).toBe(true)
+    button.dispatchEvent(new window.MouseEvent('click') as unknown as Event)
+    expect([once, persistent]).toEqual([1, 2])
+    controller.abort()
+    button.setAttribute('data-x', '2')
+    await mounted.settle()
+    expect(mounted.send(button, { eventType: 'click' })).toBe(false)
+    expect(mounted.nativeOf(button).listeners.has('click')).toBe(false)
+  })
+
+  test('duplicate above-body registrations preserve delivery until the actual removal', async () => {
+    const { container, document } = await setup()
+    const node = el('div')
+    let moves = 0
+    const listener = () => { moves++ }
+    document.addEventListener('pointermove', listener)
+    document.addEventListener('pointermove', listener)
+    document.removeEventListener('pointermove', () => {})
+    container.append(node)
+    await mounted.settle()
+    expect(mounted.send(document.body, { eventType: 'mouseMove' })).toBe(true)
+    expect(moves).toBe(1)
+    document.removeEventListener('pointermove', listener)
+    node.setAttribute('data-x', '1')
+    await mounted.settle()
+    expect(mounted.send(document.body, { eventType: 'mouseMove' })).toBe(false)
+  })
+
   test('DOM events map to the GPUI events that produce them', async () => {
     const { container } = await setup()
     const node = el('div', 'x')
@@ -763,6 +849,69 @@ describe('hover during a press', () => {
     seen.length = 0
     mounted.send(cells[0]!, { eventType: 'mouseMove', ...at(150, 400), pressedButton: 0 })
     expect(seen).toEqual(['mouseout@2', 'mouseleave@2', 'mouseleave@wrapper'])
+  })
+
+  test('hover listeners survive live moves and detached subtree reinsertion', async () => {
+    const { cells, seen, at } = await strip()
+    const source = cells[0]!
+    const target = cells[1]!
+    const parent = target.parentElement!
+    const other = el('div')
+    mounted.container.append(other)
+    await mounted.settle()
+    const id = mounted.idOf(target)
+    other.append(target)
+    await mounted.settle()
+    expect(mounted.idOf(target)).toBe(id)
+    mounted.send(source, { eventType: 'mouseDown', ...at(50), button: 0 })
+    seen.length = 0
+    mounted.send(source, { eventType: 'mouseMove', ...at(150), pressedButton: 0 })
+    expect(seen).toContain('mouseenter@1')
+    mounted.send(source, { eventType: 'mouseUp', ...at(150), button: 0 })
+    other.remove()
+    await mounted.settle()
+    expect(mounted.mirror.idFor(target)).toBeUndefined()
+    parent.append(other)
+    await mounted.settle()
+    expect(mounted.idOf(target)).not.toBe(id)
+    expect(mounted.nativeOf(target).listeners.has('mouseEnter')).toBe(true)
+    mounted.gpui.setBounds(mounted.idOf(target), { x: 100, y: 0, width: 100, height: 100 })
+    // A recreated native element's first enter is fresh, not a late copy.
+    seen.length = 0
+    expect(mounted.send(target, { eventType: 'mouseEnter', ...at(150), hovered: true })).toBe(true)
+    expect(seen).toContain('mouseenter@1')
+    mounted.send(source, { eventType: 'mouseDown', ...at(50), button: 0 })
+    seen.length = 0
+    mounted.send(source, { eventType: 'mouseMove', ...at(150), pressedButton: 0 })
+    expect(seen).toContain('mouseenter@1')
+    mounted.send(source, { eventType: 'mouseUp', ...at(150), button: 0 })
+  })
+
+  test('listeners changed while detached restore only current native and hover subscriptions', async () => {
+    const { cells, seen, at } = await strip()
+    const source = cells[0]!
+    const target = el('div')
+    const onEnter = () => seen.push('detached enter')
+    const onClick = () => seen.push('detached click')
+    target.addEventListener('mouseenter', onEnter)
+    target.addEventListener('click', onClick)
+    mounted.container.append(target)
+    await mounted.settle()
+    target.remove()
+    await mounted.settle()
+    target.removeEventListener('click', onClick)
+    target.removeEventListener('mouseenter', onEnter)
+    target.addEventListener('mouseenter', onEnter)
+    mounted.container.append(target)
+    await mounted.settle()
+    expect(mounted.nativeOf(target).listeners.has('click')).toBe(false)
+    expect(mounted.nativeOf(target).listeners.has('mouseEnter')).toBe(true)
+    mounted.gpui.setBounds(mounted.idOf(target), { x: 350, y: 0, width: 100, height: 100 })
+    mounted.send(source, { eventType: 'mouseDown', ...at(50), button: 0 })
+    seen.length = 0
+    mounted.send(source, { eventType: 'mouseMove', ...at(400), pressedButton: 0 })
+    expect(seen).toContain('detached enter')
+    mounted.send(source, { eventType: 'mouseUp', ...at(400), button: 0 })
   })
 
   test("GPUI's own enter and leave after the release aren't fired twice", async () => {

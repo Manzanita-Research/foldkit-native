@@ -54,6 +54,8 @@ import {
   isNaturallyFocusable,
 } from './dom.ts'
 import { type Box, createGuard, createLayout } from './layout.ts'
+import { isSecretField, secretValues } from './automation.ts'
+import type { AutomationSecrets } from './automation-secrets.ts'
 import { type Declared, INHERITED, type Sheet, type State, type Viewport, declarations, declared, fold, resolveVars, textStyle, toStyle } from './sheet.ts'
 
 /** DOM event → the gpuix events that produce it. EVENTS.md is the contract. */
@@ -132,6 +134,7 @@ const nativeType = (element: NativeElement): string => {
 export type HostTimings = { syncMs: number; restyled: number; mutations: number; inputAt?: number }
 
 export type HostOptions = {
+  secrets?: AutomationSecrets
   renderer: NativeRenderer
   sheets: Array<Sheet>
   /** The window's size now, for `@media`, `vh` and `vw`. */
@@ -144,7 +147,7 @@ export type HostOptions = {
 }
 
 export const createHost = (document: NativeDocument, options: HostOptions) => {
-  const { renderer, sheets } = options
+  const { renderer, sheets, secrets } = options
   const state = createRendererState(renderer)
   const eventHandlers = new Map<number, Map<string, (event: EventPayload) => void>>()
   const mutations = createMutationQueue(renderer, ids => {
@@ -194,7 +197,13 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     autofocus = []
     if (wanted !== undefined && isFocusable(wanted)) setFocus(wanted, false)
     const pending = mutations.pending
-    mutations.flushMutations()
+    try {
+      mutations.flushMutations()
+    } catch (error) {
+      secrets?.invalidate()
+      throw error
+    }
+    if (pending > 0 || secrets?.dirty) secrets?.submitted(secretValues(document.querySelectorAll('input, textarea')))
     if (pending > 0) layout.moved()
     options.onSynced?.({ syncMs: performance.now() - started, restyled, mutations: pending, ...(inputAt === undefined ? {} : { inputAt }) })
     inputAt = undefined
@@ -590,6 +599,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   /** A field the person can't edit: read-only, or disabled. */
   const isLocked = (element: NativeElement) => element.hasAttribute('readonly') || isDisabled(element)
   const syncProps = (element: NativeElement) => {
+    if (isSecretField(element)) secrets?.capture(element.value)
     const id = element.nativeId
     const next = propsOf(element)
     const sent = sentProps.get(element) ?? new Map<string, unknown>()
@@ -711,7 +721,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     if (scheduled) sync()
   }
   const drawn = () => {
+    if (detached) return
     layout.drew()
+    settleScrolls()
+    if (detached) return
     watchSize()
     fitAspects()
     if (document.resizeObservers.size > 0) for (const observer of [...document.resizeObservers]) observer.deliver(host)
@@ -747,7 +760,11 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     }
   }
   const unmount = (node: NativeNode) => {
-    if (node instanceof NativeElement) settled(node)
+    if (node instanceof NativeElement) {
+      cancelEdit(node)
+      settled(node)
+      pendingScrolls.delete(node)
+    }
     if (node.nativeId !== 0) {
       unregisterEventHandlers(eventHandlers, node.nativeId)
       nodes.delete(node.nativeId)
@@ -978,6 +995,8 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   // for one task; if a Tab keydown came for that field around it, the change
   // is dropped and GPUI's editor gets the old value back. Otherwise (a pasted
   // tab) it goes through, a task late. FoldKit never sees the tab Tab typed.
+  // A newer native or controlled value supersedes the held change: its
+  // timer must never write an older value or emit input after the newer one.
   // Per field: Tabs GPUI queues together go to one field, then the next,
   // before the first field's change comes in.
   const tabbedAt = new WeakMap<NativeElement, number>()
@@ -987,6 +1006,13 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const onlyAddsTabs = (before: string, after: string) =>
     after.length > before.length && after.replace(/\t/g, '') === before.replace(/\t/g, '')
   const typedByTab = (element: NativeElement) => performance.now() - (tabbedAt.get(element) ?? -Infinity) < 100
+  const pendingEdits = new Map<NativeElement, ReturnType<typeof setTimeout>>()
+  const cancelEdit = (element: NativeElement) => {
+    const timer = pendingEdits.get(element)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    pendingEdits.delete(element)
+  }
 
   // KEYS
   // Keys come from GPUI's window key events only (no element listens for
@@ -1148,7 +1174,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         return
       case 'change': {
         inputAt = performance.now()
+        cancelEdit(element)
         const value = unnudged(element, event.value ?? '')
+        if (isSecretField(element)) {
+          secrets?.capture(value)
+          if (secrets !== undefined) schedule()
+        }
         // An edit GPUI's editor took before it heard the field was disabled
         // or made read-only (it applies edits at once): the DOM refuses it
         // and the editor gets the value back.
@@ -1156,10 +1187,13 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         if (onlyAddsTabs(element.value, value)) {
           const before = element.value
           if (typedByTab(element)) return restoreValue(element, before)
-          setTimeout(() => {
-            if (typedByTab(element)) restoreValue(element, before)
+          const id = element.nativeId
+          pendingEdits.set(element, setTimeout(() => {
+            pendingEdits.delete(element)
+            if (detached || element.nativeId !== id || !element.isConnected) return
+            if (isLocked(element) || typedByTab(element)) restoreValue(element, before)
             else typed(element, value)
-          }, 0)
+          }, 0))
           return
         }
         typed(element, value)
@@ -1432,6 +1466,16 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   let lastWheel: { node: NativeElement; sameTask: boolean } | undefined
   const wheel = (element: NativeElement, event: EventPayload, init: Init) => {
     layout.moved()
+    // Hit testing can read an outer area's offset and use the shared slow-
+    // query budget. Sample the area GPUI actually scrolled first. If the
+    // guard is held, keep its notification until an original read succeeds.
+    const pending: PendingScroll | undefined = scrollable(element) && element.nativeId !== 0 && nativeType(element) !== 'virtual-list' && renderer.getScrollOffset !== undefined
+      ? { before: offsets.get(element), sampled: undefined }
+      : undefined
+    if (pending !== undefined) {
+      pendingScrolls.set(element, pending)
+      readOffset(element)
+    }
     if (!(lastWheel?.sameTask === true && element !== lastWheel.node && element.contains(lastWheel.node))) {
       const turn = { node: element, sameTask: true }
       lastWheel = turn
@@ -1448,6 +1492,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       }))
     }
     if (!scrollable(element) || element.nativeId === 0) return
+    if (pending !== undefined) {
+      announceScroll(element, pending)
+      return
+    }
     const before = announced.get(element)
     const known = offsets.get(element)
     const now = offsetOf(element)
@@ -1460,6 +1508,31 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   /** Each scroll area's offset as its last `scroll` event (or the host's own
    *  scrolling) had it: a wheel at the end of the area fires none. */
   const announced = new WeakMap<NativeElement, readonly [number, number]>()
+  type PendingScroll = { before: [number, number] | undefined; sampled: [number, number] | undefined }
+  const pendingScrolls = new Map<NativeElement, PendingScroll>()
+  const announceScroll = (element: NativeElement, pending: PendingScroll) => {
+    if (pendingScrolls.get(element) !== pending || pending.sampled === undefined) return
+    pendingScrolls.delete(element)
+    const now = pending.sampled
+    if (pending.before !== undefined) layout.scrolled(element.nativeId, now[0] - pending.before[0], now[1] - pending.before[1])
+    const before = announced.get(element)
+    if (before !== undefined && before[0] === now[0] && before[1] === now[1]) return
+    // Remove the pending work before listeners run: a listener may scroll,
+    // dispatch another wheel, remove the area, or detach the host.
+    announced.set(element, now)
+    element.dispatchEvent(new NativeEvent('scroll'))
+  }
+  const settleScrolls = () => {
+    for (const [element, pending] of [...pendingScrolls]) {
+      if (detached) return
+      if (!element.isConnected || element.nativeId === 0 || !scrollable(element)) {
+        pendingScrolls.delete(element)
+        continue
+      }
+      if (pending.sampled === undefined) readOffset(element)
+      announceScroll(element, pending)
+    }
+  }
 
   /** Text GPUI's editor took: the DOM's value, then `input`. */
   const typed = (element: NativeElement, value: string) => {
@@ -1492,11 +1565,22 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   const guard = createGuard(options.now)
   /** Scroll offsets as GPUI last gave them (or as the host last set them). */
   const offsets = new WeakMap<NativeElement, [number, number]>()
+  const readOffset = (element: NativeElement) => {
+    const id = element.nativeId
+    const known = offsets.get(element)
+    const pending = pendingScrolls.get(element)
+    const read = renderer.getScrollOffset === undefined ? undefined : guard.ask('scroll', () => renderer.getScrollOffset!(id))
+    // A getter may reenter dispatch or scrollTo. Its older answer must not
+    // replace the successful offset committed by that newer work.
+    if (read === undefined || detached || element.nativeId !== id || offsets.get(element) !== known) return
+    const offset: [number, number] = [read?.[0] ?? 0, read?.[1] ?? 0]
+    offsets.set(element, offset)
+    if (pending !== undefined && pendingScrolls.get(element) === pending) pending.sampled = offset
+  }
   const offsetOf = (element: NativeElement): [number, number] => {
     if (element.nativeId === 0) return [0, 0]
     if (nativeType(element) === 'virtual-list') return listOffset(element)
-    const read = renderer.getScrollOffset === undefined ? undefined : guard.ask('scroll', () => renderer.getScrollOffset!(element.nativeId))
-    if (read !== undefined) offsets.set(element, [read?.[0] ?? 0, read?.[1] ?? 0])
+    readOffset(element)
     return offsets.get(element) ?? [0, 0]
   }
   /** Scrolls an area, and moves what the layout has inside it by what GPUI
@@ -1507,11 +1591,15 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     const [x, y] = [at + 0, down + 0]
     if (nativeType(element) === 'virtual-list') return scrollListTo(element, y)
     const [fromX, fromY] = offsets.get(element) ?? offsetOf(element)
+    const id = element.nativeId
+    const known = offsets.get(element)
     renderer.scrollTo?.(element.nativeId, x, y)
     const read = renderer.getScrollOffset === undefined ? undefined : guard.ask('scroll', () => renderer.getScrollOffset!(element.nativeId))
+    if (detached || element.nativeId !== id || offsets.get(element) !== known) return
     const to: [number, number] = read === undefined || read === null ? [x, y] : [read[0] ?? 0, read[1] ?? 0]
     offsets.set(element, to)
     announced.set(element, to)
+    pendingScrolls.delete(element)
     layout.scrolled(element.nativeId, to[0] - fromX, to[1] - fromY)
     layout.moved()
   }
@@ -1735,7 +1823,12 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       schedule()
     },
     changed: (element, what) => {
+      if (element.nativeId !== 0 && isField(element) && (what === 'value' || what === 'autocomplete')) {
+        secrets?.changed()
+        if (isSecretField(element)) secrets?.capture(element.value)
+      }
       if (what === 'value') {
+        cancelEdit(element)
         if (element.nativeId !== 0) syncProps(element)
         schedule()
         return
@@ -1941,6 +2034,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     detach: (options: { windowGone?: boolean } = {}) => {
       if (detached) return
       detached = true
+      pendingScrolls.clear()
+      for (const timer of pendingEdits.values()) clearTimeout(timer)
+      pendingEdits.clear()
+      secrets?.dispose()
       if (drawTimer !== undefined) clearTimeout(drawTimer)
       drawTimer = undefined
       drawWaiters = []

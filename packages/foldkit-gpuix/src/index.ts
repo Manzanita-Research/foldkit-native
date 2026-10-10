@@ -15,9 +15,11 @@
 // text input are GPUI's own.
 
 import type { EventPayload, WindowOptions } from '@gpuix/native'
+import { InProcessBackend, createSseDecoder, handleAutomationRequest, liveRendererAsTest } from '@gpuix/native/automation'
 import { type NativeRenderer, createRendererState } from '@gpuix/native/host'
 
 import { redactingRenderer, secretValues } from './automation.ts'
+import { type AutomationSecrets, createAutomationSecrets } from './automation-secrets.ts'
 import {
   type ErrorPhase,
   type ErrorReport,
@@ -191,7 +193,7 @@ export type AttachOptions = {
   dataDir?: string
   /** Errors a browser would report rather than throw, with where they came
    *  from: a DOM listener's or an animation frame's (the next ones still
-   *  run), the frame loop's, a native event's, a close handler's, the
+   *  run), the frame loop's, a native event's, a close handler's or teardown's, the
    *  store's. Without it they go to `console.error`. */
   onError?: (report: ErrorReport) => void
   /** The clock GPUI's geometry queries are timed by (tests). */
@@ -201,7 +203,7 @@ export type AttachOptions = {
 /** FoldKit on an already-initialised gpuix renderer: the live window
  *  (`mountGpuix`) or gpuix's offscreen TestRenderer and the fake in tests.
  *  Returns the container to hand to FoldKit's `Runtime.makeElement`. */
-export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {}) => {
+export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {}, secrets?: AutomationSecrets) => {
   const document = new NativeDocument()
   const window = new NativeWindow(document)
   const viewport = options.viewport ?? renderer.getWindowSize?.() ?? { width: 1024, height: 768 }
@@ -215,6 +217,7 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
   const sheets = [...(options.sheets ?? []), ...(appSheet === undefined ? [] : [appSheet])]
   const host = createHost(document, {
     renderer, sheets,
+    ...(secrets === undefined ? {} : { secrets }),
     viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
     // As a browser: the window's size changes, then `resize` fires.
     onResize: size => {
@@ -259,18 +262,26 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
     /** Takes it all down, in order: owned runtimes (their Subscriptions,
      *  Mounts, Commands and listeners stop, and FoldKit empties the
      *  container), pending animation frames, the native tree and GPUI
-     *  handlers (gpuix's retained count goes to zero), then the globals. */
+     *  handlers (gpuix's retained count goes to zero), then the globals.
+     *  Attempts every step even after a failure, then throws that error
+     *  (an AggregateError when several steps failed). */
     detach: (options: { windowGone?: boolean } = {}) => {
       if (detached) return
       detached = true
-      try {
-        for (const handle of owned.splice(0).reverse()) handle.dispose()
-        window.cancelAllFrames()
-        host.detach(options)
-      } finally {
-        // The globals go back even when GPUI's teardown throws.
-        restore()
+      const errors: Array<unknown> = []
+      const attempt = (release: () => void) => {
+        try {
+          release()
+        } catch (error) {
+          errors.push(error)
+        }
       }
+      for (const handle of owned.splice(0).reverse()) attempt(() => handle.dispose())
+      attempt(() => window.cancelAllFrames())
+      attempt(() => host.detach(options))
+      attempt(restore)
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1) throw new AggregateError(errors, 'foldkit-gpuix: teardown failed')
     },
   }
 }
@@ -350,7 +361,6 @@ export const mountGpuix = (options: NativeOptions = {}) => {
   // OPEN: gpuix loads now, so a missing library is explained too (start.ts).
   let renderer: WindowRenderer
   let gpuix: ReturnType<typeof loadGpuix>
-  const stdinBefore = new Set(process.stdin.listeners('data'))
   try {
     gpuix = loadGpuix()
     if (createRenderer === undefined) preflightDisplay()
@@ -375,9 +385,21 @@ export const mountGpuix = (options: NativeOptions = {}) => {
   // gpuix's own GpuixRenderer, not createNativeRenderer's, which would serve
   // it whenever stdin isn't a terminal.
   // It serves the renderer less a person's secrets (automation.ts).
-  if (automationRequested(automation)) {
+  const secrets = automationRequested(automation) ? createAutomationSecrets(renderer) : undefined
+  let automationListener: ((chunk: string) => void) | undefined
+  if (secrets !== undefined) {
     const fields = () => attached?.document.querySelectorAll('input, textarea') ?? []
-    gpuix.runtime.enableAutomation(redactingRenderer(renderer, () => secretValues(fields() as never)) as never)
+    // Use gpuix's protocol/backend, but own the stdin callback explicitly:
+    // its enableAutomation returns no disposer, and a listener snapshot
+    // would also claim host registrations triggered by `newListener`.
+    const backend = new InProcessBackend(liveRendererAsTest(redactingRenderer(renderer, () => secrets.values(secretValues(fields() as never))) as never))
+    const decoder = createSseDecoder(message => {
+      if (!('method' in message)) return
+      void handleAutomationRequest(message, backend).then(reply => { process.stdout.write(reply) })
+    })
+    automationListener = chunk => decoder.feed(chunk)
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', automationListener)
   }
 
   const { width, height } = windowOptions
@@ -393,7 +415,7 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     // A size left to the compositor (0, or unset: a layer surface's length)
     // is the one GPUI's window has.
     viewport: viewport ?? (width && height ? { width, height } : renderer.getWindowSize?.() ?? { width: width || 1024, height: height || 768 }),
-  })
+  }, secrets)
   const app = attached
   if (app.unsupported.length > 0 && process.env['FOLDKIT_GPUIX_DEBUG'] !== undefined) {
     console.error(`[foldkit-gpuix] ${app.unsupported.length} CSS rules not supported:\n  ${app.unsupported.join('\n  ')}`)
@@ -417,13 +439,30 @@ export const mountGpuix = (options: NativeOptions = {}) => {
   const finish = () => {
     if (done) return
     done = true
-    loop.stop()
-    app.detach({ windowGone })
-    // The automation listener gpuix put on stdin, so it can't hold the process.
-    const added = process.stdin.listeners('data').filter(listener => !stdinBefore.has(listener))
-    for (const listener of added) process.stdin.off('data', listener as never)
-    if (added.length > 0 && process.stdin.listenerCount('data') === 0) process.stdin.pause()
-    resolveClosed()
+    const attempt = (release: () => void) => {
+      try {
+        release()
+      } catch (error) {
+        try {
+          report('close', error, { reason: windowGone ? 'window' : 'close', stage: 'teardown' })
+        } catch {
+          // A host's onError and its console fallback may both throw.
+          // Reporting must not abandon the remaining teardown steps.
+        }
+      }
+    }
+    try {
+      attempt(() => loop.stop())
+      attempt(() => app.detach({ windowGone }))
+      // Release only this app's automation listener, even if detach failed.
+      if (automationListener !== undefined) {
+        const listener = automationListener
+        attempt(() => { process.stdin.off('data', listener) })
+        attempt(() => { if (process.stdin.listenerCount('data') === 0) process.stdin.pause() })
+      }
+    } finally {
+      resolveClosed()
+    }
     if (exitOnClose) process.exit(0)
   }
   const close = (options: { force?: boolean } = {}): Promise<boolean> => {
@@ -452,10 +491,19 @@ export const mountGpuix = (options: NativeOptions = {}) => {
       frames++
       const started = performance.now()
       app.host.frame()
-      const more = renderer.tick()
+      let more: boolean
+      try {
+        more = renderer.tick()
+      } catch (error) {
+        secrets?.invalidate()
+        throw error
+      }
       // A window that's gone has drawn nothing, and gpuix on Linux then throws
       // from every query ("GPUI application is not initialized"): say it ended.
-      if (more) app.host.drawn()
+      if (more) {
+        app.host.drawn()
+        secrets?.poll()
+      } else secrets?.invalidate()
       onFrame?.(performance.now() - started)
       return more
     },
@@ -475,14 +523,17 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     /** Asks the close handlers (one may `preventDefault()`), then releases
      *  everything the app owns: its runtimes, animation frames, the native
      *  tree and handlers, the globals, the frame loop and stdin. Resolves
-     *  `false` if a handler kept the window open. `force` can't be vetoed. */
+     *  `false` if a handler kept the window open. `force` can't be vetoed.
+     *  Teardown errors are reported through `onError` (phase `close`, stage
+     *  `teardown`); all steps are attempted and closing still resolves `true`. */
     close,
     /** Adds a close handler; returns a function that removes it. */
     onClose: (handler: CloseHandler) => {
       handlers.add(handler)
       return () => void handlers.delete(handler)
     },
-    /** Resolves once everything is released (with `exitOnClose: false`). */
+    /** Resolves after all cleanup attempts (with `exitOnClose: false`),
+     *  including when teardown errors were reported through `onError`. */
     closed,
   }
 }

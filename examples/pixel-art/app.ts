@@ -4,10 +4,12 @@
 // On the adapter (FOLDKIT_NATIVE_RENDERER=gpuix) that's a file in the app's
 // data folder, so the canvas survives a restart (restart.test.ts); on the
 // mirror it's happy-dom's, in memory.
+import { Effect, Layer } from 'effect'
 import { Runtime } from 'foldkit'
 
 import type { ExampleMeta } from '../support/example.ts'
-import { Flags, Model, flags, init, subscriptions, update, view } from './main'
+import { Flags, Model, flags, init, subscriptions, update } from './main'
+import { createView } from './view'
 
 export const meta: ExampleMeta = {
   title: 'Pixel Art',
@@ -19,8 +21,13 @@ export const meta: ExampleMeta = {
   height: 820,
 }
 
-export const start = (container: HTMLElement) =>
+export const start = (container: HTMLElement) => {
+  const { view, dispose } = createView()
   Runtime.run(
-    Runtime.makeApplication({ Model, Flags, init, update, view, subscriptions, container }),
+    Runtime.makeApplication({
+      Model, Flags, init, update, view, subscriptions, container,
+      resources: Layer.effectDiscard(Effect.addFinalizer(() => Effect.sync(dispose))),
+    }),
     { flags },
   )
+}

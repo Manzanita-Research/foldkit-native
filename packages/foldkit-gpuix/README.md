@@ -95,8 +95,18 @@ in a headless sway as the surface (`examples/layer-bar/layer.test.ts`).
 owns: its runtimes, pending animation frames, the native tree (gpuix's
 retained element count goes to zero), GPUI handlers and window key events,
 the globals, the frame loop, and gpuix's automation listener on stdin (if
-it was asked for). It
-resolves `false` if a handler kept the window open.
+it was asked for). Host listeners and other apps' automation listeners stay
+installed. It resolves `false` if a handler kept the window open, and `true`
+once cleanup has been attempted. Owned disposers run once in reverse order.
+If one throws, the other disposers, frame cancellation, native teardown,
+global restoration and stdin cleanup are still attempted. Teardown errors
+are reported through `onError` with phase `close` and
+`context.stage: 'teardown'` (an `AggregateError` holds multiple detach failures). Closing
+still resolves `true`, and `app.closed` settles after the cleanup attempts;
+repeated or forced close does not run them or report their errors again.
+Calling `detach()` directly instead throws after attempting all its cleanup.
+Failures in `onError` and its console fallback cannot interrupt teardown or
+prevent `app.closed` from settling.
 
 - **Close handlers**: `onClose(handler)` (or the `onClose` option). They run
   before anything is taken down, so they can still read the model and save,
@@ -116,7 +126,7 @@ resolves `false` if a handler kept the window open.
   and target) and an animation frame's (`animationFrame`) are reported and
   the next one still runs. Also: a tick of the frame loop (`frame`), an error
   from GPUI (`native`), a native event the host failed on (`event`: its type
-  and element), a close handler (`close`), the store (`storage`). Without
+  and element), a close handler or teardown (`close`), the store (`storage`). Without
   `onError` they go to `console.error`.
 - **Starting**: gpuix loads when a window is mounted, not at import, so a
   failure to load is caught too. It's a `NativeStartError` with one sentence:

@@ -150,8 +150,10 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     expect(app.painted()).toContain('Big List')
     expect(app.painted()).toContain('10,000 of 10,000')
     expect(app.painted()).toContain(TRACKS[0]!.title)
-    // The list's visible height is what the app scrolls by.
-    expect(Math.abs(app.bounds('Tracks').height - LIST_HEIGHT)).toBeLessThanOrEqual(4)
+    // Fixed header/toolbar/padding leave the same inset when the host
+    // constrains the requested window. Keep the original layout tolerance.
+    const expectedHeight = LIST_HEIGHT + app.renderer.getWindowSize().height - app.requestedSize.height
+    expect(Math.abs(app.bounds('Tracks').height - expectedHeight)).toBeLessThanOrEqual(4)
     app.screenshot('dark')
 
     await app.click('Filter')

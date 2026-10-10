@@ -19,6 +19,7 @@ import { pixelAt } from '../../test/support/native-geometry.ts'
 
 import { METAL, type Headless, type Metal, openHeadless, openMetal, rendererFor } from '../support/harness.ts'
 import { STORAGE_KEY } from './constant'
+import { createEmptyGrid } from './grid'
 import { SavedCanvasJsonString } from './model'
 
 const RENDERER = await rendererFor('pixel-art')
@@ -323,6 +324,34 @@ describe('headless', () => {
 describe('saved canvas', () => {
   let app: Headless
   afterEach(() => app?.close())
+
+  test('resizing an empty canvas saves its size and colour, and reload restores the saved canvas', async () => {
+    app = await openHeadless('pixel-art')
+    await app.click(RED)
+    await until(app, () => app.localStorage.getItem(STORAGE_KEY)?.includes('"selectedColorIndex":4') === true)
+    const before = Schema.decodeSync(SavedCanvasJsonString)(app.localStorage.getItem(STORAGE_KEY)!)
+    expect(before.gridSize).toBe(16)
+    expect(before.selectedColorIndex).toBe(4)
+
+    const previousSave = app.localStorage.getItem(STORAGE_KEY)
+    await app.click('8')
+    expect(board(app)).toEqual({ size: 8, painted: {} })
+    expect((app.document.querySelector('#grid-size-confirm-dialog') as HTMLDialogElement).open).toBe(false)
+    await until(app, () => app.localStorage.getItem(STORAGE_KEY) !== previousSave)
+    const serialized = app.localStorage.getItem(STORAGE_KEY)!
+    const saved = Schema.decodeSync(SavedCanvasJsonString)(serialized)
+    expect(saved.gridSize).toBe(8)
+    expect(saved.grid).toEqual(createEmptyGrid(8))
+    expect(saved.selectedColorIndex).toBe(before.selectedColorIndex)
+    expect(saved.paletteThemeIndex).toBe(before.paletteThemeIndex)
+
+    await app.close()
+    app = await openHeadless('pixel-art', { storage: { [STORAGE_KEY]: serialized } })
+    expect(board(app)).toEqual({ size: 8, painted: {} })
+    expect(checked(app.document, 'Grid size')).toBe('8')
+    expect(checked(app.document, 'Color palette')).toBe(RED)
+    expect(history(app.texts())).toEqual(['Current'])
+  }, SLOW)
 
   test('comes in as Flags from localStorage, and is saved back after each change', async () => {
     // An 8 × 8 canvas with one red cell in the corner, saved by an earlier run.

@@ -179,8 +179,11 @@ test('missing GitHub objects are distinct from authentication, API and transport
 test('real Changesets consumes root-only private version metadata and keeps lock/subpackages consistent', t => {
   const cwd = mkdtempSync(resolve(tmpdir(), 'changesets-version-'))
   t.after(() => rmSync(cwd, { recursive: true, force: true }))
-  command('git', ['clone', '--quiet', '--shared', root, cwd])
-  for (const file of ['package.json', 'package-lock.json', 'scripts/release.mjs', '.changeset/config.json']) {
+  // CI checkouts can be shallow and detached. Give the fixture its own Git
+  // metadata so Changesets never tries to deepen the caller's local clone.
+  command('git', ['init', '--quiet', cwd])
+  for (const file of ['package.json', 'package-lock.json', 'scripts/release.mjs', '.changeset/config.json',
+    'packages/ui/package.json', 'packages/foldkit-gpuix/package.json']) {
     mkdirSync(dirname(resolve(cwd, file)), { recursive: true })
     cpSync(resolve(root, file), resolve(cwd, file))
   }

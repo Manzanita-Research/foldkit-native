@@ -35,6 +35,7 @@ import { attachDom } from '../../src/index.ts'
 import type { FakeGpui, FakeNode, Shape } from '../../test/support/fake-gpui.ts'
 import { mountFake } from '../../test/support/mount.ts'
 import { readPng } from '../../test/support/png.ts'
+import { type Size, visibleCentre } from '../../test/support/native-geometry.ts'
 import { type Renderer, loadExample, rendererOf } from './example.ts'
 
 /** Real GPUI offscreen needs pixel read-back: macOS (Metal) today. */
@@ -127,19 +128,20 @@ export type Metal = {
   container: HTMLElement
   localStorage: Storage
   renderer: InstanceType<typeof import('@gpuix/native/testing').TestRenderer>
+  /** Requested native size; the host can constrain the actual window. */
+  requestedSize: Size
   /** Where GPUI laid out the element showing `text` (or `element`). */
   bounds: (at: string | Element) => Bounds
   /** Where GPUI laid out a DOM element (for elements with no text to name). */
   boundsOf: (element: Element, name?: string) => Bounds
   /** Text GPUI actually painted this frame. */
   painted: () => Array<string>
-  /** A click at the painted centre of the element showing `text` (or of
-   *  `element`), through GPUI's own hit test. */
+  /** A click inside the element/window intersection, through GPUI's hit test. */
   click: (at: string | Element) => Promise<void>
   /** Keystrokes through GPUI's input pipeline: "a b enter", "cmd-z". */
   keys: (keystrokes: string) => Promise<void>
   /** Saves this frame as `<example>-<name>.png` and returns its pixels. */
-  screenshot: (name: string) => { path: string } & ReturnType<typeof readPng>
+  screenshot: (name: string) => { path: string; logicalSize: Size } & ReturnType<typeof readPng>
   settle: () => Promise<void>
   /** One frame, without waiting for the app to go idle (a drag's
    *  requestAnimationFrame loop never does): GPUI draws, and what it got
@@ -330,19 +332,21 @@ const gpuixMetal = async (id: string, size: { width: number; height: number } | 
     container: app.container,
     localStorage: app.window.localStorage as unknown as Storage,
     renderer: app.renderer,
+    requestedSize: app.requestedSize,
     bounds,
     boundsOf,
     painted: () => app.renderer.getPaintedText(),
     click: async at => {
       await app.settle()
       const box = bounds(at)
-      app.renderer.nativeSimulateClick(box.x + box.width / 2, box.y + box.height / 2)
+      const point = visibleCentre(box, app.renderer.getWindowSize(), typeof at === 'string' ? at : at.tagName)
+      app.renderer.nativeSimulateClick(point.x, point.y)
       await app.settle()
     },
     keys: app.keys,
     screenshot: name => {
       const path = app.screenshot(name)
-      return { path, ...readPng(path) }
+      return { path, logicalSize: app.renderer.getWindowSize(), ...readPng(path) }
     },
     settle: app.settle,
     frame: app.settle,
@@ -409,8 +413,9 @@ export const mirrorMetal = async (id: string, size?: { width: number; height: nu
   const width = size?.width ?? example.meta.width
   const height = size?.height ?? example.meta.height
   const renderer = new TestRenderer({ width, height })
+  console.log('native test window:', JSON.stringify({ name: shotName(id, 'mirror'), requested: { width, height }, actual: renderer.getWindowSize() }))
   const dom = attachDom(renderer as unknown as NativeRenderer, {
-    css: example.css, viewport: { width, height }, ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
+    css: example.css, viewport: renderer.getWindowSize(), ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
   })
   seed(dom.window.localStorage, options)
   example.start(dom.container)
@@ -441,12 +446,14 @@ export const mirrorMetal = async (id: string, size?: { width: number; height: nu
     container: dom.container,
     localStorage: dom.window.localStorage as unknown as Storage,
     renderer,
+    requestedSize: { width, height },
     bounds,
     boundsOf,
     painted: () => renderer.getPaintedText(),
     click: async at => {
       const box = bounds(at)
-      renderer.nativeSimulateClick(box.x + box.width / 2, box.y + box.height / 2)
+      const point = visibleCentre(box, renderer.getWindowSize(), typeof at === 'string' ? at : at.tagName)
+      renderer.nativeSimulateClick(point.x, point.y)
       await settle()
     },
     keys: async keystrokes => {
@@ -456,7 +463,7 @@ export const mirrorMetal = async (id: string, size?: { width: number; height: nu
     screenshot: name => {
       const path = join(out, `${shotName(id, 'mirror')}-${name}.png`)
       renderer.captureScreenshot(path)
-      return { path, ...readPng(path) }
+      return { path, logicalSize: renderer.getWindowSize(), ...readPng(path) }
     },
     settle,
     frame: async () => renderer.flush(),

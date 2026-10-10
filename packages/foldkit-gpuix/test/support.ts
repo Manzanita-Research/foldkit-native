@@ -13,6 +13,7 @@ import { join } from 'node:path'
 
 import { type FakeGpui, createFakeGpui } from '../../../test/support/fake-gpui.ts'
 import { readPng } from '../../../test/support/png.ts'
+import { pixelAt, visibleCentre } from '../../../test/support/native-geometry.ts'
 import { type AttachOptions, NativeElement, attachGpuix } from '../src/index.ts'
 
 export const createFocusableFake = (size = { width: 1024, height: 768 }) => {
@@ -176,7 +177,8 @@ const evidenceDir = () => {
 export const openMetal = async (name: string, size: { width: number; height: number }, options: AttachOptions = {}) => {
   const { TestRenderer } = await import('@gpuix/native/testing')
   const renderer = new TestRenderer(size)
-  const attached = attachGpuix(renderer as unknown as NativeRenderer, { viewport: size, ...options })
+  console.log('native test window:', JSON.stringify({ name, requested: size, actual: renderer.getWindowSize() }))
+  const attached = attachGpuix(renderer as unknown as NativeRenderer, { viewport: renderer.getWindowSize(), ...options })
   const { document, host } = attached
   const settle = async () => {
     for (let i = 0; i < 4; i++) {
@@ -197,13 +199,15 @@ export const openMetal = async (name: string, size: { width: number; height: num
   return {
     ...attached,
     renderer,
+    requestedSize: size,
     settle,
     bounds,
-    /** A click at the element's painted centre, through GPUI's hit test. */
+    /** A click inside the element/window intersection, through GPUI's hit test. */
     click: async (element: { nativeId: number }) => {
       await settle()
       const box = bounds(element)
-      renderer.nativeSimulateClick(box.x + box.width / 2, box.y + box.height / 2)
+      const point = visibleCentre(box, renderer.getWindowSize(), `native element ${element.nativeId}`)
+      renderer.nativeSimulateClick(point.x, point.y)
       await settle()
     },
     /** Keystrokes through GPUI's input pipeline, to whatever GPUI has focused.
@@ -244,8 +248,8 @@ export const openMetal = async (name: string, size: { width: number; height: num
       const path = join(out, `${name}-${step}.png`)
       renderer.captureScreenshot(path)
       const image = readPng(path)
-      const scale = image.width / size.width
-      return { path, at: (x: number, y: number) => image.pixel(Math.round(x * scale), Math.round(y * scale)) }
+      const logicalSize = renderer.getWindowSize()
+      return { path, at: (x: number, y: number) => pixelAt(image, logicalSize, { x, y }) }
     },
     close: () => attached.detach(),
     document,

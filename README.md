@@ -135,6 +135,77 @@ as gpuix's README insists.
 9. **Theming seams** listed in [THEMING-SEAMS.md](THEMING-SEAMS.md) (per-element
    blur, multi-stop gradients, colour transitions…).
 
+## GitHub source releases
+
+Changesets manages the **repository source release** using the root
+`foldkit-native` version and `CHANGELOG.md`. A GitHub Release named
+`foldkit-native@<version>` points to the exact main commit whose CI passed;
+GitHub supplies source archives for that tag. These are source snapshots,
+not built npm packages or compiled native binaries. Root, adapter and UI
+remain `private: true`, their source TypeScript exports stay intact, and the
+subpackage versions/peer constraints are unchanged. The root repository
+version is not a promise of independently distributable adapter/UI packages.
+
+Use Node 22.22.3 (npm 10.9.8) and Bun 1.3.9 for the release tools:
+
+```sh
+npm ci
+npm run changeset           # choose foldkit-native and write the change summary
+npm run check:release       # isolated version fixture and mocked GitHub controls
+```
+
+After a change lands on main and its existing `CI` workflow passes, `Release`
+creates or updates `changeset-release/main` with `npm run version:packages`.
+Review the version and changelog before merging that PR. The version command
+consumes pending changesets and updates the root version in package.json and
+package-lock.json; it does not publish or tag. The successful main CI after
+merging the version PR permits `npm run release:github` to create the tag and
+GitHub Release. Each future change needs a new changeset to advance the version.
+
+The workflow must be present on the default branch; Actions must allow its
+`GITHUB_TOKEN` to create pull requests. This setup changes neither setting.
+When that token opens, updates or reopens the version PR, GitHub creates
+pull-request CI runs that require approval. A maintainer with write access
+must select **Approve workflows to run** in the PR's merge box before those
+checks execute ([GitHub token behavior](https://docs.github.com/en/actions/concepts/security/github_token)).
+Merge only after normal review and required checks. Token-triggered push
+and other PR activity events do not start CI. No extra token, npm secret,
+npm environment, registry authentication or OIDC permission is needed here.
+
+Release execution rejects failed/non-push/unrelated/fork CI, checkout drift
+and events whose tested SHA is no longer current main. All releases serialize
+through `release-main`, and current-main/CI identity is rechecked immediately
+before tag and release writes. GitHub has no atomic main-ref-and-release
+transaction: main advancing after a tag write causes the next check to fail,
+leaving the exact tested tag without a release. A retry at that same current
+SHA can finish it. If main has advanced, the older incomplete tag needs a
+maintainer's explicit recovery decision; automation never retags or deletes it.
+Completed consistent releases are no-ops on duplicate events or later commits
+without a new version; conflicting tag/version/changelog/release metadata
+fails rather than overwriting published history. API/auth/network failures
+remain failures. No CI artifact or fork code is consumed by the release flow.
+
+`npm run release:github -- --dry-run` still requires a genuine successful
+current-main workflow event and checkout, but prints the planned GitHub work
+without writing tags/releases. The safe `check:release` tests use temporary
+version fixtures and mocked APIs; they do not publish. CI checks the same
+controls while retaining all existing unit, mirror, static, native and
+artifact gates. Workflow failures are reported normally, with no native skips
+or timeout relaxation to make publication succeed.
+
+npm publication is a separate future step tracked by [#59](https://github.com/julia-script/foldkit-native/issues/59)
+and [#67](https://github.com/julia-script/foldkit-native/issues/67): choose public
+package boundaries and shared-style ownership, align package versions/peers,
+emit and qualify JS/types/exports in clean supported Node/Bun consumers,
+verify packed licences, then explicitly approve private-flag changes and
+registry credentials/OIDC. Only after those gates should a distinct npm
+publish command and permission be added. Do not substitute `changeset publish`
+for this GitHub-only release command today.
+
+Based on the [effectmq release workflow](https://github.com/julia-script/effectmq/blob/c656ceb5f409c001c34bf106b6a4c9c0c0619f39/.github/workflows/release.yml),
+[Changesets configuration](https://changesets.dev/guide/config)
+and [Changesets action custom publishing](https://github.com/changesets/action/tree/a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d#custom-publishing).
+
 ## Credits and licences
 
 FoldKit Native is MIT licensed ([LICENSE](LICENSE)). Its examples include

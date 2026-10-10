@@ -2,6 +2,7 @@
 // gpuix tree (the repo's fake GPUI, with GPUI's focus order added), and
 // GPUI's input comes back as DOM events. No happy-dom anywhere in these.
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
+import { createRendererState } from '@gpuix/native/host'
 import { Option, Schema } from 'effect'
 import { defineMessageUnion } from 'foldkit/message'
 
@@ -330,13 +331,15 @@ describe('fixes from the first real-GPUI run', () => {
       expect(app.native('Name').props['value']).toBe('')
     })
 
-    test('Shift-Tab: dropped the same way, focus goes back', async () => {
-      const { app, model } = await field('Ada')
-      app.document.getElementById('name')!.focus()
-      await tabAnd(app, 'A\tda', 'change first', true)
-      expect(model().seen).toEqual([])
-      expect(app.document.activeElement?.getAttribute('id')).toBe('next')
-    })
+    for (const order of ['change first', 'key first'] as const) {
+      test(`Shift-Tab: dropped the same way, focus goes back (${order})`, async () => {
+        const { app, model } = await field('Ada')
+        app.document.getElementById('name')!.focus()
+        await tabAnd(app, 'A\tda', order, true)
+        expect(model().seen).toEqual([])
+        expect(app.document.activeElement?.getAttribute('id')).toBe('next')
+      })
+    }
 
     test('a pasted tab, with no Tab key, goes through (a task late)', async () => {
       const { app, model } = await field('Ada')
@@ -344,6 +347,25 @@ describe('fixes from the first real-GPUI run', () => {
       expect(model().value).toBe('Ada\t')
       await app.type('Name', 'Ada\tL')
       expect(model().value).toBe('Ada\tL')
+    })
+
+    test('a same-task edit supersedes a pending pasted tab without reverting the model', async () => {
+      const { app, model } = await field('a')
+      const name = app.document.getElementById('name')!
+      app.host.dispatch({ eventType: 'change', elementId: name.nativeId, value: 'a\t' } as never)
+      app.host.dispatch({ eventType: 'change', elementId: name.nativeId, value: 'a\tb' } as never)
+      await app.settle()
+      expect(name.value).toBe('a\tb')
+      expect(model()).toEqual({ value: 'a\tb', seen: ['a\tb'] })
+    })
+
+    test('ordinary same-task edits reach the model in native order', async () => {
+      const { app, model } = await field('a')
+      const id = app.document.getElementById('name')!.nativeId
+      app.host.dispatch({ eventType: 'change', elementId: id, value: 'ab' } as never)
+      app.host.dispatch({ eventType: 'change', elementId: id, value: 'abc' } as never)
+      await app.settle()
+      expect(model()).toEqual({ value: 'abc', seen: ['ab', 'abc'] })
     })
 
     test('typing after the dropped tab lands on the value FoldKit has', async () => {
@@ -380,6 +402,13 @@ describe('fixes from the first real-GPUI run', () => {
     test('refused back to the last prop: nudged, then set', async () => {
       const { app, model } = await upper(0)
       await app.type('Code', 'x')
+      expect(model().value).toBe('')
+      expect(app.native('Code').props['value']).toBe('')
+    })
+
+    test('a pasted tab the model refuses comes back out of the editor', async () => {
+      const { app, model } = await upper(0)
+      await app.type('Code', '\t')
       expect(model().value).toBe('')
       expect(app.native('Code').props['value']).toBe('')
     })
@@ -462,6 +491,120 @@ describe('fixes from the first real-GPUI run', () => {
     // :hover counts as a class, so .c:hover and .c[data-on] weigh the same and
     // the later one wins even while hovered, as in CSS: no hover change.
     expect(app.native('c').style['hover']).toBeUndefined()
+  })
+})
+
+describe('deferred editor changes', () => {
+  for (const tag of ['input', 'textarea'] as const) {
+    const editor = async () => {
+      app = mountHeadless()
+      const field = app.document.createElement(tag)
+      field.value = 'a'
+      app.document.body.append(field)
+      await app.settle()
+      const seen: string[] = []
+      field.addEventListener('input', () => seen.push(field.value))
+      const state = createRendererState(app.fake.renderer)
+      const change = (value: string) => state.dispatch({ eventType: 'change', elementId: field.nativeId, value } as never)
+      return { app, field, seen, change }
+    }
+
+    test(`${tag}: newer native changes supersede a paste, while ordinary text changes stay synchronous`, async () => {
+      const { app, field, seen, change } = await editor()
+      change('a\t')
+      change('a\tb')
+      change('a\tb日')
+      change('a\tb日本')
+      expect(field.value).toBe('a\tb日本')
+      expect(seen).toEqual(['a\tb', 'a\tb日', 'a\tb日本'])
+      await app.settle()
+      expect(field.value).toBe('a\tb日本')
+      expect(seen).toEqual(['a\tb', 'a\tb日', 'a\tb日本'])
+    })
+
+    test(`${tag}: only the newest of several pending pasted tabs is delivered`, async () => {
+      const { app, field, seen, change } = await editor()
+      change('a\t')
+      change('a\t\t')
+      expect(seen).toEqual([])
+      await app.settle()
+      expect(field.value).toBe('a\t\t')
+      expect(seen).toEqual(['a\t\t'])
+    })
+
+    test(`${tag}: a newer DOM value cancels a pending paste`, async () => {
+      const { app, field, seen, change } = await editor()
+      change('a\t')
+      field.value = 'replacement'
+      await app.settle()
+      expect(field.value).toBe('replacement')
+      expect(app.gpui.node(field.nativeId).props['value']).toBe('replacement')
+      expect(seen).toEqual([])
+    })
+
+    for (const locked of ['readonly', 'disabled']) {
+      test(`${tag}: a pending paste is refused if the field becomes ${locked}`, async () => {
+        const { app, field, seen, change } = await editor()
+        change('a\t')
+        field.setAttribute(locked, '')
+        await app.settle()
+        expect(field.value).toBe('a')
+        expect(app.gpui.node(field.nativeId).props['value']).toBe('a')
+        expect(seen).toEqual([])
+      })
+    }
+
+    test(`${tag}: removing an ancestor cancels its pending paste, including after reinsertion`, async () => {
+      const { app, field, seen, change } = await editor()
+      const wrapper = app.document.createElement('div')
+      app.document.body.append(wrapper)
+      wrapper.append(field)
+      await app.settle()
+      const oldId = field.nativeId
+      change('a\t')
+      wrapper.remove()
+      app.document.body.append(wrapper)
+      expect(field.nativeId).not.toBe(oldId)
+      await app.settle()
+      expect(field.value).toBe('a')
+      expect(seen).toEqual([])
+      change('ab')
+      await app.settle()
+      expect(field.value).toBe('ab')
+      expect(seen).toEqual(['ab'])
+    })
+
+    test(`${tag}: detaching cancels pending input without mutating the retained document`, async () => {
+      const { app, field, seen, change } = await editor()
+      change('a\t')
+      app.close()
+      const batches = app.gpui.batches.length
+      await app.settle()
+      expect(field.value).toBe('a')
+      expect(seen).toEqual([])
+      expect(app.gpui.batches.length).toBe(batches)
+      expect(app.gpui.retainedCount()).toBe(0)
+    })
+  }
+
+  test('a newer edit in another field does not cancel a pending paste', async () => {
+    app = mountHeadless()
+    const fields = ['input', 'textarea'].map(tag => app!.document.createElement(tag))
+    for (const field of fields) {
+      field.value = 'a'
+      app.document.body.append(field)
+    }
+    await app.settle()
+    const seen = fields.map(field => {
+      const values: string[] = []
+      field.addEventListener('input', () => values.push(field.value))
+      return values
+    })
+    app.host.dispatch({ eventType: 'change', elementId: fields[0]!.nativeId, value: 'a\t' } as never)
+    app.host.dispatch({ eventType: 'change', elementId: fields[1]!.nativeId, value: 'ab' } as never)
+    await app.settle()
+    expect(fields.map(field => field.value)).toEqual(['a\t', 'ab'])
+    expect(seen).toEqual([['a\t'], ['ab']])
   })
 })
 

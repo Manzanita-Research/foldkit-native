@@ -394,3 +394,107 @@ describe('many windows in one process', () => {
     await b.m.close()
   })
 })
+
+describe('detached hover listener retention', () => {
+  test('completed hover presses release removed targets and their ancestors without another move', async () => {
+    // Isolate GC from prior test-runner stacks: a no-hover control can otherwise
+    // remain alive after unrelated window tests despite explicit GC turns.
+    const child = Bun.spawn([process.execPath, '-e', `
+      import { mountFake } from './test/support/mount.ts'
+      import assert from 'node:assert/strict'
+      const m = mountFake()
+      await m.settle()
+      const baseline = m.gpui.retainedCount()
+      async function removed(mode) {
+        const source = m.document.createElement('div')
+        source.addEventListener('mousedown', () => {})
+        source.addEventListener('mousemove', () => {})
+        const parent = m.document.createElement('div')
+        const target = m.document.createElement('div')
+        let enters = 0
+        target.addEventListener('mouseenter', () => { enters++ })
+        parent.append(target)
+        m.container.append(source, parent)
+        await m.settle()
+        m.gpui.setBounds(m.idOf(source), { x: 0, y: 0, width: 100, height: 100 })
+        m.gpui.setBounds(m.idOf(target), { x: 100, y: 0, width: 100, height: 100 })
+        if (mode !== 'no-hover') {
+          assert(m.send(source, { eventType: 'mouseDown', x: 50, y: 50, button: 0 }))
+          assert(m.send(source, { eventType: 'mouseMove', x: 150, y: 50, pressedButton: 0 }))
+          assert(m.send(source, { eventType: 'mouseUp', x: 150, y: 50, button: 0 }))
+        }
+        assert.equal(enters, mode === 'no-hover' ? 0 : 1)
+        if (mode === 'hover-then-move') assert(m.send(source, { eventType: 'mouseMove', x: 50, y: 50 }))
+        parent.remove()
+        source.remove()
+        await m.settle()
+        return [new WeakRef(parent), new WeakRef(target)]
+      }
+      try {
+        // Collect each pair before the next scene's input can clear hover history.
+        for (const mode of ['no-hover', 'hover', 'hover-then-move']) {
+          const refs = await removed(mode)
+          await m.settle()
+          for (let i = 0; i < 20; i++) {
+            await Bun.sleep(5)
+            Bun.gc(true)
+          }
+          assert.deepEqual(refs.map(ref => ref.deref() === undefined), [true, true], mode)
+          assert.equal(m.gpui.retainedCount(), baseline)
+          assert.equal(m.gpui.retainedCount(), m.gpui.reachableCount())
+          assert(m.inSync())
+        }
+      } finally { await m.close() }
+    `], { cwd: import.meta.dir + '/..', stdout: 'ignore', stderr: 'pipe' })
+    const [exit, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()])
+    expect(stderr).toBe('')
+    expect(exit).toBe(0)
+  })
+
+  test('removed hover subtrees and never-inserted listeners are collectible with the mirror alive', async () => {
+    const { container, document, gpui } = await setup()
+    const baseline = gpui.retainedCount()
+    const detached = async (type: string, cleanup = false, insert = true) => {
+      const parent = document.createElement('div')
+      const child = document.createElement('div')
+      const listener = () => {}
+      child.addEventListener(type, listener)
+      parent.append(child)
+      if (insert) {
+        container.append(parent)
+        await mounted.settle()
+        if (cleanup) child.removeEventListener(type, listener)
+        parent.remove()
+      }
+      await mounted.settle()
+      return [new WeakRef(parent), new WeakRef(child)]
+    }
+    const click = await detached('click')
+    const hover = await detached('mouseenter')
+    const cleanedHover = await detached('mouseenter', true)
+    const neverInserted = await detached('mouseleave', false, false)
+    // A listener added after removal must not root the detached node either.
+    const afterRemoval = async () => {
+      const node = document.createElement('div')
+      container.append(node)
+      await mounted.settle()
+      node.remove()
+      await mounted.settle()
+      node.addEventListener('mouseover', () => {})
+      return new WeakRef(node)
+    }
+    const lateHover = await afterRemoval()
+    await mounted.settle()
+    // GC controls use the same queues and a live mount; no native window is involved.
+    for (let i = 0; i < 20; i++) {
+      await Bun.sleep(5)
+      Bun.gc(true)
+    }
+    for (const ref of [...click, ...hover, ...cleanedHover, ...neverInserted, lateHover]) {
+      expect(ref.deref() === undefined).toBe(true)
+    }
+    expect(gpui.retainedCount()).toBe(baseline)
+    noLeaks()
+    expect(mounted.inSync()).toBe(true)
+  })
+})

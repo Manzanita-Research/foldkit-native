@@ -17,7 +17,7 @@ import {
 import type { StyleDesc } from '@gpuix/native/host'
 import type { Window } from 'happy-dom'
 // happy-dom keeps each element's computed style in this cache slot.
-import { cache as styleCacheSymbol } from 'happy-dom/lib/PropertySymbol.js'
+import { cache as styleCacheSymbol, listeners as listenersSymbol } from 'happy-dom/lib/PropertySymbol.js'
 
 import { type StateRule, boxStyle, collectStateRules, stateStyles, textStyle } from './style.ts'
 
@@ -96,6 +96,15 @@ const owner = (from: object, key: string): Record<string, unknown> => {
   while (!Object.prototype.hasOwnProperty.call(proto, key)) proto = Object.getPrototypeOf(proto)
   return proto
 }
+/** Count the actual happy-dom registry, which deduplicates callback/capture
+ *  pairs. Its remove searches bubbling before capturing regardless of options;
+ *  observing it also covers automatic once and AbortSignal removals. */
+const listenerCount = (target: EventTarget, type: string) => {
+  const registry = (target as unknown as {
+    [listenersSymbol]: { bubbling: Map<string, Array<unknown>>; capturing: Map<string, Array<unknown>> }
+  })[listenersSymbol]
+  return (registry.bubbling.get(type)?.length ?? 0) + (registry.capturing.get(type)?.length ?? 0)
+}
 /** addEventListener and removeEventListener, reporting to the mirror of the
  *  target's document; returns the unpatched pair. */
 const watchListeners = (body: Node) => {
@@ -106,12 +115,16 @@ const watchListeners = (body: Node) => {
     found = { add, remove }
     originals.set(proto, found)
     proto.addEventListener = function (this: EventTarget, type: string, listener: unknown, opts?: unknown) {
-      trackers.get(documentOf(this)!)?.(this, type, 1)
-      return add.call(this, type, listener as EventListener, opts as AddEventListenerOptions)
+      const before = listenerCount(this, type)
+      add.call(this, type, listener as EventListener, opts as AddEventListenerOptions)
+      const delta = listenerCount(this, type) - before
+      if (delta !== 0) trackers.get(documentOf(this)!)?.(this, type, delta)
     }
     proto.removeEventListener = function (this: EventTarget, type: string, listener: unknown, opts?: unknown) {
-      trackers.get(documentOf(this)!)?.(this, type, -1)
-      return remove.call(this, type, listener as EventListener, opts as EventListenerOptions)
+      const before = listenerCount(this, type)
+      remove.call(this, type, listener as EventListener, opts as EventListenerOptions)
+      const delta = listenerCount(this, type) - before
+      if (delta !== 0) trackers.get(documentOf(this)!)?.(this, type, delta)
     }
   }
   return found
@@ -234,7 +247,7 @@ export const createMirror = (options: {
     dom.set(type, Math.max(0, (dom.get(type) ?? 0) + delta))
     countNatives(target as Node, natives, delta)
     if (HOVER_TYPES.includes(type)) {
-      if (HOVER_TYPES.some(hover => (dom.get(hover) ?? 0) > 0)) hoverListeners.add(target as Node)
+      if (ids.has(target as Node) && HOVER_TYPES.some(hover => (dom.get(hover) ?? 0) > 0)) hoverListeners.add(target as Node)
       else hoverListeners.delete(target as Node)
     }
   }
@@ -962,6 +975,7 @@ export const createMirror = (options: {
     created += 1
     ids.set(node, id)
     nodes.set(id, node)
+    if (HOVER_TYPES.some(hover => listens(node, hover))) hoverListeners.add(node)
     mutations.createElement(id, type)
     syncProps(id, node)
     for (const [native, count] of listened.get(node) ?? []) if (count > 0) syncListener(id, native, true)
@@ -979,6 +993,9 @@ export const createMirror = (options: {
   }
 
   const forget = (node: Node) => {
+    hoverListeners.delete(node)
+    told.delete(node)
+    if (hovered === node) hovered = undefined
     const id = ids.get(node)
     if (id !== undefined) {
       ids.delete(node)

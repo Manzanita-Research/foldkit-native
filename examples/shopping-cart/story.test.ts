@@ -1,4 +1,4 @@
-// From FoldKit's examples/shopping-cart/src/story.test.ts, unchanged (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
+// Adapted from FoldKit's examples/shopping-cart/src/story.test.ts (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
 // https://github.com/foldkit/foldkit/tree/main/examples/shopping-cart
 
 import { Option } from 'effect'
@@ -206,6 +206,45 @@ describe('update', () => {
   })
 
   describe('checkout', () => {
+    test('adding to a new cart resets completion and allows another order', () => {
+      story(
+        update,
+        given(
+          modifyFields(baseModel, {
+            route: () => AppRoute.Checkout(),
+            cart: () => [{ item: apple, quantity: 1 }],
+            deliveryInstructions: () => 'Leave at the door',
+          }),
+        ),
+        message(Message.ClickedPlaceOrder()),
+        message(Message.ChangedUrl({ url: urlOrThrow('http://localhost/') })),
+        model(model => {
+          expect(model.orderPlaced).toBe(true)
+          expect(model.cart).toHaveLength(0)
+          expect(model.deliveryInstructions).toBe('')
+        }),
+        message(
+          Message.GotProductsMessage({
+            message: Products.Message.ClickedAddToCart({ item: banana }),
+          }),
+        ),
+        model(model => {
+          expect(model.orderPlaced).toBe(false)
+          expect(model.cart).toEqual([{ item: banana, quantity: 1 }])
+        }),
+        message(
+          Message.ChangedUrl({ url: urlOrThrow('http://localhost/checkout') }),
+        ),
+        message(Message.UpdatedDeliveryInstructions({ value: 'Ring twice' })),
+        message(Message.ClickedPlaceOrder()),
+        model(model => {
+          expect(model.orderPlaced).toBe(true)
+          expect(model.cart).toHaveLength(0)
+          expect(model.deliveryInstructions).toBe('')
+        }),
+      )
+    })
+
     test('UpdatedDeliveryInstructions stores the value', () => {
       story(
         update,

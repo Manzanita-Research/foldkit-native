@@ -116,6 +116,7 @@ test('shutdown keeps the gpuix automation protocol working with an explicitly ow
   const { app } = open({ automation: true, createRenderer: callback => ({
     ...window.createRenderer(callback),
     getPaintedText: () => ['Public label', '596274'],
+    getDebugFrameOverlayStats: () => ({ frames: 0, samples: 0 }),
   }) })
   const secret = app.document.createElement('input')
   secret.setAttribute('autocomplete', 'one-time-code')

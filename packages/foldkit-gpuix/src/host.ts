@@ -54,6 +54,8 @@ import {
   isNaturallyFocusable,
 } from './dom.ts'
 import { type Box, createGuard, createLayout } from './layout.ts'
+import { isSecretField, secretValues } from './automation.ts'
+import type { AutomationSecrets } from './automation-secrets.ts'
 import { type Declared, INHERITED, type Sheet, type State, type Viewport, declarations, declared, fold, resolveVars, textStyle, toStyle } from './sheet.ts'
 
 /** DOM event → the gpuix events that produce it. EVENTS.md is the contract. */
@@ -132,6 +134,7 @@ const nativeType = (element: NativeElement): string => {
 export type HostTimings = { syncMs: number; restyled: number; mutations: number; inputAt?: number }
 
 export type HostOptions = {
+  secrets?: AutomationSecrets
   renderer: NativeRenderer
   sheets: Array<Sheet>
   /** The window's size now, for `@media`, `vh` and `vw`. */
@@ -144,7 +147,7 @@ export type HostOptions = {
 }
 
 export const createHost = (document: NativeDocument, options: HostOptions) => {
-  const { renderer, sheets } = options
+  const { renderer, sheets, secrets } = options
   const state = createRendererState(renderer)
   const eventHandlers = new Map<number, Map<string, (event: EventPayload) => void>>()
   const mutations = createMutationQueue(renderer, ids => {
@@ -194,7 +197,13 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     autofocus = []
     if (wanted !== undefined && isFocusable(wanted)) setFocus(wanted, false)
     const pending = mutations.pending
-    mutations.flushMutations()
+    try {
+      mutations.flushMutations()
+    } catch (error) {
+      secrets?.invalidate()
+      throw error
+    }
+    if (pending > 0 || secrets?.dirty) secrets?.submitted(secretValues(document.querySelectorAll('input, textarea')))
     if (pending > 0) layout.moved()
     options.onSynced?.({ syncMs: performance.now() - started, restyled, mutations: pending, ...(inputAt === undefined ? {} : { inputAt }) })
     inputAt = undefined
@@ -590,6 +599,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
   /** A field the person can't edit: read-only, or disabled. */
   const isLocked = (element: NativeElement) => element.hasAttribute('readonly') || isDisabled(element)
   const syncProps = (element: NativeElement) => {
+    if (isSecretField(element)) secrets?.capture(element.value)
     const id = element.nativeId
     const next = propsOf(element)
     const sent = sentProps.get(element) ?? new Map<string, unknown>()
@@ -1162,6 +1172,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
         inputAt = performance.now()
         cancelEdit(element)
         const value = unnudged(element, event.value ?? '')
+        if (isSecretField(element)) {
+          secrets?.capture(value)
+          if (secrets !== undefined) schedule()
+        }
         // An edit GPUI's editor took before it heard the field was disabled
         // or made read-only (it applies edits at once): the DOM refuses it
         // and the editor gets the value back.
@@ -1751,6 +1765,10 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       schedule()
     },
     changed: (element, what) => {
+      if (element.nativeId !== 0 && isField(element) && (what === 'value' || what === 'autocomplete')) {
+        secrets?.changed()
+        if (isSecretField(element)) secrets?.capture(element.value)
+      }
       if (what === 'value') {
         cancelEdit(element)
         if (element.nativeId !== 0) syncProps(element)
@@ -1960,6 +1978,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
       detached = true
       for (const timer of pendingEdits.values()) clearTimeout(timer)
       pendingEdits.clear()
+      secrets?.dispose()
       if (drawTimer !== undefined) clearTimeout(drawTimer)
       drawTimer = undefined
       drawWaiters = []

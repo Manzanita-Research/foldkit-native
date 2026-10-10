@@ -19,6 +19,7 @@ import { InProcessBackend, createSseDecoder, handleAutomationRequest, liveRender
 import { type NativeRenderer, createRendererState } from '@gpuix/native/host'
 
 import { redactingRenderer, secretValues } from './automation.ts'
+import { type AutomationSecrets, createAutomationSecrets } from './automation-secrets.ts'
 import {
   type ErrorPhase,
   type ErrorReport,
@@ -202,7 +203,7 @@ export type AttachOptions = {
 /** FoldKit on an already-initialised gpuix renderer: the live window
  *  (`mountGpuix`) or gpuix's offscreen TestRenderer and the fake in tests.
  *  Returns the container to hand to FoldKit's `Runtime.makeElement`. */
-export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {}) => {
+export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {}, secrets?: AutomationSecrets) => {
   const document = new NativeDocument()
   const window = new NativeWindow(document)
   const viewport = options.viewport ?? renderer.getWindowSize?.() ?? { width: 1024, height: 768 }
@@ -216,6 +217,7 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
   const sheets = [...(options.sheets ?? []), ...(appSheet === undefined ? [] : [appSheet])]
   const host = createHost(document, {
     renderer, sheets,
+    ...(secrets === undefined ? {} : { secrets }),
     viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
     // As a browser: the window's size changes, then `resize` fires.
     onResize: size => {
@@ -383,13 +385,14 @@ export const mountGpuix = (options: NativeOptions = {}) => {
   // gpuix's own GpuixRenderer, not createNativeRenderer's, which would serve
   // it whenever stdin isn't a terminal.
   // It serves the renderer less a person's secrets (automation.ts).
+  const secrets = automationRequested(automation) ? createAutomationSecrets(renderer) : undefined
   let automationListener: ((chunk: string) => void) | undefined
-  if (automationRequested(automation)) {
+  if (secrets !== undefined) {
     const fields = () => attached?.document.querySelectorAll('input, textarea') ?? []
     // Use gpuix's protocol/backend, but own the stdin callback explicitly:
     // its enableAutomation returns no disposer, and a listener snapshot
     // would also claim host registrations triggered by `newListener`.
-    const backend = new InProcessBackend(liveRendererAsTest(redactingRenderer(renderer, () => secretValues(fields() as never)) as never))
+    const backend = new InProcessBackend(liveRendererAsTest(redactingRenderer(renderer, () => secrets.values(secretValues(fields() as never))) as never))
     const decoder = createSseDecoder(message => {
       if (!('method' in message)) return
       void handleAutomationRequest(message, backend).then(reply => { process.stdout.write(reply) })
@@ -412,7 +415,7 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     // A size left to the compositor (0, or unset: a layer surface's length)
     // is the one GPUI's window has.
     viewport: viewport ?? (width && height ? { width, height } : renderer.getWindowSize?.() ?? { width: width || 1024, height: height || 768 }),
-  })
+  }, secrets)
   const app = attached
   if (app.unsupported.length > 0 && process.env['FOLDKIT_GPUIX_DEBUG'] !== undefined) {
     console.error(`[foldkit-gpuix] ${app.unsupported.length} CSS rules not supported:\n  ${app.unsupported.join('\n  ')}`)
@@ -488,10 +491,19 @@ export const mountGpuix = (options: NativeOptions = {}) => {
       frames++
       const started = performance.now()
       app.host.frame()
-      const more = renderer.tick()
+      let more: boolean
+      try {
+        more = renderer.tick()
+      } catch (error) {
+        secrets?.invalidate()
+        throw error
+      }
       // A window that's gone has drawn nothing, and gpuix on Linux then throws
       // from every query ("GPUI application is not initialized"): say it ended.
-      if (more) app.host.drawn()
+      if (more) {
+        app.host.drawn()
+        secrets?.poll()
+      } else secrets?.invalidate()
       onFrame?.(performance.now() - started)
       return more
     },

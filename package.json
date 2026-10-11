@@ -1,6 +1,6 @@
 {
   "name": "foldkit-native",
-  "version": "0.1.0",
+  "version": "0.1.0-test.2",
   "private": true,
   "type": "module",
   "description": "FoldKit apps drawn natively by GPUI, in-process, through gpuix.",
@@ -10,10 +10,26 @@
     "url": "https://github.com/Manzanita-Research/foldkit-native"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./primitives": "./src/primitives.ts",
-    "./theme": "./src/theme.ts",
-    "./style": "./src/style.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./primitives": {
+      "types": "./dist/primitives.d.ts",
+      "import": "./dist/primitives.js",
+      "default": "./dist/primitives.js"
+    },
+    "./theme": {
+      "types": "./dist/theme.d.ts",
+      "import": "./dist/theme.js",
+      "default": "./dist/theme.js"
+    },
+    "./style": {
+      "types": "./dist/style.d.ts",
+      "import": "./dist/style.js",
+      "default": "./dist/style.js"
+    }
   },
   "scripts": {
     "gallery": "bun examples/gallery.ts",
@@ -28,7 +44,11 @@
     "changeset": "changeset",
     "version:packages": "node scripts/release.mjs version",
     "release:github": "node scripts/release.mjs publish",
-    "check:release": "node --test scripts/release.test.mjs"
+    "check:release": "node --test scripts/release.test.mjs",
+    "build": "node scripts/build-packages.mjs",
+    "prepack": "npm run build",
+    "pack:packages": "node scripts/pack-packages.mjs",
+    "check:packages": "node scripts/check-packages.mjs"
   },
   "peerDependencies": {
     "effect": "4.0.0",
@@ -55,5 +75,20 @@
     "lightningcss": "1.33.0",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/*.js",
+    "dist/*.d.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22",
+    "bun": ">=1.3.9"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

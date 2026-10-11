@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync, existsSync, realpathSync } from 'node:fs'
+import { readFileSync, writeFileSync, readdirSync, existsSync, realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -129,6 +129,15 @@ export function publish({ cwd = process.cwd(), env = process.env, api = github,
 export function version({ cwd = process.cwd(), env = process.env, execute = command } = {}) {
   if (env.GITHUB_ACTIONS === 'true') gate({ cwd, env, execute })
   execute(process.execPath, [resolve(cwd, 'node_modules/@changesets/cli/bin.js'), 'version'], { cwd, stdio: 'inherit' })
+  // Changesets versions the root; distribution packages advance as one unit.
+  const current = JSON.parse(readFileSync(resolve(cwd, 'package.json'), 'utf8'))
+  for (const directory of ['packages/foldkit-gpuix', 'packages/ui']) {
+    const path = resolve(cwd, directory, 'package.json')
+    const pkg = JSON.parse(readFileSync(path, 'utf8'))
+    pkg.version = current.version
+    if (pkg.peerDependencies?.['foldkit-native'] !== undefined) pkg.peerDependencies['foldkit-native'] = current.version
+    writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n')
+  }
   execute('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd, stdio: 'inherit' })
 }
 

@@ -11,6 +11,19 @@ scrolling and text editing are GPUI's own.
 - [MIGRATING.md](MIGRATING.md): moving a FoldKit app from the web.
 - [EVENTS.md](EVENTS.md): how GPUI's input becomes DOM events.
 
+## Install
+
+Install `foldkit-gpuix-0.1.0-test.2.tgz` and
+`foldkit-native-0.1.0-test.2.tgz` together in your project, plus `effect@4.0.0`
+and `foldkit@0.165.0`. npm installs the `@gpuix/native@0.10.0` peer and its
+optional platform binary. This adapter uses the root package's public style
+API; both internal packages must have the same version. The tarballs already
+contain ESM JavaScript and declarations. No checkout paths or consumer build
+step are needed. Run native applications with Bun 1.3.9+ on macOS Apple
+silicon or Linux x64 GNU with a display and gpuix's required system libraries.
+Windows is unqualified. These are libraries, not desktop app installers.
+The private publication guard does not prevent tarball installation.
+
 ## Use
 
 ```ts

@@ -76,7 +76,9 @@ export type Fake = FakeGpui & { tabOrder: () => Array<number>; scrolledIntoView:
 /** Mounts FoldKit on gpuix over the fake, for one test. */
 export const mountHeadless = (options: AttachOptions = {}) => {
   const fake = createFocusableFake(options.viewport)
-  const attached = attachGpuix(fake.renderer, options)
+  // The fake answers immediately: JSON work on a loaded runner is not GPUI
+  // query latency. Tests of query spacing/back-off supply their own clock.
+  const attached = attachGpuix(fake.renderer, { ...options, now: options.now ?? (() => 0) })
   const { document, host } = attached
   const settle = async () => {
     for (let i = 0; i < 4; i++) {

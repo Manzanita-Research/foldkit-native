@@ -3,7 +3,7 @@
 // for. The fake GPUI's layout comes from `setBounds` (border boxes), reported
 // the way gpuix reports them (content corner, a scroll area moved by its own
 // offset); `relayout()` tells the host GPUI laid out again.
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 
 import type { NativeElement } from '../src/index.ts'
 import { MAX_AGE_MS } from '../src/layout.ts'
@@ -36,6 +36,40 @@ const place = (boxes: Record<string, Box>) => {
 const ids = (elements: Array<NativeElement>) => elements.map(element => element.getAttribute('id') ?? element.localName)
 
 describe('reading the layout', () => {
+  for (const cost of [0, 15]) test(`fake layout query work taking ${cost} ms does not lose a drag enter`, async () => {
+    let wallClock = 0
+    const clock = spyOn(performance, 'now').mockImplementation(() => wallClock)
+    try {
+      app = mountHeadless()
+      build(app, app.document.body, [{ id: 'first' }, { id: 'second' }])
+      const entered: Array<string> = []
+      for (const id of ['first', 'second']) {
+        byId(id).addEventListener('mousedown', () => {})
+        byId(id).addEventListener('mouseenter', () => entered.push(id))
+      }
+      await app.settle()
+      const renderer = app.fake.renderer as typeof app.fake.renderer & { getAutomationTree: () => string }
+      const tree = renderer.getAutomationTree.bind(renderer)
+      renderer.getAutomationTree = () => {
+        const result = tree()
+        wallClock += cost
+        return result
+      }
+      // Read before the fake has boxes, then assign the layout a drag needs.
+      // JSON work on a busy runner must not masquerade as a slow GPUI query.
+      expect(ids(app.document.elementsFromPoint(10, 10))).not.toContain('first')
+      place({ first: { x: 0, y: 0, width: 20, height: 20 }, second: { x: 20, y: 0, width: 20, height: 20 } })
+      await app.settle()
+      app.host.dispatch({ eventType: 'mouseDown', elementId: byId('first').nativeId, x: 10, y: 10, button: 0 })
+      await app.settle()
+      app.host.dispatch({ eventType: 'mouseMove', elementId: byId('first').nativeId, x: 30, y: 10, pressedButton: 0 })
+      await app.settle()
+      expect(entered).toEqual(['first', 'second'])
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   test('every read between two frames costs one tree read, and none when nothing moved', async () => {
     app = mountHeadless()
     build(app, app.document.body, Array.from({ length: 50 }, (_, at) => ({ id: `row-${at}` })))

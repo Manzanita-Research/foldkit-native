@@ -10,7 +10,7 @@ and `@foldkit/ui` components) renders into a native window or a Wayland
 layer surface, within the adapter's [capability limits](packages/foldkit-gpuix/CAPABILITIES.md).
 FoldKit itself is not modified or forked.
 
-> **Status:** private, under qualification. Runs on Linux (Wayland) and macOS
+> **Status:** installable test packages, under qualification. Runs on Linux (Wayland) and macOS
 > (Apple silicon, Metal). gpuix also ships a Windows binary, untested here.
 
 ## How it works
@@ -50,10 +50,17 @@ FoldKit ◀──DOM events── native document ◀──events, focus, scroll
 
 ## Use it
 
-In this private checkout, run `npm ci` first, then save this complete counter
-as `app.ts` at the repository root and run `bun app.ts`. The repository's
-`tsconfig.json` resolves `foldkit-gpuix` to the adapter source; this is not a
-published-package installation recipe.
+Install the compiled tarballs into your own project, alongside the pinned peers:
+
+```sh
+npm install /path/to/foldkit-native-0.1.0-test.2.tgz /path/to/foldkit-gpuix-0.1.0-test.2.tgz /path/to/foldkit-native-ui-0.1.0-test.2.tgz effect@4.0.0 foldkit@0.165.0
+```
+
+Save this complete counter as `app.ts` in that project and run `bun app.ts`.
+The packages contain ESM JavaScript and TypeScript declarations; no library
+build or repository `tsconfig` paths are needed. These libraries are installed
+with npm; they are not standalone desktop application installers. The test
+packages have not been published to the npm registry.
 
 ```ts
 import { Schema } from 'effect'
@@ -292,3 +299,35 @@ so. Otherwise it depends on, and does not copy code from:
 
 All are compatible with MIT. If you distribute a compiled binary that embeds
 gpuix's native library, include its Apache-2.0 licence and notices with it.
+
+## Building installable packages
+
+Contributors run `npm ci`, then `npm run pack:packages -- /absolute/output/path`.
+The command builds each package separately with TypeScript, then uses standard
+`npm pack`. Tarballs contain compiled ESM, declarations, notices and package
+guides. Effect, FoldKit and gpuix stay external so an application shares one
+copy of their runtime services. CSS is exported as strings (`primitivesCss`,
+`nativeDefaultsCss`, `uiCss`); there is no missing external stylesheet or asset.
+`npm run check:packages` packs, installs into a fresh temporary consumer and
+checks imports, types, input and disposal. Node 22+ runs build/pack and the
+headless consumer checks; Bun 1.3.9+ is the supported native app runtime.
+For TypeScript with full dependency declaration checking, use `@types/node@25.9.9`
+or newer: happy-dom 20.14.5 uses a stream type absent from Node 22 typings.
+
+All three packages use the same version. `npm run version:packages` consumes
+Changesets for the root and synchronizes the subpackages and adapter peer.
+The current `0.1.0-test.2` prerelease is separate from the source-only
+`0.1.0-test.1` release. Existing automatic GitHub source releases remain
+stable-only and still require successful exact-main CI. For test artifacts,
+use the explicit pack command; it neither tags nor publishes anything.
+
+`private: true` remains an intentional publication guard. The package contents
+and exports are ready for npm installation, but publishing to the registry is
+an explicit maintainer step: remove that guard for the packages to publish,
+choose the public scoped access and a prerelease tag such as `test`, build and
+check the tarballs, then publish the reviewed files. No postinstall build runs.
+Native binaries come from gpuix's optional platform packages, not these archives.
+macOS Apple silicon and Linux x64 GNU are the qualified platform families;
+Linux needs a Wayland/X11 display and gpuix's system libraries. Windows is
+unqualified. Creating a native window still has the lifecycle and capability
+limits described in the adapter guide.

@@ -176,7 +176,7 @@ test('missing GitHub objects are distinct from authentication, API and transport
   assert.throws(() => github(['write', '--method', 'POST'], {}, failure('(HTTP 404)')))
 })
 
-test('real Changesets consumes root-only private version metadata and keeps lock/subpackages consistent', t => {
+test('real Changesets versions the distribution together and keeps lock and adapter peer consistent', t => {
   const cwd = mkdtempSync(resolve(tmpdir(), 'changesets-version-'))
   t.after(() => rmSync(cwd, { recursive: true, force: true }))
   // CI checkouts can be shallow and detached. Give the fixture its own Git
@@ -189,9 +189,16 @@ test('real Changesets consumes root-only private version metadata and keeps lock
   }
   symlinkSync(resolve(root, 'node_modules'), resolve(cwd, 'node_modules'))
   writeFileSync(resolve(cwd, '.changeset/test-source-release.md'), '---\n"foldkit-native": patch\n---\n\nGitHub source releases test fixture.\n')
-  const before = JSON.parse(readFileSync(resolve(cwd, 'package.json'), 'utf8'))
+  // The source-release flow is intentionally stable-only; local test artifacts
+  // use an explicit prerelease version without changing the automatic release gate.
+  const initial = JSON.parse(readFileSync(resolve(cwd, 'package.json'), 'utf8'))
+  initial.version = '0.1.0'
+  writeFileSync(resolve(cwd, 'package.json'), JSON.stringify(initial))
+  const initialLock = JSON.parse(readFileSync(resolve(cwd, 'package-lock.json'), 'utf8'))
+  initialLock.version = initialLock.packages[''].version = initial.version
+  writeFileSync(resolve(cwd, 'package-lock.json'), JSON.stringify(initialLock))
+  const before = initial
   const nextVersion = before.version.replace(/\d+$/, patch => String(Number(patch) + 1))
-  const originals = ['packages/ui/package.json', 'packages/foldkit-gpuix/package.json'].map(file => readFileSync(resolve(cwd, file), 'utf8'))
   const isolatedEnv = { ...process.env, GITHUB_ACTIONS: 'false', PATH: `${dirname(process.execPath)}:${process.env.PATH}` }
   command(process.execPath, [resolve(cwd, 'scripts/release.mjs'), 'version'], { cwd, env: isolatedEnv })
   const current = JSON.parse(readFileSync(resolve(cwd, 'package.json'), 'utf8'))
@@ -202,7 +209,11 @@ test('real Changesets consumes root-only private version metadata and keeps lock
   assert.equal(locked.packages[''].version, current.version)
   assert.equal(releasePlan(cwd).tag, `foldkit-native@${nextVersion}`)
   assert.match(releasePlan(cwd).notes, /GitHub source releases/)
-  assert.deepEqual(['packages/ui/package.json', 'packages/foldkit-gpuix/package.json'].map(file => readFileSync(resolve(cwd, file), 'utf8')), originals)
+  for (const file of ['packages/ui/package.json', 'packages/foldkit-gpuix/package.json']) {
+    const subpackage = JSON.parse(readFileSync(resolve(cwd, file), 'utf8'))
+    assert.equal(subpackage.version, nextVersion)
+    if (subpackage.name === 'foldkit-gpuix') assert.equal(subpackage.peerDependencies['foldkit-native'], nextVersion)
+  }
 })
 
 test('workflow uses the version PR action without npm publication and retains the main CI contract', () => {

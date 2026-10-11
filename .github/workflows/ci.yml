@@ -32,6 +32,7 @@ jobs:
       - run: bun run typecheck
       - run: bun run css --check
       - run: npm run check:release
+      - run: npm run check:packages
       - run: bun test
       # The examples again on the DOM mirror, the comparator: the run above
       # takes each example's own renderer (FoldKit on gpuix, once ported).

@@ -134,32 +134,97 @@ describe('insert, remove, reorder', () => {
     noLeaks()
   })
 
+  test.each(['existing', 'new'] as const)('moving a child to another parent (%s) before removing its ancestor preserves its native identity', async destination => {
+    const { container } = await setup()
+    container.style.color = '#ff0000'
+    const ancestor = el('div')
+    ancestor.style.color = '#0000ff'
+    const child = el('p', 'moving')
+    ancestor.append(child)
+    container.append(ancestor)
+    await mounted.settle()
+    const id = mounted.idOf(child)
+
+    const target = destination === 'existing' ? container : el('div')
+    target.append(child)
+    if (destination === 'new') container.append(target)
+    ancestor.remove()
+    await mounted.settle()
+
+    expect(mounted.idOf(child)).toBe(id)
+    expect(mounted.nativeOf(target).children).toEqual([id])
+    expect(mounted.gpui.node(mounted.nativeOf(child).children[0]!).style['color']).toBe('#ff0000')
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+  })
+
+  test('queued edits to a removed descendant free its native identity; reinsertion creates a live subtree', async () => {
+    const { container } = await setup()
+    const ancestor = el('div')
+    const child = el('div')
+    ancestor.append(child)
+    container.append(ancestor)
+    await mounted.settle()
+    const id = mounted.idOf(child)
+
+    // The container's record arrives before the now-detached child's record.
+    container.append(el('p', 'kept'))
+    child.append(el('span', 'added before removal'))
+    child.remove()
+    ancestor.remove()
+    await mounted.settle()
+    expect(mounted.mirror.idFor(child)).toBeUndefined()
+    expect(mounted.mirror.nodeFor(id)).toBeUndefined()
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+
+    container.append(child)
+    await mounted.settle()
+    expect(mounted.idOf(child)).not.toBe(id)
+    expect(labels(child)).toEqual(['added before removal'])
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+  })
+
   test('a thousand random edits stay in sync', async () => {
     const { container } = await setup()
     let seed = 7
-    const random = (n: number) => (seed = (seed * 1103515245 + 12345) % 2 ** 31) % n
+    // Keep integer multiplication below Number.MAX_SAFE_INTEGER so low bits
+    // don't collapse and silently stop exercising removals and reorders.
+    const random = (n: number) => (seed = (seed * 48271) % 0x7fffffff) % n
+    const exercised = new Set<string>()
     const all: Array<HTMLElement> = [container]
     for (let step = 0; step < 1000; step++) {
       const parent = all[random(all.length)]!
       const op = random(4)
       if (op === 0 || parent.children.length === 0) {
+        exercised.add('insert')
         const child = el(random(2) === 0 ? 'div' : 'span', `n${step}`)
         parent.insertBefore(child, parent.children[random(parent.children.length + 1)] ?? null)
         all.push(child)
       } else if (op === 1 && parent !== container) {
+        exercised.add('remove')
         parent.remove()
         all.splice(0, all.length, container, ...Array.from(container.querySelectorAll('*')) as Array<HTMLElement>)
       } else if (op === 2) {
-        parent.appendChild(parent.children[random(parent.children.length)]!)
+        const child = parent.children[random(parent.children.length)]!
+        if (child !== parent.lastElementChild) exercised.add('reorder')
+        parent.appendChild(child)
       } else {
+        exercised.add('text')
         parent.firstChild!.textContent = `t${step}`
         all.splice(0, all.length, container, ...Array.from(container.querySelectorAll('*')) as Array<HTMLElement>)
       }
-      if (step % 50 === 0) await mounted.settle()
+      if (step % 50 === 0) {
+        await mounted.settle()
+        expect(mounted.inSync()).toBe(true)
+        noLeaks()
+      }
     }
     await mounted.settle()
     expect(mounted.inSync()).toBe(true)
     noLeaks()
+    expect([...exercised].sort()).toEqual(['insert', 'remove', 'reorder', 'text'])
   })
 })
 

@@ -112,7 +112,7 @@ const onFake = async (layout: ReadonlyMap<number, Box> = new Map()) => {
     offset: (id: number) => renderer.getScrollOffset?.(id) ?? null,
     rawBounds: (id: number) => renderer.getElementBounds?.(id) ?? null,
     tree: () => app.gpui.tree()!,
-    retained: () => app.gpui.reachableCount(),
+    retained: () => app.gpui.retainedCount(),
     layout: () => new Map<number, Box>(),
     close: () => app.close(),
   }

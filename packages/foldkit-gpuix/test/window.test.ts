@@ -30,7 +30,7 @@ const FRAME_MS = process.env['CI'] === undefined ? 16.7 : 33.4
  *  reported, and only three times it asserted (broken, not busy); every
  *  other check still runs. CI's runner is the test's own, and keeps the
  *  budgets. */
-export const tooBusyForBudgets = (load: number, cores: number, ci: boolean) => !ci && load >= cores / 2
+const tooBusyForBudgets = (load: number, cores: number, ci: boolean) => !ci && load >= cores / 2
 /** How far past its budget a busy machine's frames may go before it's a
  *  failure all the same. */
 const BUSY_SLACK = 3

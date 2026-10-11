@@ -14,11 +14,9 @@
 // a browser would; the release goes to the pressed cell and bubbles to
 // document.
 import { afterEach, describe, expect, test } from 'bun:test'
-import { Schema } from 'effect'
 
 import { METAL, type Headless, type Metal, openHeadless, openMetal, rendererFor } from '../support/harness.ts'
 import { STORAGE_KEY } from './constant'
-import { SavedCanvasJsonString } from './model'
 
 const RENDERER = await rendererFor('pixel-art')
 
@@ -164,9 +162,8 @@ describe('headless', () => {
     expect(app.inSync()).toBe(true)
   }, SLOW)
 
-  // The mirror sends what GPUI hit-tests on each move; the adapter also
-  // fills in the cells between two moves, as a browser's pointer crosses them.
-  test.skipIf(RENDERER !== 'gpuix')('a diagonal drag crosses the cells between its moves, as the pointer does', async () => {
+  // Two samples per cell exercise boundary hit tests during a held press.
+  test('a diagonal drag paints every sampled cell', async () => {
     app = await openHeadless('pixel-art')
     // Two moves per cell, corner to corner of a 6-cell diagonal.
     await press(app, 0, 0)
@@ -332,16 +329,16 @@ describe('saved canvas', () => {
     expect(board(app).size).toBe(8)
     expect(board(app).painted).toEqual({ '7,7': RED })
 
-    // Paint, then undo: FoldKit's SaveCanvas Command writes the canvas back.
+    // Observe the saved stroke before undoing it; unchanged seed data cannot pass.
+    const saved = () => JSON.parse(app.localStorage.getItem(STORAGE_KEY)!)
     await tap(app, 0, 0)
+    await until(app, () => saved().grid[0][0]._tag === 'Some')
+    const painted = grid.map((row, y) => row.map((cell, x) => x === 0 && y === 0 ? { _tag: 'Some', value: 4 } : cell))
+    expect(saved()).toEqual({ grid: painted, gridSize: 8, paletteThemeIndex: 0, selectedColorIndex: 4 })
+
     await shortcut(app, 'ctrl-z')
-    for (let i = 0; i < 20 && app.localStorage.getItem(STORAGE_KEY)?.includes('"selectedColorIndex":4') !== true; i++) {
-      await sleep(10)
-      await app.settle()
-    }
-    const saved = Schema.decodeSync(SavedCanvasJsonString)(app.localStorage.getItem(STORAGE_KEY)!)
-    expect(saved.gridSize).toBe(8)
-    expect(saved.selectedColorIndex).toBe(4)
+    await until(app, () => saved().grid[0][0]._tag === 'None')
+    expect(saved()).toEqual({ grid, gridSize: 8, paletteThemeIndex: 0, selectedColorIndex: 4 })
   }, SLOW)
 })
 

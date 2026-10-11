@@ -169,7 +169,10 @@ describe('fixes from the first real-GPUI run', () => {
     expect(field()['tabIndex']).toBe(-1)
     expect(field()['readOnly']).toBe(true)
     expect(app.gpui.node(app.document.getElementById('stop')!.nativeId).props['tabIndex']).toBe(null)
-    expect(app.gpui.ops().length - before).toBeLessThan(40)
+    const fieldId = app.document.getElementById('field')!.nativeId
+    expect(app.gpui.ops().slice(before).filter(([op, id, key]) =>
+      op === 'setCustomProp' && id === fieldId && key === 'readOnly',
+    )).toEqual([])
   })
 
   test('a button, an option, a heading are named by their text, as a browser names them, and renamed as it changes', async () => {

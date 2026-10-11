@@ -8,6 +8,7 @@ import { join } from 'node:path'
 
 import { createRendererState } from '@gpuix/native/host'
 
+import { WINDOWS } from '../../../test/support/windows.ts'
 import { CloseRequest, type ErrorReport, NativeStartError, explainStartError } from '../src/index.ts'
 import { hasDisplay, preflightDisplay } from '../src/start.ts'
 import { createFakeWindow, frames, log, openApp } from './app-support.ts'
@@ -337,7 +338,7 @@ describe('the process', () => {
 
 // gpuix 0.10's limits, pinned. When one of these fails, gpuix changed: see
 // the README's lifecycle section and drop the limit it describes.
-describe.skipIf(!METAL)('gpuix 0.10 on a real window (Metal)', () => {
+describe.skipIf(!METAL || !WINDOWS)('gpuix 0.10 on a real window (Metal)', () => {
   test('its event callback holds the process open after close(), so exitOnClose: false can\'t end it', async () => {
     const { killed, at } = await run('real-close-host', 3000)
     expect(at('closed')).toBeDefined()

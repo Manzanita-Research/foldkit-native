@@ -675,6 +675,32 @@ describe('pointer events, and listeners on document', () => {
     expect(mounted.inSync()).toBe(true)
   })
 
+  test('a held element reinserted inside a new parent becomes visible and survives the release', async () => {
+    const { container, gpui } = await setup()
+    const card = el('div', 'card')
+    card.style.opacity = '0.8'
+    card.addEventListener('pointerdown', () => {})
+    container.append(card)
+    await mounted.settle()
+    const id = mounted.idOf(card)
+    mounted.send(card, { eventType: 'mouseDown', x: 10, y: 10, button: 0 })
+    card.remove()
+    await mounted.settle()
+    expect(gpui.node(id).style['opacity']).toBe(0)
+
+    const wrapper = el('div')
+    wrapper.append(card)
+    container.append(wrapper)
+    await mounted.settle()
+    expect(mounted.idOf(card)).toBe(id)
+    expect(gpui.node(id).style['opacity']).toBe(0.8)
+    expect(mounted.send(id, { eventType: 'mouseUp', x: 10, y: 10, button: 0 })).toBe(true)
+    await mounted.settle()
+    expect(mounted.mirror.idFor(card)).toBe(id)
+    expect(mounted.inSync()).toBe(true)
+    expect(gpui.retainedCount()).toBe(gpui.reachableCount())
+  })
+
   /** A card listening for pointerdown, a drag tracked on document, and the
    *  card lifted out of the DOM once the press starts, as FoldKit's kanban does. */
   const liftedCard = async () => {

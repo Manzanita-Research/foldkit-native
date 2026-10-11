@@ -134,32 +134,97 @@ describe('insert, remove, reorder', () => {
     noLeaks()
   })
 
+  test.each(['existing', 'new'] as const)('moving a child to another parent (%s) before removing its ancestor preserves its native identity', async destination => {
+    const { container } = await setup()
+    container.style.color = '#ff0000'
+    const ancestor = el('div')
+    ancestor.style.color = '#0000ff'
+    const child = el('p', 'moving')
+    ancestor.append(child)
+    container.append(ancestor)
+    await mounted.settle()
+    const id = mounted.idOf(child)
+
+    const target = destination === 'existing' ? container : el('div')
+    target.append(child)
+    if (destination === 'new') container.append(target)
+    ancestor.remove()
+    await mounted.settle()
+
+    expect(mounted.idOf(child)).toBe(id)
+    expect(mounted.nativeOf(target).children).toEqual([id])
+    expect(mounted.gpui.node(mounted.nativeOf(child).children[0]!).style['color']).toBe('#ff0000')
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+  })
+
+  test('queued edits to a removed descendant free its native identity; reinsertion creates a live subtree', async () => {
+    const { container } = await setup()
+    const ancestor = el('div')
+    const child = el('div')
+    ancestor.append(child)
+    container.append(ancestor)
+    await mounted.settle()
+    const id = mounted.idOf(child)
+
+    // The container's record arrives before the now-detached child's record.
+    container.append(el('p', 'kept'))
+    child.append(el('span', 'added before removal'))
+    child.remove()
+    ancestor.remove()
+    await mounted.settle()
+    expect(mounted.mirror.idFor(child)).toBeUndefined()
+    expect(mounted.mirror.nodeFor(id)).toBeUndefined()
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+
+    container.append(child)
+    await mounted.settle()
+    expect(mounted.idOf(child)).not.toBe(id)
+    expect(labels(child)).toEqual(['added before removal'])
+    expect(mounted.inSync()).toBe(true)
+    noLeaks()
+  })
+
   test('a thousand random edits stay in sync', async () => {
     const { container } = await setup()
     let seed = 7
-    const random = (n: number) => (seed = (seed * 1103515245 + 12345) % 2 ** 31) % n
+    // Keep integer multiplication below Number.MAX_SAFE_INTEGER so low bits
+    // don't collapse and silently stop exercising removals and reorders.
+    const random = (n: number) => (seed = (seed * 48271) % 0x7fffffff) % n
+    const exercised = new Set<string>()
     const all: Array<HTMLElement> = [container]
     for (let step = 0; step < 1000; step++) {
       const parent = all[random(all.length)]!
       const op = random(4)
       if (op === 0 || parent.children.length === 0) {
+        exercised.add('insert')
         const child = el(random(2) === 0 ? 'div' : 'span', `n${step}`)
         parent.insertBefore(child, parent.children[random(parent.children.length + 1)] ?? null)
         all.push(child)
       } else if (op === 1 && parent !== container) {
+        exercised.add('remove')
         parent.remove()
         all.splice(0, all.length, container, ...Array.from(container.querySelectorAll('*')) as Array<HTMLElement>)
       } else if (op === 2) {
-        parent.appendChild(parent.children[random(parent.children.length)]!)
+        const child = parent.children[random(parent.children.length)]!
+        if (child !== parent.lastElementChild) exercised.add('reorder')
+        parent.appendChild(child)
       } else {
+        exercised.add('text')
         parent.firstChild!.textContent = `t${step}`
         all.splice(0, all.length, container, ...Array.from(container.querySelectorAll('*')) as Array<HTMLElement>)
       }
-      if (step % 50 === 0) await mounted.settle()
+      if (step % 50 === 0) {
+        await mounted.settle()
+        expect(mounted.inSync()).toBe(true)
+        noLeaks()
+      }
     }
     await mounted.settle()
     expect(mounted.inSync()).toBe(true)
     noLeaks()
+    expect([...exercised].sort()).toEqual(['insert', 'remove', 'reorder', 'text'])
   })
 })
 
@@ -452,49 +517,62 @@ describe('detached hover listener retention', () => {
   })
 
   test('removed hover subtrees and never-inserted listeners are collectible with the mirror alive', async () => {
-    const { container, document, gpui } = await setup()
-    const baseline = gpui.retainedCount()
-    const detached = async (type: string, cleanup = false, insert = true) => {
-      const parent = document.createElement('div')
-      const child = document.createElement('div')
-      const listener = () => {}
-      child.addEventListener(type, listener)
-      parent.append(child)
-      if (insert) {
-        container.append(parent)
+    // A separate process keeps prior tests and their runner stacks out of the
+    // GC roots, as in the hover-press retention case above.
+    const child = Bun.spawn([process.execPath, '-e', `
+      import { mountFake } from './test/support/mount.ts'
+      import assert from 'node:assert/strict'
+      const mounted = mountFake()
+      try {
         await mounted.settle()
-        if (cleanup) child.removeEventListener(type, listener)
-        parent.remove()
-      }
-      await mounted.settle()
-      return [new WeakRef(parent), new WeakRef(child)]
-    }
-    const click = await detached('click')
-    const hover = await detached('mouseenter')
-    const cleanedHover = await detached('mouseenter', true)
-    const neverInserted = await detached('mouseleave', false, false)
-    // A listener added after removal must not root the detached node either.
-    const afterRemoval = async () => {
-      const node = document.createElement('div')
-      container.append(node)
-      await mounted.settle()
-      node.remove()
-      await mounted.settle()
-      node.addEventListener('mouseover', () => {})
-      return new WeakRef(node)
-    }
-    const lateHover = await afterRemoval()
-    await mounted.settle()
-    // GC controls use the same queues and a live mount; no native window is involved.
-    for (let i = 0; i < 20; i++) {
-      await Bun.sleep(5)
-      Bun.gc(true)
-    }
-    for (const ref of [...click, ...hover, ...cleanedHover, ...neverInserted, lateHover]) {
-      expect(ref.deref() === undefined).toBe(true)
-    }
-    expect(gpui.retainedCount()).toBe(baseline)
-    noLeaks()
-    expect(mounted.inSync()).toBe(true)
+        const { container, document, gpui } = mounted
+        const baseline = gpui.retainedCount()
+        const detached = async (type, cleanup = false, insert = true) => {
+          const parent = document.createElement('div')
+          const child = document.createElement('div')
+          const listener = () => {}
+          child.addEventListener(type, listener)
+          parent.append(child)
+          if (insert) {
+            container.append(parent)
+            await mounted.settle()
+            if (cleanup) child.removeEventListener(type, listener)
+            parent.remove()
+          }
+          await mounted.settle()
+          return [new WeakRef(parent), new WeakRef(child)]
+        }
+        const click = await detached('click')
+        const hover = await detached('mouseenter')
+        const cleanedHover = await detached('mouseenter', true)
+        const neverInserted = await detached('mouseleave', false, false)
+        // A listener added after removal must not root the detached node either.
+        const afterRemoval = async () => {
+          const node = document.createElement('div')
+          container.append(node)
+          await mounted.settle()
+          node.remove()
+          await mounted.settle()
+          node.addEventListener('mouseover', () => {})
+          return new WeakRef(node)
+        }
+        const lateHover = await afterRemoval()
+        await mounted.settle()
+        // GC controls use the same queues and a live mount; no native window is involved.
+        for (let i = 0; i < 20; i++) {
+          await Bun.sleep(5)
+          Bun.gc(true)
+        }
+        for (const [name, refs] of Object.entries({ click, hover, cleanedHover, neverInserted, lateHover: [lateHover] })) {
+          for (const ref of refs) assert(ref.deref() === undefined, name)
+        }
+        assert.equal(gpui.retainedCount(), baseline)
+        assert.equal(gpui.retainedCount(), gpui.reachableCount())
+        assert(mounted.inSync())
+      } finally { await mounted.close() }
+    `], { cwd: import.meta.dir + '/..', stdout: 'ignore', stderr: 'pipe' })
+    const [exit, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()])
+    expect(stderr).toBe('')
+    expect(exit).toBe(0)
   })
 })

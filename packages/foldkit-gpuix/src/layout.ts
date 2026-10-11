@@ -2,16 +2,23 @@
 //
 // Where GPUI last painted things answers getBoundingClientRect,
 // document.elementsFromPoint, scrollIntoView and the host's click-outside
-// test. Two costs shape how it's read:
-// - gpuix's `getElementBounds` walks the whole native tree for each element.
-//   Its automation tree has every element's box in one call (5–12 ms per
-//   1,000 elements on Metal, in a live window).
+// test. Three costs shape how it's read:
+// - gpuix's automation tree has every element's box in one call, where
+//   `getElementBounds` has one (on Linux, a round trip each: see below).
 // - On Linux, every geometry query (bounds, the automation tree, scroll
 //   offsets, the window's size) is a round trip to GPUI's UI thread, which
 //   waits up to 2 s when the window isn't painting (hidden, minimised, behind
 //   a lock screen). On macOS they're answered in place.
+// - The automation tree asks GPUI to draw again, and gpuix 0.10's published
+//   build (made with GPUI's test-support) draws the whole window right there,
+//   inside the call: 35 ms for Pixel Art's 2,200 elements on an M1 Pro, 75 ms
+//   with its six history previews (8,300). `getElementBounds`
+//   reads the same last painted boxes without drawing (2.6 ms for all 2,200).
+//   So where bounds are answered in place (`bounds`), the tree is read only
+//   when its shape changed (`reshaped`); otherwise each box is read again
+//   from the last painted frame, through the shape the last tree read gave.
 //
-// So the tree is read on demand, at most once per frame GPUI draws, and only
+// The layout is read on demand, at most once per frame GPUI draws, and only
 // in the frames after something could have moved (a change, a scroll, a
 // resize), or once it's half a second old (GPUI can move things the host
 // doesn't see: an image arriving, a native animation). Every query goes through a guard (`createGuard`) that times it.
@@ -104,6 +111,10 @@ export type LayoutOptions = {
   now?: () => number
   /** gpuix's automation tree, as JSON. */
   tree: (() => string) | undefined
+  /** One element's last painted box, read in place without a redraw (gpuix's
+   *  `getElementBounds` in macOS's live window); null if it wasn't painted.
+   *  Without it every read is a tree read. */
+  bounds?: (id: number) => Box | null
   /** gpuix's box for an element → its border box (host.ts undoes gpuix's
    *  content-corner boxes and a scroll area's own scroll offset). */
   borderBox: (id: number, box: Box) => Box
@@ -133,15 +144,49 @@ export const createLayout = (options: LayoutOptions) => {
   let readFrame = 0
   let staleThrough = 0
   let reads = 0
+  /** The tree's shape at the last tree read (each node's box as it was then),
+   *  and whether GPUI's tree has changed shape since. */
+  let shape: TreeNode | null | undefined
+  let reshaped = true
+
+  /** The tree with each box as GPUI last painted it: the tree itself, or,
+   *  while its shape holds, each box read again through the last shape. */
+  const fetch = (): { root: TreeNode | null; boxOf: (node: TreeNode) => Box | undefined } | undefined => {
+    const { tree, bounds } = options
+    if (bounds !== undefined && !reshaped && shape !== undefined) {
+      const known = shape
+      const fresh = guard.ask('bounds', () => {
+        const out = new Map<number, Box>()
+        const visit = (node: TreeNode) => {
+          const box = bounds(node.id)
+          if (box !== null) out.set(node.id, box)
+          for (const child of node.children ?? []) visit(child)
+        }
+        if (known !== null) visit(known)
+        return out
+      })
+      return fresh === undefined ? undefined : { root: known, boxOf: node => fresh.get(node.id) }
+    }
+    if (tree === undefined) return undefined
+    // Changes from here on are after this read.
+    const was = reshaped
+    reshaped = false
+    const json = guard.ask('tree', tree)
+    if (json === undefined) {
+      reshaped = was
+      return undefined
+    }
+    shape = JSON.parse(json) as TreeNode | null
+    return { root: shape, boxOf: node => node.bounds }
+  }
 
   const read = () => {
-    if (options.tree === undefined) return
-    const json = guard.ask('tree', options.tree)
-    if (json === undefined) return
+    const fetched = fetch()
+    if (fetched === undefined) return
+    const { root, boxOf } = fetched
     readFrame = frame
     readAt = now()
     reads++
-    const root = JSON.parse(json) as TreeNode | null
     const order: Array<Painted> = []
     const byId = new Map<number, Box>()
     const parentOf = new Map<number, number>()
@@ -152,7 +197,8 @@ export const createLayout = (options: LayoutOptions) => {
         deferred.push(node)
         return
       }
-      const box = node.bounds === undefined ? null : options.borderBox(node.id, node.bounds)
+      const painted = boxOf(node)
+      const box = painted === undefined ? null : options.borderBox(node.id, painted)
       if (box !== null) {
         order.push({ id: node.id, box, clip, clippers })
         byId.set(node.id, box)
@@ -178,6 +224,11 @@ export const createLayout = (options: LayoutOptions) => {
   }
 
   return {
+    /** GPUI's tree changed shape (an element created, destroyed or moved):
+     *  the next read is a tree read. */
+    reshaped: () => {
+      reshaped = true
+    },
     /** Something may have moved: the layout is read again on demand over the
      *  next few frames (GPUI paints a change within one or two). */
     moved: () => {

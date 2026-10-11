@@ -198,6 +198,11 @@ export type AttachOptions = {
   onError?: (report: ErrorReport) => void
   /** The clock GPUI's geometry queries are timed by (tests). */
   now?: () => number
+  /** The renderer answers `getElementBounds` in place, without drawing:
+   *  the layout is then read from the tree only when its shape changed
+   *  (src/layout.ts). `mountGpuix` turns it on for gpuix's window on macOS;
+   *  not for gpuix's TestRenderer, which draws for each. */
+  boundsInPlace?: boolean
 }
 
 /** FoldKit on an already-initialised gpuix renderer: the live window
@@ -227,6 +232,7 @@ export const attachGpuix = (renderer: NativeRenderer, options: AttachOptions = {
     },
     ...(options.onSynced === undefined ? {} : { onSynced: options.onSynced }),
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.boundsInPlace === undefined ? {} : { boundsInPlace: options.boundsInPlace }),
   })
 
   const setTokens = (tokens: Tokens) => {
@@ -351,7 +357,7 @@ export const automationRequested = (asked: boolean | undefined, env: Readonly<Re
 /** Opens a native window with FoldKit drawn in it. Returns the app: its
  *  container, `own()` for its runtimes, and `close()`. */
 export const mountGpuix = (options: NativeOptions = {}) => {
-  const { css, sheets, tokens, viewport, onSynced, onClose, onError, dataDir, exitOnClose = true, createRenderer, onFrame, now, automation, ...windowOptions } = options
+  const { css, sheets, tokens, viewport, onSynced, onClose, onError, dataDir, exitOnClose = true, createRenderer, onFrame, now, automation, boundsInPlace, ...windowOptions } = options
   let attached: ReturnType<typeof attachGpuix> | undefined
   const report = (phase: ErrorPhase, error: unknown, context: Record<string, unknown> = {}) => {
     if (attached !== undefined) attached.window.report(phase, error, context)
@@ -412,6 +418,9 @@ export const mountGpuix = (options: NativeOptions = {}) => {
     ...(dataDir === undefined ? {} : { dataDir }),
     ...(now === undefined ? {} : { now }),
     ...(windowOptions.appId === undefined ? {} : { appId: windowOptions.appId }),
+    // gpuix's own window on macOS reads bounds on this thread; elsewhere each
+    // is a round trip to GPUI's UI thread.
+    boundsInPlace: boundsInPlace ?? (createRenderer === undefined && process.platform === 'darwin'),
     // A size left to the compositor (0, or unset: a layer surface's length)
     // is the one GPUI's window has.
     viewport: viewport ?? (width && height ? { width, height } : renderer.getWindowSize?.() ?? { width: width || 1024, height: height || 768 }),

@@ -180,15 +180,18 @@ export const openMetal = async (name: string, size: { width: number; height: num
   console.log('native test window:', JSON.stringify({ name, requested: size, actual: renderer.getWindowSize() }))
   const attached = attachGpuix(renderer as unknown as NativeRenderer, { viewport: renderer.getWindowSize(), ...options })
   const { document, host } = attached
+  /** One frame: animation frames, the changes, GPUI draws, and the input it
+   *  got reaches the app. */
+  const frame = async () => {
+    await new Promise(resolve => setTimeout(resolve, 0))
+    host.frame()
+    host.flush()
+    renderer.flush()
+    host.drawn()
+    renderer.dispatchNativeEvents()
+  }
   const settle = async () => {
-    for (let i = 0; i < 4; i++) {
-      await new Promise(resolve => setTimeout(resolve, 0))
-      host.frame()
-      host.flush()
-      renderer.flush()
-      host.drawn()
-      renderer.dispatchNativeEvents()
-    }
+    for (let i = 0; i < 4; i++) await frame()
   }
   const out = evidenceDir()
   const bounds = (element: { nativeId: number }) => {
@@ -201,6 +204,7 @@ export const openMetal = async (name: string, size: { width: number; height: num
     renderer,
     requestedSize: size,
     settle,
+    frame,
     bounds,
     /** A click inside the element/window intersection, through GPUI's hit test. */
     click: async (element: { nativeId: number }) => {

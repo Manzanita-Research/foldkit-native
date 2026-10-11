@@ -144,13 +144,25 @@ export type HostOptions = {
   onSynced?: (timings: HostTimings) => void
   /** The clock geometry queries are timed by (tests). */
   now?: () => number
+  /** `getElementBounds` reads the last painted box in place, without asking
+   *  GPUI to draw: macOS's live window (layout.ts). Not gpuix's TestRenderer,
+   *  which draws for each. */
+  boundsInPlace?: boolean
 }
+
+/** Mutations that change the shape of GPUI's tree, not just what's in it. */
+const RESHAPING = /\["(?:createElement|destroyElement|appendChild|insertBefore|setRoot)"/
 
 export const createHost = (document: NativeDocument, options: HostOptions) => {
   const { renderer, sheets, secrets } = options
   const state = createRendererState(renderer)
   const eventHandlers = new Map<number, Map<string, (event: EventPayload) => void>>()
-  const mutations = createMutationQueue(renderer, ids => {
+  const mutations = createMutationQueue({
+    applyBatch: json => {
+      if (RESHAPING.test(json)) layout.reshaped()
+      return renderer.applyBatch(json)
+    },
+  }, ids => {
     for (const id of ids) {
       unregisterEventHandlers(eventHandlers, id)
       nodes.delete(id)
@@ -1649,6 +1661,7 @@ export const createHost = (document: NativeDocument, options: HostOptions) => {
     // Every renderer gpuix has (the live window's, the offscreen one) has it;
     // NativeRenderer's type leaves it out.
     tree: treeOf(renderer),
+    ...(options.boundsInPlace === true && renderer.getElementBounds !== undefined ? { bounds: id => renderer.getElementBounds!(id) } : {}),
     borderBox,
     // From the style GPUI was sent: the layout's walk asks for every element,
     // and matching the sheet again for each would cost more than the read.

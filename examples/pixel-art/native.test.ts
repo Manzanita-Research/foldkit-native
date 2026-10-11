@@ -557,7 +557,7 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     const started = performance.now()
     for (let i = 1; i <= moves; i++) {
       app.renderer.dispatchMouseMove(from.x + (to.x - from.x) * i / moves, from.y + (to.y - from.y) * i / moves, 0)
-      await app.settle()
+      await app.frame()
     }
     const elapsed = performance.now() - started
     app.renderer.nativeSimulateMouseUp(to.x, to.y)

@@ -349,7 +349,7 @@ const gpuixMetal = async (id: string, size: { width: number; height: number } | 
       return { path, logicalSize: app.renderer.getWindowSize(), ...readPng(path) }
     },
     settle: app.settle,
-    frame: app.settle,
+    frame: app.frame,
     close: async () => app.close(),
   }
 }

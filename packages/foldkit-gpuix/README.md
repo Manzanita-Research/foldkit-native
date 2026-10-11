@@ -204,9 +204,13 @@ Where GPUI last painted things answers every layout read (`src/layout.ts`).
 A browser lays out when it's asked. GPUI lays out when it paints, and
 asking it costs:
 
-- gpuix's `getElementBounds` walks the whole native tree per call. The
-  adapter never uses it. It reads the automation tree instead: every box in
-  one call, 5–12 ms per 1,000 elements in a live window on Metal.
+- gpuix's automation tree has every box in one call. But gpuix 0.10's
+  published build draws the whole window inside that call (it's built with
+  GPUI's test-support): 35 ms for 2,200 elements on an M1 Pro. On macOS,
+  `getElementBounds` reads the same last painted boxes in place, without
+  drawing (2.6 ms for all 2,200). So in gpuix's window on macOS the tree is
+  read only when its shape changed (an element created, destroyed or moved),
+  and otherwise each box is read again through the last tree's shape.
 - On Linux, every geometry query (bounds, scroll offsets, the window's size)
   is a round trip to GPUI's UI thread. It waits up to 2 s, then fails, when
   the window isn't painting (hidden, minimised, behind a lock screen).

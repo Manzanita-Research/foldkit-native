@@ -83,6 +83,89 @@ describe('reading the layout', () => {
   })
 })
 
+describe('bounds read in place (gpuix\'s window on macOS)', () => {
+  const rows = (count: number) => Array.from({ length: count }, (_, at) => ({ id: `row-${at}` }))
+  const stack = (count: number, top = 0) =>
+    Object.fromEntries(Array.from({ length: count }, (_, at) => [`row-${at}`, { x: 0, y: top + at * 20, width: 300, height: 20 }]))
+  const hit = (x: number, y: number) => app!.document.elementsFromPoint(x, y).map(element => element.getAttribute('id'))[0]
+
+  test('while the tree keeps its shape, a move is read box by box, with no tree read', async () => {
+    app = mountHeadless({ boundsInPlace: true })
+    build(app, app.document.body, rows(10))
+    await app.settle()
+    place(stack(10))
+    await app.settle()
+    expect(hit(10, 105)).toBe('row-5')
+    const trees = app.gpui.treeReads()
+    let boxes = 0
+    const read = app.fake.renderer.getElementBounds!.bind(app.fake.renderer)
+    app.fake.renderer.getElementBounds = id => (boxes++, read(id))
+
+    // GPUI moves everything down 300 (a style change, say): the next read
+    // has the new boxes, for the hit test and getBoundingClientRect alike.
+    place(stack(10, 300))
+    await app.settle()
+    expect(hit(10, 405)).toBe('row-5')
+    expect(hit(10, 105)).not.toBe('row-5')
+    expect(byId('row-9').getBoundingClientRect().y).toBe(480)
+    expect(app.gpui.treeReads()).toBe(trees)
+    expect(boxes).toBeGreaterThan(0)
+
+  })
+
+  test('an element added, removed or moved in the tree: the next read is a tree read', async () => {
+    app = mountHeadless({ boundsInPlace: true })
+    build(app, app.document.body, rows(3))
+    await app.settle()
+    place(stack(3))
+    await app.settle()
+    expect(hit(10, 45)).toBe('row-2')
+
+    // Added: hit where GPUI painted it.
+    build(app, app.document.body, [{ id: 'row-3' }])
+    await app.settle()
+    place({ 'row-3': { x: 0, y: 60, width: 300, height: 20 } })
+    let trees = app.gpui.treeReads()
+    expect(hit(10, 65)).toBe('row-3')
+    expect(app.gpui.treeReads()).toBe(trees + 1)
+
+    // Moved before its first sibling: later siblings paint over earlier ones,
+    // so where two overlap, the order of the new tree decides.
+    place({ 'row-3': { x: 0, y: 0, width: 300, height: 20 } })
+    await app.settle()
+    expect(hit(10, 5)).toBe('row-3')
+    app.document.body.insertBefore(byId('row-3'), byId('row-0'))
+    await app.settle()
+    app.host.relayout()
+    trees = app.gpui.treeReads()
+    expect(hit(10, 5)).toBe('row-0')
+    expect(app.gpui.treeReads()).toBe(trees + 1)
+
+    // Removed: never hit again.
+    byId('row-0').remove()
+    await app.settle()
+    app.host.relayout()
+    expect(hit(10, 5)).toBe('row-3')
+    expect(app.document.getElementById('row-0')).toBeNull()
+  })
+
+  test('off without it: every read is a tree read, never a box by box one', async () => {
+    app = mountHeadless()
+    build(app, app.document.body, rows(3))
+    await app.settle()
+    app.fake.renderer.getElementBounds = () => {
+      throw new Error('getElementBounds called')
+    }
+    place(stack(3))
+    const trees = app.gpui.treeReads()
+    expect(hit(10, 25)).toBe('row-1')
+    place(stack(3, 100))
+    await app.settle()
+    expect(hit(10, 125)).toBe('row-1')
+    expect(app.gpui.treeReads()).toBe(trees + 2)
+  })
+})
+
 describe('after a scroll, before GPUI paints it', () => {
   test('a box read straight after the host scrolls is where it will be drawn: inside the area, nested too; clipped by it; clamped as GPUI clamps', async () => {
     app = mountHeadless()

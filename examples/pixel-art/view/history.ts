@@ -221,6 +221,11 @@ const thumbnailGridView = (
       h.Style({
         display: 'grid',
         'grid-template-columns': `repeat(${gridSize}, ${THUMBNAIL_CELL_SIZE}px)`,
+        // The size those fixed cells add up to, as a browser lays it out.
+        // GPUI gets `repeat(N, 1fr)` columns, and sizing such a grid from its
+        // cells is most of a frame: 13 ms for each 32 × 32 one, every frame.
+        width: `${gridSize * THUMBNAIL_CELL_SIZE}px`,
+        height: `${gridSize * THUMBNAIL_CELL_SIZE}px`,
       }),
     ],
     Array.flatMap(grid, row =>

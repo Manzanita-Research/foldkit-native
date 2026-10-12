@@ -1,6 +1,6 @@
 {
   "name": "foldkit-native",
-  "version": "0.1.0-test.2",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "FoldKit apps drawn natively by GPUI, in-process, through gpuix.",

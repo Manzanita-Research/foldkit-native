@@ -1,6 +1,6 @@
 {
   "name": "foldkit-gpuix",
-  "version": "0.1.0-test.2",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "A FoldKit adapter for gpuix: FoldKit's view patches gpuix's GPUI tree directly, with GPUI's own focus, scrolling and text input. The bindings layer; looks live in a UI library on top.",
@@ -16,7 +16,7 @@
     "@gpuix/native": "0.10.0",
     "effect": "4.0.0",
     "foldkit": "0.165.0",
-    "foldkit-native": "0.1.0-test.2"
+    "foldkit-native": "0.1.0"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

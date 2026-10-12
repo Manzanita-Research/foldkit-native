@@ -1,6 +1,7 @@
 // CSS → gpuix style, and tokens. The cascade is happy-dom's; these check what
 // the mirror copies out of the computed style and how tokens resolve.
 import { afterEach, describe, expect, test } from 'bun:test'
+import { Window } from 'happy-dom'
 
 import { fontFamily, px, translation } from '../src/style.ts'
 import { setTokens, token, tokensToCss } from '../src/theme.ts'
@@ -266,6 +267,81 @@ describe('interaction states', () => {
 })
 
 describe('tokens', () => {
+  const tokenDocument = () => {
+    const window = new Window()
+    return {
+      window,
+      document: window.document as unknown as Document,
+      bg: (id: string) => window.getComputedStyle(window.document.getElementById(id)!).getPropertyValue('--fn-bg'),
+    }
+  }
+
+  test('distinct full selectors coexist and update their own stylesheet', async () => {
+    const { window, document, bg } = tokenDocument()
+    try {
+      document.body.innerHTML = '<div id="ab" data-theme="ab"></div><div id="a-b" data-theme="a-b"></div>'
+      setTokens(document, { bg: 'red' }, '[data-theme="ab"]')
+      expect(bg('ab')).toBe('red')
+      const first = document.head.querySelector('style')!
+      setTokens(document, { bg: 'blue' }, '[data-theme="a-b"]')
+      expect([bg('ab'), bg('a-b')]).toEqual(['red', 'blue'])
+      const second = document.head.querySelectorAll('style')[1]!
+      expect(first.id).not.toBe(second.id)
+
+      setTokens(document, { bg: 'green' }, '[data-theme="ab"]')
+      expect([bg('ab'), bg('a-b')]).toEqual(['green', 'blue'])
+      setTokens(document, { bg: 'purple' }, '[data-theme="a-b"]')
+      expect([bg('ab'), bg('a-b')]).toEqual(['green', 'purple'])
+      expect([...document.head.querySelectorAll('style')]).toEqual([first, second])
+    } finally {
+      await window.happyDOM.abort()
+    }
+  })
+
+  test('default and explicit :root updates preserve the root sheet and other selectors', async () => {
+    const { window, document, bg } = tokenDocument()
+    const rootBg = () => window.getComputedStyle(window.document.documentElement).getPropertyValue('--fn-bg')
+    try {
+      document.body.innerHTML = '<root id="scoped"></root>'
+      setTokens(document, { bg: 'red' })
+      const root = document.head.querySelector('style')!
+      expect(rootBg()).toBe('red')
+      // A tag selector must not alias :root just because punctuation differs.
+      setTokens(document, { bg: 'blue' }, 'root')
+      expect([rootBg(), bg('scoped')]).toEqual(['red', 'blue'])
+      const scoped = document.head.querySelectorAll('style')[1]!
+      setTokens(document, { bg: 'green' }, ':root')
+      expect([rootBg(), bg('scoped')]).toEqual(['green', 'blue'])
+      setTokens(document, { bg: 'purple' })
+      expect([rootBg(), bg('scoped')]).toEqual(['purple', 'blue'])
+      expect([...document.head.querySelectorAll('style')]).toEqual([root, scoped])
+    } finally {
+      await window.happyDOM.abort()
+    }
+  })
+
+  test('the same selector in separate Documents has independent tokens and updates', async () => {
+    const first = tokenDocument()
+    const second = tokenDocument()
+    try {
+      for (const { document } of [first, second]) {
+        document.body.innerHTML = '<div id="scope" data-theme="ab"></div>'
+      }
+      setTokens(first.document, { bg: 'red' }, '[data-theme="ab"]')
+      setTokens(second.document, { bg: 'blue' }, '[data-theme="ab"]')
+      expect([first.bg('scope'), second.bg('scope')]).toEqual(['red', 'blue'])
+      setTokens(first.document, { bg: 'green' }, '[data-theme="ab"]')
+      expect([first.bg('scope'), second.bg('scope')]).toEqual(['green', 'blue'])
+      setTokens(second.document, { bg: 'purple' }, '[data-theme="ab"]')
+      expect([first.bg('scope'), second.bg('scope')]).toEqual(['green', 'purple'])
+      expect(first.document.head.querySelectorAll('style').length).toBe(1)
+      expect(second.document.head.querySelectorAll('style').length).toBe(1)
+    } finally {
+      await first.window.happyDOM.abort()
+      await second.window.happyDOM.abort()
+    }
+  })
+
   test('token() and tokensToCss()', () => {
     expect(token('color.surface')).toBe('var(--fn-color-surface)')
     expect(token('space.3', '4px')).toBe('var(--fn-space-3, 4px)')

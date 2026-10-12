@@ -39,6 +39,7 @@ describe('update', () => {
       update,
       given(initialModel),
       message(Message.GotAccentsMessage({ message: Listbox.Message.PressedKey({ key: 'ArrowDown', labels: ['Violet', 'Blue'] }) })),
+      model(next => expect(next.accents.highlighted).toBe(1)),
       Command.resolve(Listbox.ScrollIntoView, Listbox.Message.CompletedScrollIntoView()),
       message(Message.SelectedAccent({ value: 'teal' })),
       model(next => {

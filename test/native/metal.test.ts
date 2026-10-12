@@ -297,21 +297,32 @@ describe.skipIf(!metal)('Metal, offscreen', () => {
     })
     const document = dom.window.document
     let seed = 11
-    const random = (n: number) => (seed = (seed * 1103515245 + 12345) % 2 ** 31) % n
+    const random = (n: number) => (seed = (seed * 48271) % 0x7fffffff) % n
+    const exercised = new Set<string>()
     for (let step = 0; step < 300; step++) {
       const all = [dom.container, ...Array.from(dom.container.querySelectorAll('*'))] as Array<HTMLElement>
       const parent = all[random(all.length)]!
       const op = random(4)
       if (op === 0 || parent.children.length === 0) {
+        exercised.add('insert')
         const child = document.createElement('div') as unknown as HTMLElement
         child.textContent = `n${step}`
         parent.insertBefore(child, parent.children[random(parent.children.length + 1)] ?? null)
-      } else if (op === 1 && parent !== dom.container) parent.remove()
-      else if (op === 2) parent.appendChild(parent.children[random(parent.children.length)]!)
-      else parent.firstChild!.textContent = `t${step}`
+      } else if (op === 1 && parent !== dom.container) {
+        exercised.add('remove')
+        parent.remove()
+      } else if (op === 2) {
+        const child = parent.children[random(parent.children.length)]!
+        if (child !== parent.lastElementChild) exercised.add('reorder')
+        parent.appendChild(child)
+      } else {
+        exercised.add('text')
+        parent.firstChild!.textContent = `t${step}`
+      }
       if (step % 20 === 0) await dom.window.happyDOM.waitUntilComplete()
     }
     await dom.window.happyDOM.waitUntilComplete()
+    expect([...exercised].sort()).toEqual(['insert', 'remove', 'reorder', 'text'])
 
     const real = await testRenderer(400, 300)
     for (const batch of fake.batches) real.applyBatch(JSON.stringify(batch))

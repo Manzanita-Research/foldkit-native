@@ -92,8 +92,12 @@ describe('theme switch, 2,000 elements, adapter vs mirror (headless)', () => {
     ].join('\n'))
     expect(elements).toBeGreaterThanOrEqual(2000)
     // Both paths switch every time, and land on the same colours.
-    expect(seenAdapter[0]).toEqual(['#1c1c1c', '#eeeeee'])
-    expect(seenAdapter[1]).toEqual(['#ffffff', '#111111'])
-    expect(seenAdapter).toEqual(seenMirror)
+    const expected = [
+      ['#1c1c1c', '#eeeeee'], ['#ffffff', '#111111'],
+      ['#1c1c1c', '#eeeeee'], ['#ffffff', '#111111'],
+      ['#1c1c1c', '#eeeeee'], ['#ffffff', '#111111'],
+    ]
+    expect(seenAdapter).toEqual(expected)
+    expect(seenMirror).toEqual(expected)
   }, 120_000)
 })

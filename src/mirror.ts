@@ -17,7 +17,7 @@ import {
 import type { StyleDesc } from '@gpuix/native/host'
 import type { Window } from 'happy-dom'
 // happy-dom keeps each element's computed style in this cache slot.
-import { cache as styleCacheSymbol } from 'happy-dom/lib/PropertySymbol.js'
+import { cache as styleCacheSymbol, listeners as listenersSymbol } from 'happy-dom/lib/PropertySymbol.js'
 
 import { type StateRule, boxStyle, collectStateRules, stateStyles, textStyle } from './style.ts'
 
@@ -96,6 +96,15 @@ const owner = (from: object, key: string): Record<string, unknown> => {
   while (!Object.prototype.hasOwnProperty.call(proto, key)) proto = Object.getPrototypeOf(proto)
   return proto
 }
+/** Count the actual happy-dom registry, which deduplicates callback/capture
+ *  pairs. Its remove searches bubbling before capturing regardless of options;
+ *  observing it also covers automatic once and AbortSignal removals. */
+const listenerCount = (target: EventTarget, type: string) => {
+  const registry = (target as unknown as {
+    [listenersSymbol]: { bubbling: Map<string, Array<unknown>>; capturing: Map<string, Array<unknown>> }
+  })[listenersSymbol]
+  return (registry.bubbling.get(type)?.length ?? 0) + (registry.capturing.get(type)?.length ?? 0)
+}
 /** addEventListener and removeEventListener, reporting to the mirror of the
  *  target's document; returns the unpatched pair. */
 const watchListeners = (body: Node) => {
@@ -106,12 +115,16 @@ const watchListeners = (body: Node) => {
     found = { add, remove }
     originals.set(proto, found)
     proto.addEventListener = function (this: EventTarget, type: string, listener: unknown, opts?: unknown) {
-      trackers.get(documentOf(this)!)?.(this, type, 1)
-      return add.call(this, type, listener as EventListener, opts as AddEventListenerOptions)
+      const before = listenerCount(this, type)
+      add.call(this, type, listener as EventListener, opts as AddEventListenerOptions)
+      const delta = listenerCount(this, type) - before
+      if (delta !== 0) trackers.get(documentOf(this)!)?.(this, type, delta)
     }
     proto.removeEventListener = function (this: EventTarget, type: string, listener: unknown, opts?: unknown) {
-      trackers.get(documentOf(this)!)?.(this, type, -1)
-      return remove.call(this, type, listener as EventListener, opts as EventListenerOptions)
+      const before = listenerCount(this, type)
+      remove.call(this, type, listener as EventListener, opts as EventListenerOptions)
+      const delta = listenerCount(this, type) - before
+      if (delta !== 0) trackers.get(documentOf(this)!)?.(this, type, delta)
     }
   }
   return found
@@ -187,6 +200,7 @@ export const createMirror = (options: {
   const ids = new WeakMap<Node, number>()
   const nodes = new Map<number, Node>()
   const nativeChildren = new Map<number, Array<number>>()
+  const nativeParents = new Map<number, number>()
   const listened = new WeakMap<Node, Map<string, number>>()
   const domListened = new WeakMap<Node, Map<string, number>>()
   const listens = (node: Node, domType: string) => (domListened.get(node)?.get(domType) ?? 0) > 0
@@ -234,7 +248,7 @@ export const createMirror = (options: {
     dom.set(type, Math.max(0, (dom.get(type) ?? 0) + delta))
     countNatives(target as Node, natives, delta)
     if (HOVER_TYPES.includes(type)) {
-      if (HOVER_TYPES.some(hover => (dom.get(hover) ?? 0) > 0)) hoverListeners.add(target as Node)
+      if (ids.has(target as Node) && HOVER_TYPES.some(hover => (dom.get(hover) ?? 0) > 0)) hoverListeners.add(target as Node)
       else hoverListeners.delete(target as Node)
     }
   }
@@ -953,53 +967,85 @@ export const createMirror = (options: {
   }
   add.call(window as unknown as EventTarget, 'click', keepWindow)
 
+  const appendNative = (parentId: number, childId: number) => {
+    const previous = nativeParents.get(childId)
+    const siblings = previous === undefined ? undefined : nativeChildren.get(previous)
+    if (siblings !== undefined) siblings.splice(siblings.indexOf(childId), 1)
+    nativeParents.set(childId, parentId)
+    const children = nativeChildren.get(parentId) ?? []
+    children.push(childId)
+    nativeChildren.set(parentId, children)
+    mutations.appendChild(parentId, childId)
+  }
+
   const create = (node: Node): number | undefined => {
     const type = nativeType(node)
     if (type === undefined) return undefined
+    const known = ids.get(node)
+    if (known !== undefined) {
+      if (pressed?.held === true && pressed.node === node) pressed.held = false
+      restyle(node)
+      recheckPointers(node, false)
+      return known
+    }
     listenForForm(node)
     listenForLink(node)
     const id = nextId++
     created += 1
     ids.set(node, id)
     nodes.set(id, node)
+    if (HOVER_TYPES.some(hover => listens(node, hover))) hoverListeners.add(node)
     mutations.createElement(id, type)
     syncProps(id, node)
     for (const [native, count] of listened.get(node) ?? []) if (count > 0) syncListener(id, native, true)
     if (type === 'div') {
-      const children: Array<number> = []
+      nativeChildren.set(id, [])
       for (const child of Array.from(node.childNodes)) {
         const childId = create(child)
         if (childId === undefined) continue
-        mutations.appendChild(id, childId)
-        children.push(childId)
+        appendNative(id, childId)
       }
-      nativeChildren.set(id, children)
     }
     return id
   }
 
+  const forgetId = (id: number) => {
+    // GPUI destroys the retained native descendants, which can differ from
+    // the DOM after several edits in one observer delivery.
+    const children = nativeChildren.get(id) ?? []
+    nativeChildren.delete(id)
+    for (const child of children) forgetId(child)
+    const parent = nativeParents.get(id)
+    const siblings = parent === undefined ? undefined : nativeChildren.get(parent)
+    if (siblings !== undefined) siblings.splice(siblings.indexOf(id), 1)
+    nativeParents.delete(id)
+    const node = nodes.get(id)
+    if (node !== undefined) {
+      hoverListeners.delete(node)
+      told.delete(node)
+      if (hovered === node) hovered = undefined
+      if (ids.get(node) === id) ids.delete(node)
+    }
+    nodes.delete(id)
+    sentBoxes.delete(id)
+    pointerKinds.delete(id)
+    cssNone.delete(id)
+    through.delete(id)
+    unregisterEventHandlers(eventHandlers, id)
+  }
   const forget = (node: Node) => {
     const id = ids.get(node)
-    if (id !== undefined) {
-      ids.delete(node)
-      nodes.delete(id)
-      nativeChildren.delete(id)
-      sentBoxes.delete(id)
-      pointerKinds.delete(id)
-      cssNone.delete(id)
-      through.delete(id)
-      unregisterEventHandlers(eventHandlers, id)
-    }
-    for (const child of Array.from(node.childNodes)) forget(child)
+    if (id !== undefined) forgetId(id)
   }
 
+  const pendingDestruction = new Set<number>()
   /** Makes a parent's native children match its DOM children, in order. */
   const syncChildren = (parent: Node) => {
     const parentId = ids.get(parent)
     if (parentId === undefined) return
     // A textarea's text is its value (FoldKit writes it that way), not a child.
     if (nativeType(parent) !== 'div') return syncProps(parentId, parent)
-    const current = nativeChildren.get(parentId) ?? []
+    const current = [...(nativeChildren.get(parentId) ?? [])]
     const desired: Array<number> = []
     const before = new Set(current)
     for (const child of Array.from(parent.childNodes)) {
@@ -1008,8 +1054,11 @@ export const createMirror = (options: {
       const known = drawn ? ids.get(child) : undefined
       const id = known ?? (drawn ? create(child) : undefined)
       if (id !== undefined) desired.push(id)
-      // Moved here from another parent: whether it lets hits through can change.
-      if (known !== undefined && !before.has(known)) recheckPointers(child, false)
+      // A new parent can change inherited styles and which hits pass through.
+      if (known !== undefined && !before.has(known)) {
+        restyle(child)
+        recheckPointers(child, false)
+      }
       if (pressed?.held === true && pressed.node === child) {
         // Back in the DOM: no longer held, and drawn as it is again.
         pressed.held = false
@@ -1026,16 +1075,14 @@ export const createMirror = (options: {
         setStyle(id, HELD)
         continue
       }
-      if (node !== undefined && (node.parentNode === null || nativeType(node) === undefined)) forget(node)
-      if (node === undefined || !ids.has(node)) mutations.destroyElement(id)
+      if (node === undefined || !body.contains(node) || nativeType(node) === undefined) pendingDestruction.add(id)
     }
     const remaining = current.filter(id => keep.has(id))
     if (remaining.length !== desired.length || remaining.some((id, i) => id !== desired[i])) {
       // appendChild moves an attached child, so re-appending in order sorts them.
       const firstChange = desired.findIndex((id, i) => remaining[i] !== id)
-      for (const id of desired.slice(Math.max(0, firstChange))) mutations.appendChild(parentId, id)
+      for (const id of desired.slice(Math.max(0, firstChange))) appendNative(parentId, id)
     }
-    nativeChildren.set(parentId, desired)
   }
 
   const restyle = (node: Node) => {
@@ -1086,7 +1133,14 @@ export const createMirror = (options: {
         styled.add(record.target)
       }
     }
-    for (const parent of parents) syncChildren(parent)
+    for (const parent of parents) if (body.contains(parent)) syncChildren(parent)
+    // Move every surviving child out before an ancestor is freed.
+    for (const id of pendingDestruction) {
+      if (!nodes.has(id)) continue
+      forgetId(id)
+      mutations.destroyElement(id)
+    }
+    pendingDestruction.clear()
     // Class and style changes cascade to descendants (and their text).
     for (const node of styled) if (ids.has(node)) restyle(node)
     applyPointers()

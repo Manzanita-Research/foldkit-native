@@ -5,6 +5,7 @@
 import type { NativeRenderer } from '@gpuix/native/host'
 import { createRendererState } from '@gpuix/native/host'
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { Effect, Schema } from 'effect'
 import { Command, Mount, Render, Runtime } from 'foldkit'
 import type { HtmlBuilder } from 'foldkit/html'
@@ -230,19 +231,44 @@ describe('browser APIs: behave, or say they don\'t', () => {
     expect(history.state).toEqual({ page: 33 })
   })
 
-  test('storage: sessionStorage in memory; localStorage in memory with one warning', async () => {
-    await open()
-    sessionStorage.setItem('a', '1')
-    expect(sessionStorage.getItem('a')).toBe('1')
-    const warn = spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      localStorage.setItem('b', '2')
-      localStorage.setItem('c', '3')
-      expect(localStorage.getItem('b')).toBe('2')
-      expect(warn.mock.calls.length).toBeLessThanOrEqual(1)
-    } finally {
-      warn.mockRestore()
-    }
+  test('storage: sessionStorage in memory; localStorage in memory with one warning per process', () => {
+    // The warning belongs to the process, so use a fresh one and write through
+    // two windows without resetting the adapter's module state.
+    const probe = `
+      import { mountHeadless } from ${JSON.stringify(new URL('./support.ts', import.meta.url).href)}
+      const warnings = []
+      console.warn = (...args) => warnings.push(args.join(' '))
+      const counts = [warnings.length]
+      let session, local
+      const first = mountHeadless()
+      try {
+        first.window.sessionStorage.setItem('a', '1')
+        session = first.window.sessionStorage.getItem('a')
+        counts.push(warnings.length)
+        first.window.localStorage.setItem('b', '2')
+        counts.push(warnings.length)
+        first.window.localStorage.setItem('c', '3')
+        local = first.window.localStorage.getItem('b')
+        counts.push(warnings.length)
+      } finally {
+        first.close()
+      }
+      const second = mountHeadless()
+      try {
+        second.window.localStorage.setItem('d', '4')
+        counts.push(warnings.length)
+      } finally {
+        second.close()
+      }
+      process.stdout.write(JSON.stringify({ session, local, counts, warnings }))
+    `
+    const { session, local, counts, warnings } = JSON.parse(execFileSync(process.execPath, ['--eval', probe], {
+      encoding: 'utf8', timeout: 4_000,
+    }))
+    expect(session).toBe('1')
+    expect(local).toBe('2')
+    expect(counts).toEqual([0, 0, 1, 1, 1])
+    expect(warnings[0]).toContain('localStorage is in memory only')
   })
 
   test('IntersectionObserver is absent, so feature detection says so; ResizeObserver is there (platform-commands.test.ts)', async () => {
@@ -266,7 +292,14 @@ describe('browser APIs: behave, or say they don\'t', () => {
 
   test('getSelection is GPUI\'s selection', async () => {
     await open()
+    let selected: string | null = 'Selected in GPUI'
+    app!.fake.renderer.getSelectedText = () => selected
+    app!.fake.renderer.clearSelection = () => { selected = null }
     const selection = getSelection()!
+    expect(selection.toString()).toBe('Selected in GPUI')
+    expect(selection.rangeCount).toBe(1)
+    selection.removeAllRanges()
+    expect(selected).toBeNull()
     expect(selection.toString()).toBe('')
     expect(selection.rangeCount).toBe(0)
   })

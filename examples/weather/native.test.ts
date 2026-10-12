@@ -51,8 +51,11 @@ describe('headless', () => {
     expect(app.texts()).toContain('72°F')
     expect(app.inSync()).toBe(true)
     // The result card: white, rounded, with Tailwind's shadow-lg.
-    const card = app.native('Beverly Hills, California')
-    expect(card).toBeDefined()
+    const card = app.nativeOf(app.document.querySelector('article')!)
+    expect(card.style).toMatchObject({
+      backgroundColor: '#fff', borderTopLeftRadius: 12,
+      boxShadow: { offsetY: 10, blurRadius: 15, spreadRadius: -3 },
+    })
   })
 })
 

@@ -192,9 +192,8 @@ describe('focus, FoldKit on gpuix (headless)', () => {
 
   test('Tab moves focus from field to field, GPUI\'s and the DOM\'s', async () => {
     await open()
-    byId('name').focus()
-    const seen = [app!.document.activeElement?.getAttribute('id')]
-    for (const _ of [1, 2]) {
+    const seen: Array<string | null | undefined> = []
+    for (const _ of [1, 2, 3]) {
       await app!.press('tab')
       seen.push(app!.document.activeElement?.getAttribute('id'))
       expect(app!.gpuiFocus()).toBe(app!.document.activeElement as never)
@@ -265,6 +264,7 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
 
     // Click into each field and type, through GPUI's own input pipeline.
     await clickField(name)
+    expect(app.renderer.getFocusedElementId()).toBe(name)
     await app.keys('A')
     expect(value('name')).toBe('A')
     await clickField(email)
@@ -290,29 +290,6 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     expect(app.painted()).toContain(WELCOME)
     app.screenshot('submitted')
   })
-
-  /** Clicks into Name, then presses Tab twice: where GPUI's focus and the
-   *  DOM's activeElement are after each step. */
-  const tabThrough = async () => {
-    app = await openMetal('form')
-    const { name, email, message } = fields()
-    await clickField(name)
-    const gpui = [app.renderer.getFocusedElementId()]
-    const dom = [app.document.activeElement?.id ?? null]
-    for (const _ of [1, 2]) {
-      await app.keys('tab')
-      gpui.push(app.renderer.getFocusedElementId())
-      dom.push(app.document.activeElement?.id ?? null)
-    }
-    console.log('form tab order:', JSON.stringify({ gpui, expected: [name, email, message], dom }))
-    return { gpui, dom, expected: [name, email, message] }
-  }
-
-  test('a click puts GPUI focus in the field', async () => {
-    const { gpui, expected } = await tabThrough()
-    expect(gpui[0]).toBe(expected[0]!)
-  })
-
 })
 
 describe.skipIf(!METAL)('focus, FoldKit on gpuix (Metal, offscreen)', () => {

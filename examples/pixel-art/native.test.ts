@@ -15,9 +15,11 @@
 // document.
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Schema } from 'effect'
+import { pixelAt } from '../../test/support/native-geometry.ts'
 
 import { METAL, type Headless, type Metal, openHeadless, openMetal, rendererFor } from '../support/harness.ts'
 import { STORAGE_KEY } from './constant'
+import { createEmptyGrid } from './grid'
 import { SavedCanvasJsonString } from './model'
 
 const RENDERER = await rendererFor('pixel-art')
@@ -164,9 +166,8 @@ describe('headless', () => {
     expect(app.inSync()).toBe(true)
   }, SLOW)
 
-  // The mirror sends what GPUI hit-tests on each move; the adapter also
-  // fills in the cells between two moves, as a browser's pointer crosses them.
-  test.skipIf(RENDERER !== 'gpuix')('a diagonal drag crosses the cells between its moves, as the pointer does', async () => {
+  // Two samples per cell exercise boundary hit tests during a held press.
+  test('a diagonal drag paints every sampled cell', async () => {
     app = await openHeadless('pixel-art')
     // Two moves per cell, corner to corner of a 6-cell diagonal.
     await press(app, 0, 0)
@@ -323,6 +324,34 @@ describe('saved canvas', () => {
   let app: Headless
   afterEach(() => app?.close())
 
+  test('resizing an empty canvas saves its size and colour, and reload restores the saved canvas', async () => {
+    app = await openHeadless('pixel-art')
+    await app.click(RED)
+    await until(app, () => app.localStorage.getItem(STORAGE_KEY)?.includes('"selectedColorIndex":4') === true)
+    const before = Schema.decodeSync(SavedCanvasJsonString)(app.localStorage.getItem(STORAGE_KEY)!)
+    expect(before.gridSize).toBe(16)
+    expect(before.selectedColorIndex).toBe(4)
+
+    const previousSave = app.localStorage.getItem(STORAGE_KEY)
+    await app.click('8')
+    expect(board(app)).toEqual({ size: 8, painted: {} })
+    expect((app.document.querySelector('#grid-size-confirm-dialog') as HTMLDialogElement).open).toBe(false)
+    await until(app, () => app.localStorage.getItem(STORAGE_KEY) !== previousSave)
+    const serialized = app.localStorage.getItem(STORAGE_KEY)!
+    const saved = Schema.decodeSync(SavedCanvasJsonString)(serialized)
+    expect(saved.gridSize).toBe(8)
+    expect(saved.grid).toEqual(createEmptyGrid(8))
+    expect(saved.selectedColorIndex).toBe(before.selectedColorIndex)
+    expect(saved.paletteThemeIndex).toBe(before.paletteThemeIndex)
+
+    await app.close()
+    app = await openHeadless('pixel-art', { storage: { [STORAGE_KEY]: serialized } })
+    expect(board(app)).toEqual({ size: 8, painted: {} })
+    expect(checked(app.document, 'Grid size')).toBe('8')
+    expect(checked(app.document, 'Color palette')).toBe(RED)
+    expect(history(app.texts())).toEqual(['Current'])
+  }, SLOW)
+
   test('comes in as Flags from localStorage, and is saved back after each change', async () => {
     // An 8 × 8 canvas with one red cell in the corner, saved by an earlier run.
     const grid = Array.from({ length: 8 }, (_, y) =>
@@ -332,16 +361,16 @@ describe('saved canvas', () => {
     expect(board(app).size).toBe(8)
     expect(board(app).painted).toEqual({ '7,7': RED })
 
-    // Paint, then undo: FoldKit's SaveCanvas Command writes the canvas back.
+    // Observe the saved stroke before undoing it; unchanged seed data cannot pass.
+    const saved = () => JSON.parse(app.localStorage.getItem(STORAGE_KEY)!)
     await tap(app, 0, 0)
+    await until(app, () => saved().grid[0][0]._tag === 'Some')
+    const painted = grid.map((row, y) => row.map((cell, x) => x === 0 && y === 0 ? { _tag: 'Some', value: 4 } : cell))
+    expect(saved()).toEqual({ grid: painted, gridSize: 8, paletteThemeIndex: 0, selectedColorIndex: 4 })
+
     await shortcut(app, 'ctrl-z')
-    for (let i = 0; i < 20 && app.localStorage.getItem(STORAGE_KEY)?.includes('"selectedColorIndex":4') !== true; i++) {
-      await sleep(10)
-      await app.settle()
-    }
-    const saved = Schema.decodeSync(SavedCanvasJsonString)(app.localStorage.getItem(STORAGE_KEY)!)
-    expect(saved.gridSize).toBe(8)
-    expect(saved.selectedColorIndex).toBe(4)
+    await until(app, () => saved().grid[0][0]._tag === 'None')
+    expect(saved()).toEqual({ grid, gridSize: 8, paletteThemeIndex: 0, selectedColorIndex: 4 })
   }, SLOW)
 })
 
@@ -387,9 +416,8 @@ describe('a stroke across a 32 × 32 board, measured', () => {
 })
 
 /** The colour GPUI painted at a point, in logical pixels. */
-const colourAt = (shot: ReturnType<Metal['screenshot']>, point: { x: number; y: number }, width: number) => {
-  const scale = shot.width / width
-  const [r, g, b] = shot.pixel(Math.round(point.x * scale), Math.round(point.y * scale))
+const colourAt = (shot: ReturnType<Metal['screenshot']>, point: { x: number; y: number }) => {
+  const [r, g, b] = pixelAt(shot, shot.logicalSize, point)
   return `#${[r, g, b].map(value => value.toString(16).padStart(2, '0')).join('')}`
 }
 
@@ -399,7 +427,6 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
 
   test('GPUI paints the editor; drags through its hit testing paint; ⌘Z, the history and a Dialog', async () => {
     app = await openMetal('pixel-art')
-    const { width } = app.example.meta
     const centre = (x: number, y: number) => {
       const box = app.boundsOf(cellOf(app.document, x, y) as unknown as Element, `cell ${x},${y}`)
       return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
@@ -432,7 +459,7 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     const row: Array<[number, number]> = [[2, 4], [3, 4], [4, 4], [5, 4], [6, 4], [7, 4], [8, 4], [9, 4]]
     await dragAcross(row)
     for (const [x, y] of row) expect(domColour(x, y)).toBe(INK)
-    expect(colourAt(app.screenshot('stroke'), centre(5, 4), width)).toBe(INK)
+    expect(colourAt(app.screenshot('stroke'), centre(5, 4))).toBe(INK)
 
     // Red, from the palette, and a vertical stroke.
     const swatch = app.document.querySelector('[aria-label="Color palette"]')!.children[4]!
@@ -442,8 +469,8 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     const column: Array<[number, number]> = [[12, 2], [12, 3], [12, 4], [12, 5], [12, 6], [12, 7], [12, 8]]
     await dragAcross(column)
     const painting = app.screenshot('painting')
-    expect(colourAt(painting, centre(12, 6), width)).toBe(RED)
-    expect(colourAt(painting, centre(5, 4), width)).toBe(INK)
+    expect(colourAt(painting, centre(12, 6))).toBe(RED)
+    expect(colourAt(painting, centre(5, 4))).toBe(INK)
 
     // Undo and redo through GPUI's keystrokes.
     await app.keys('cmd-z')
@@ -529,7 +556,7 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
     const started = performance.now()
     for (let i = 1; i <= moves; i++) {
       app.renderer.dispatchMouseMove(from.x + (to.x - from.x) * i / moves, from.y + (to.y - from.y) * i / moves, 0)
-      await app.settle()
+      await app.frame()
     }
     const elapsed = performance.now() - started
     app.renderer.nativeSimulateMouseUp(to.x, to.y)

@@ -1,4 +1,4 @@
-// From FoldKit's examples/shopping-cart/src/main.ts, unchanged (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
+// Adapted from FoldKit's examples/shopping-cart/src/main.ts (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
 // https://github.com/foldkit/foldkit/tree/main/examples/shopping-cart
 
 import { Effect, Match, Option, Schema } from 'effect'
@@ -90,7 +90,12 @@ const foldProductsOutMessage = Products.OutMessage.match<
 >({
   AddedToCart:
     ({ item }) =>
-    model => ({ model: modifyFields(model, { cart: Cart.addItem(item) }) }),
+    model => ({
+      model: modifyFields(model, {
+        cart: Cart.addItem(item),
+        orderPlaced: () => false,
+      }),
+    }),
   IncrementedQuantity:
     ({ itemId }) =>
     model => ({

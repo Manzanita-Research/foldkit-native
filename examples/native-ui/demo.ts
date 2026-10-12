@@ -21,8 +21,10 @@ export const demo: Demo = async (app, pause) => {
   await type('ada@'); await pause(700)
   await type('example.com'); await pause(500)
   await keys('tab'); await pause(500)
-  await keys('space'); await pause(1100)
-  await keys('space'); await pause(700)
+  await app.call('keyDown', { key: 'space' })
+  await app.call('keyUp', { key: 'space' }); await pause(1100)
+  await app.call('keyDown', { key: 'space' })
+  await app.call('keyUp', { key: 'space' }); await pause(700)
   await keys('tab'); await pause(400)
   for (const _ of [1, 2, 3, 4, 5, 6, 7]) {
     await keys('down')

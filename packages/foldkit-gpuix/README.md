@@ -13,8 +13,9 @@ scrolling and text editing are GPUI's own.
 
 ## Install
 
-Install `foldkit-gpuix-0.1.0-test.2.tgz` and
-`foldkit-native-0.1.0-test.2.tgz` together in your project, plus `effect@4.0.0`
+Build the tarballs in the repository (`npm run pack:packages`), then install
+`foldkit-gpuix-<version>.tgz` and `foldkit-native-<version>.tgz` together in
+your project, plus `effect@4.0.0`
 and `foldkit@0.165.0`. npm installs the `@gpuix/native@0.10.0` peer and its
 optional platform binary. This adapter uses the root package's public style
 API; both internal packages must have the same version. The tarballs already

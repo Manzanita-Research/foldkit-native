@@ -16,7 +16,11 @@ permissions:
 
 jobs:
   release:
+    # Off until a maintainer turns releases on: set the repository variable
+    # RELEASES_ENABLED to true (Settings → Secrets and variables → Actions →
+    # Variables). Until then a merge to main publishes nothing.
     if: >-
+      vars.RELEASES_ENABLED == 'true' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&

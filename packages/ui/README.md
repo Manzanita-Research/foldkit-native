@@ -3,7 +3,8 @@
 FoldKit components with theme tokens, stable parts and WAI-ARIA behavior.
 Use them with `foldkit-gpuix`, the `foldkit-native` mirror or FoldKit on the web.
 
-Install `foldkit-native-ui-0.1.0-test.2.tgz`, `effect@4.0.0` and
+Build the tarball in the repository (`npm run pack:packages`), then install
+`foldkit-native-ui-<version>.tgz`, `effect@4.0.0` and
 `foldkit@0.165.0` in your project. The package ships compiled ESM and
 TypeScript declarations; no native binary, library build or checkout is needed.
 The current test package is distributed as a tarball, with a private publication

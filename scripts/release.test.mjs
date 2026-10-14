@@ -219,6 +219,8 @@ test('real Changesets versions the distribution together and keeps lock and adap
 test('workflow uses the version PR action without npm publication and retains the main CI contract', () => {
   const workflow = readFileSync(resolve(root, '.github/workflows/release.yml'), 'utf8')
   assert.match(workflow, /actions: read/)
+  // Nothing is released until a maintainer opts in with a repository variable.
+  assert.match(workflow, /if: >-\n\s+vars\.RELEASES_ENABLED == 'true' &&/)
   assert.match(workflow, /version: npm run version:packages/)
   assert.match(workflow, /outputs\.hasChangesets == 'false'/)
   assert.match(workflow, /createGithubReleases: false/)

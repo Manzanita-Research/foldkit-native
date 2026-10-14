@@ -100,8 +100,7 @@ Astra's acceptance constraints for these fixes (keep them):
 npm ci
 bun test packages examples/native-ui         # adapter + components + spike app (Metal on a Mac)
 bun test packages/foldkit-gpuix/test/metal.test.ts   # just the real-GPUI adapter checks
-bun test packages/foldkit-gpuix/test/versus-mirror.test.ts   # mirror vs adapter, same apps (prints a table)
-bun test packages/foldkit-gpuix/test/css-coverage.test.ts    # accepted selectors per example
+bun test packages/foldkit-gpuix/test/versus-mirror.test.ts   # mirror vs adapter: the same text, every example
 bun test                                     # everything
 bun run typecheck && bun run css --check
 bun run example native-ui                    # a real window

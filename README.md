@@ -50,16 +50,18 @@ FoldKit ◀──DOM events── native document ◀──events, focus, scroll
 
 ## Use it
 
-Install the compiled tarballs into your own project, alongside the pinned peers:
+Build the tarballs from this repository ([Building installable packages](#building-installable-packages)),
+then install them into your own project, alongside the pinned peers
+(`<version>` is the version in `package.json`):
 
 ```sh
-npm install /path/to/foldkit-native-0.1.0-test.2.tgz /path/to/foldkit-gpuix-0.1.0-test.2.tgz /path/to/foldkit-native-ui-0.1.0-test.2.tgz effect@4.0.0 foldkit@0.165.0
+npm install /path/to/foldkit-native-<version>.tgz /path/to/foldkit-gpuix-<version>.tgz /path/to/foldkit-native-ui-<version>.tgz effect@4.0.0 foldkit@0.165.0
 ```
 
 Save this complete counter as `app.ts` in that project and run `bun app.ts`.
 The packages contain ESM JavaScript and TypeScript declarations; no library
 build or repository `tsconfig` paths are needed. These libraries are installed
-with npm; they are not standalone desktop application installers. The test
+with npm; they are not standalone desktop application installers. The
 packages have not been published to the npm registry.
 
 ```ts
@@ -172,10 +174,10 @@ as gpuix's README insists.
 
 ## What it would take to be a real package
 
-1. **Ship it:** build to JS for Node as well as Bun, publish emitted types
-   (including window and `layerShell` options), and a `--compile` recipe that
-   embeds the `.node` file. These are future packaging work; the checkout
-   currently exports TypeScript source.
+1. **Ship it:** the packages already build to ESM and type declarations
+   ([Building installable packages](#building-installable-packages)). Still to
+   come: publishing them to npm, and a `--compile` recipe that embeds the
+   `.node` file.
 2. **Layout and overlays.** The adapter already reads GPUI's last layout,
    exposes `ResizeObserver` and scroll positions, and supports `anchored`
    popovers and `virtual-list`. Fresh layout still depends on painting;
@@ -212,14 +214,20 @@ as gpuix's README insists.
 
 ## GitHub source releases
 
+**Releases are off** until a maintainer sets the repository variable
+`RELEASES_ENABLED` to `true` (Settings → Secrets and variables → Actions →
+Variables). Until then, merging to main publishes nothing: the `Release`
+workflow is skipped.
+
 Changesets manages the **repository source release** using the root
 `foldkit-native` version and `CHANGELOG.md`. A GitHub Release named
 `foldkit-native@<version>` points to the exact main commit whose CI passed;
 GitHub supplies source archives for that tag. These are source snapshots,
 not built npm packages or compiled native binaries. Root, adapter and UI
-remain `private: true`, their source TypeScript exports stay intact, and the
-subpackage versions/peer constraints are unchanged. The root repository
-version is not a promise of independently distributable adapter/UI packages.
+remain `private: true` and share the root's version (`npm run version:packages`
+keeps the subpackages and the adapter's `foldkit-native` peer in step). The
+root repository version is not a promise of independently distributable
+adapter/UI packages.
 
 Use Node 22.22.3 (npm 10.9.8) and Bun 1.3.9 for the release tools:
 
@@ -238,7 +246,9 @@ merging the version PR permits `npm run release:github` to create the tag and
 GitHub Release. Each future change needs a new changeset to advance the version.
 
 The workflow must be present on the default branch; Actions must allow its
-`GITHUB_TOKEN` to create pull requests. This setup changes neither setting.
+`GITHUB_TOKEN` to create pull requests. This setup changes neither setting,
+and in this repository the second one is off: turn it on along with
+`RELEASES_ENABLED`, or the first version PR fails to open.
 When that token opens, updates or reopens the version PR, GitHub creates
 pull-request CI runs that require approval. A maintainer with write access
 must select **Approve workflows to run** in the PR's merge box before those
@@ -268,8 +278,7 @@ controls while retaining all existing unit, mirror, static, native and
 artifact gates. Workflow failures are reported normally, with no native skips
 or timeout relaxation to make publication succeed.
 
-npm publication is a separate future step tracked by [#59](https://github.com/julia-script/foldkit-native/issues/59)
-and [#67](https://github.com/julia-script/foldkit-native/issues/67): choose public
+npm publication is a separate future step: choose public
 package boundaries and shared-style ownership, align package versions/peers,
 emit and qualify JS/types/exports in clean supported Node/Bun consumers,
 verify packed licences, then explicitly approve private-flag changes and
@@ -316,10 +325,10 @@ or newer: happy-dom 20.14.5 uses a stream type absent from Node 22 typings.
 
 All three packages use the same version. `npm run version:packages` consumes
 Changesets for the root and synchronizes the subpackages and adapter peer.
-The current `0.1.0-test.2` prerelease is separate from the source-only
-`0.1.0-test.1` release. Existing automatic GitHub source releases remain
-stable-only and still require successful exact-main CI. For test artifacts,
-use the explicit pack command; it neither tags nor publishes anything.
+GitHub source releases (above) are stable versions only, require successful
+exact-main CI, and are off until `RELEASES_ENABLED` is set. For test
+artifacts, use the explicit pack command; it neither tags nor publishes
+anything.
 
 `private: true` remains an intentional publication guard. The package contents
 and exports are ready for npm installation, but publishing to the registry is

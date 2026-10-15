@@ -45,7 +45,11 @@ describe('native, headless', () => {
   })
 
   test('disabled and read-only: still tab stops (so they can be read), and neither toggles', async () => {
-    const app = await headless(Toggle)
+    let toggles = 0
+    const app = await headless({ ...Toggle, update: (model, message: Parameters<typeof Toggle.update>[1]) => {
+      toggles++
+      return Toggle.update(model, message)
+    } })
     try {
       const checked = (id: string) => app.document.getElementById(id)!.getAttribute('aria-checked')
       await app.press('tab')
@@ -59,6 +63,7 @@ describe('native, headless', () => {
       await app.press('space')
       bunExpect(checked('location')).toBe('true')
       bunExpect(app.model().on).toBe(false)
+      bunExpect(toggles).toBe(0)
       bunExpect(app.gpui.node(app.document.getElementById('location')!.nativeId).props['aria-valuetext']).toBe('on')
     } finally {
       app.close()

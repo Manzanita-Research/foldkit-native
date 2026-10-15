@@ -53,18 +53,22 @@ export const redactTree = (json: string): string => {
  *  and secret fields' text (from `secrets`, read on each call) as bullets.
  *  Everything else is the renderer's own. */
 export const redactingRenderer = <R extends object>(renderer: R, secrets: () => ReadonlyArray<string>): R => {
-  const texts = (list: ReadonlyArray<string>) => {
+  const texts = (read: () => ReadonlyArray<string>) => {
+    // A secret callback may acknowledge a draw. Read the snapshot afterwards,
+    // so an old snapshot cannot outlive the secrets that protected it.
     const hidden = secrets()
+    const list = read()
     return hidden.length === 0 ? list : list.map(text => hide(text, hidden))
   }
   const own = renderer as unknown as Record<string, (...args: Array<unknown>) => unknown>
   const overrides: Record<string, (...args: Array<unknown>) => unknown> = {
     getAutomationTree: () => redactTree(own['getAutomationTree']!.call(renderer) as string),
-    getPaintedText: () => texts(own['getPaintedText']!.call(renderer) as Array<string>),
-    getAllText: () => texts(own['getAllText']!.call(renderer) as Array<string>),
+    getPaintedText: () => texts(() => own['getPaintedText']!.call(renderer) as Array<string>),
+    getAllText: () => texts(() => own['getAllText']!.call(renderer) as Array<string>),
     getSelectedText: () => {
+      const hidden = secrets()
       const selected = own['getSelectedText']!.call(renderer) as string | null
-      return selected === null ? null : hide(selected, secrets())
+      return selected === null ? null : hide(selected, hidden)
     },
   }
   return new Proxy(renderer, {

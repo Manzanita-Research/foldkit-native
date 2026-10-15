@@ -48,12 +48,29 @@ const storageOver = (items: Map<string, string>, changed: () => void, beforeWrit
     }
   },
   removeItem: key => {
-    if (items.delete(String(key))) changed()
+    const name = String(key)
+    if (!items.has(name)) return
+    const previous = new Map(items)
+    items.delete(name)
+    try {
+      changed()
+    } catch (error) {
+      // Reinsert the whole store so rollback preserves key enumeration order.
+      items.clear()
+      for (const [key, value] of previous) items.set(key, value)
+      throw error
+    }
   },
   clear: () => {
     if (items.size === 0) return
+    const previous = new Map(items)
     items.clear()
-    changed()
+    try {
+      changed()
+    } catch (error) {
+      for (const [key, value] of previous) items.set(key, value)
+      throw error
+    }
   },
   key: index => [...items.keys()][index] ?? null,
   get length() { return items.size },
@@ -98,9 +115,9 @@ export const fileStorage = (dir: string, report: (error: unknown, context: Recor
     try {
       const parsed: unknown = JSON.parse(text)
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object of strings')
-      for (const [key, value] of Object.entries(parsed)) {
-        if (typeof value === 'string') items.set(key, value)
-      }
+      const entries = Object.entries(parsed)
+      if (entries.some(([, value]) => typeof value !== 'string')) throw new Error('not an object of strings')
+      for (const [key, value] of entries) items.set(key, value)
     } catch (error) {
       try {
         renameSync(path, `${path}.unreadable`)

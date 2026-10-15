@@ -174,16 +174,12 @@ describe.skipIf(!METAL)('Metal, offscreen', () => {
   const column = (name: string) => app.bounds(name)
   const inside = (box: { x: number; width: number }, x: number) => x >= box.x && x <= box.x + box.width
 
-  test('GPUI paints the board', async () => {
+  test('a drag through GPUI: press a card, move across, release over another column', async () => {
     app = await openMetal('kanban')
     expect(app.painted().slice(0, 4)).toEqual(['Kanban Board', 'TO DO', '6', RESEARCH])
     expect(app.painted()).toContain('IN PROGRESS')
     expect(app.painted()).toContain('+ Add card')
     app.screenshot('board')
-  })
-
-  test('a drag through GPUI: press a card, move across, release over another column', async () => {
-    app = await openMetal('kanban')
     const card = app.bounds(RESEARCH)
     // Released over the top of In Progress's first card: above its middle, so
     // the card goes in first.

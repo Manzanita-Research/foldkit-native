@@ -11,6 +11,20 @@ scrolling and text editing are GPUI's own.
 - [MIGRATING.md](MIGRATING.md): moving a FoldKit app from the web.
 - [EVENTS.md](EVENTS.md): how GPUI's input becomes DOM events.
 
+## Install
+
+Build the tarballs in the repository (`npm run pack:packages`), then install
+`foldkit-gpuix-<version>.tgz` and `foldkit-native-<version>.tgz` together in
+your project, plus `effect@4.0.0`
+and `foldkit@0.165.0`. npm installs the `@gpuix/native@0.10.0` peer and its
+optional platform binary. This adapter uses the root package's public style
+API; both internal packages must have the same version. The tarballs already
+contain ESM JavaScript and declarations. No checkout paths or consumer build
+step are needed. Run native applications with Bun 1.3.9+ on macOS Apple
+silicon or Linux x64 GNU with a display and gpuix's required system libraries.
+Windows is unqualified. These are libraries, not desktop app installers.
+The private publication guard does not prevent tarball installation.
+
 ## Use
 
 ```ts
@@ -95,8 +109,18 @@ in a headless sway as the surface (`examples/layer-bar/layer.test.ts`).
 owns: its runtimes, pending animation frames, the native tree (gpuix's
 retained element count goes to zero), GPUI handlers and window key events,
 the globals, the frame loop, and gpuix's automation listener on stdin (if
-it was asked for). It
-resolves `false` if a handler kept the window open.
+it was asked for). Host listeners and other apps' automation listeners stay
+installed. It resolves `false` if a handler kept the window open, and `true`
+once cleanup has been attempted. Owned disposers run once in reverse order.
+If one throws, the other disposers, frame cancellation, native teardown,
+global restoration and stdin cleanup are still attempted. Teardown errors
+are reported through `onError` with phase `close` and
+`context.stage: 'teardown'` (an `AggregateError` holds multiple detach failures). Closing
+still resolves `true`, and `app.closed` settles after the cleanup attempts;
+repeated or forced close does not run them or report their errors again.
+Calling `detach()` directly instead throws after attempting all its cleanup.
+Failures in `onError` and its console fallback cannot interrupt teardown or
+prevent `app.closed` from settling.
 
 - **Close handlers**: `onClose(handler)` (or the `onClose` option). They run
   before anything is taken down, so they can still read the model and save,
@@ -116,7 +140,7 @@ resolves `false` if a handler kept the window open.
   and target) and an animation frame's (`animationFrame`) are reported and
   the next one still runs. Also: a tick of the frame loop (`frame`), an error
   from GPUI (`native`), a native event the host failed on (`event`: its type
-  and element), a close handler (`close`), the store (`storage`). Without
+  and element), a close handler or teardown (`close`), the store (`storage`). Without
   `onError` they go to `console.error`.
 - **Starting**: gpuix loads when a window is mounted, not at import, so a
   failure to load is caught too. It's a `NativeStartError` with one sentence:
@@ -194,9 +218,13 @@ Where GPUI last painted things answers every layout read (`src/layout.ts`).
 A browser lays out when it's asked. GPUI lays out when it paints, and
 asking it costs:
 
-- gpuix's `getElementBounds` walks the whole native tree per call. The
-  adapter never uses it. It reads the automation tree instead: every box in
-  one call, 5–12 ms per 1,000 elements in a live window on Metal.
+- gpuix's automation tree has every box in one call. But gpuix 0.10's
+  published build draws the whole window inside that call (it's built with
+  GPUI's test-support): 35 ms for 2,200 elements on an M1 Pro. On macOS,
+  `getElementBounds` reads the same last painted boxes in place, without
+  drawing (2.6 ms for all 2,200). So in gpuix's window on macOS the tree is
+  read only when its shape changed (an element created, destroyed or moved),
+  and otherwise each box is read again through the last tree's shape.
 - On Linux, every geometry query (bounds, scroll offsets, the window's size)
   is a round trip to GPUI's UI thread. It waits up to 2 s, then fails, when
   the window isn't painting (hidden, minimised, behind a lock screen).

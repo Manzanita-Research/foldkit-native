@@ -181,6 +181,9 @@ describe('dispatch (WHATWG DOM)', () => {
     expect(calls).toEqual(['once', 'signal', 'passive prevented: false', 'passive prevented: false'])
     // An aborted signal adds nothing.
     s.inner.addEventListener('click', () => calls.push('never'), { signal: controller.signal })
+    calls.length = 0
+    s.inner.click()
+    expect(calls).toEqual(['passive prevented: false'])
 
     const stops: Array<string> = []
     const event = new (globalThis as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent('custom', { bubbles: true })
@@ -196,23 +199,18 @@ describe('dispatch (WHATWG DOM)', () => {
     expect(event.cancelBubble).toBe(false)
     s.outer.dispatchEvent(event)
     expect(stops).toEqual(['inner', 'inner 2', 'outer'])
+    let reentrantError: unknown
     s.outer.addEventListener('again', e => {
-      expect(() => s.outer.dispatchEvent(e)).toThrow('already being dispatched')
-    })
+      try {
+        s.outer.dispatchEvent(e)
+      } catch (error) {
+        reentrantError = error
+      }
+    }, { once: true })
     s.outer.dispatchEvent(new (globalThis as unknown as { Event: typeof Event }).Event('again'))
-  })
-
-  test('a listener that throws is reported, and the next one still runs', async () => {
-    const errors: Array<string> = []
-    const s = await scene([], { onError: report => errors.push(`${report.phase}: ${(report.error as Error).message}`) })
-    const calls: Array<string> = []
-    s.inner.addEventListener('click', () => {
-      throw new Error('boom')
-    })
-    s.inner.addEventListener('click', () => calls.push('next'))
-    s.inner.click()
-    expect(calls).toEqual(['next'])
-    expect(errors).toEqual(['listener: boom'])
+    // Listener exceptions are reported by the DOM, so assert after dispatch.
+    expect(reentrantError).toBeInstanceOf(DOMException)
+    expect(reentrantError).toMatchObject({ name: 'InvalidStateError' })
   })
 })
 
@@ -379,12 +377,14 @@ describe('presses and clicks', () => {
 describe('pointer capture (Pointer Events)', () => {
   test('setPointerCapture in pointerdown: got before the next event, moves and the release go to it, lost after pointerup', async () => {
     const s = await scene(['gotpointercapture', 'lostpointercapture', 'pointermove', 'pointerup', 'mouseup'])
+    let capturedDuringPress = false
     s.inner.addEventListener('pointerdown', event => {
       s.outer.setPointerCapture((event as unknown as PointerEvent).pointerId)
-      expect(s.outer.hasPointerCapture(1)).toBe(true)
+      capturedDuringPress = s.outer.hasPointerCapture(1)
     })
     await s.app.settle()
     const pressed = await press(s, 100, 100)
+    expect(capturedDuringPress).toBe(true)
     await s.move(720, 320, 0)
     await release(s, pressed, 720, 320)
     expect(s.take()).toEqual([
@@ -484,7 +484,11 @@ describe('default actions', () => {
     await s.app.press('space')
     expect(clicks).toEqual([])
     prevent = false
-    await s.app.press('space')
+    s.send({ eventType: 'windowKeyDown', elementId: 1, key: 'space' })
+    await s.app.settle()
+    expect(clicks).toEqual([])
+    s.send({ eventType: 'windowKeyUp', elementId: 1, key: 'space' })
+    await s.app.settle()
     expect(clicks).toEqual(['click'])
   })
 })

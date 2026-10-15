@@ -1,17 +1,15 @@
 // VirtualList: its update (story), then on FoldKit on gpuix, headless and on
-// Metal in both themes, where the rows sit in GPUI's own virtual-list; then
-// the same 10,000 rows against Big List's (rows and spacers in a scroll area).
+// Metal in both themes, where the rows sit in GPUI's own virtual-list.
 import { describe, expect as bunExpect, test } from 'bun:test'
 import { Option } from 'effect'
 import { Command, given, message, model, story } from 'foldkit/story'
 
-import { openMetal } from '../../foldkit-gpuix/test/support.ts'
-import { loadExample } from '../../../examples/support/example.ts'
 import * as VirtualList from '../src/virtual-list.ts'
-import { BigTracks, TRACK_COUNT, Tracks } from './apps-overlays.ts'
+import { TRACK_COUNT, Tracks } from './apps-overlays.ts'
 import { METAL, THEMES, headless, metal } from './run.ts'
 
-const PAGE = VirtualList.viewportRows({ height: 200, rowHeight: 32 })
+// A 200px viewport includes six full 32px rows and a partial seventh.
+const PAGE = 7
 const key = (key: string) => VirtualList.Message.PressedKey({ key, count: TRACK_COUNT, pageRows: PAGE })
 
 describe('story', () => {
@@ -69,7 +67,7 @@ describe('native, headless', () => {
       const native = () => app.gpui.node(list.nativeId)
       bunExpect(native().type).toBe('virtual-list')
       bunExpect(native().props).toMatchObject({ itemCount: TRACK_COUNT, estimatedItemHeight: 32, windowStart: 0 })
-      bunExpect(list.children.length).toBe(VirtualList.windowSize({ height: 200, rowHeight: 32 }))
+      bunExpect(list.children.length).toBe(PAGE + 2 * VirtualList.OVERSCAN)
       bunExpect(app.gpui.reachableCount()).toBeLessThan(400)
       app.gpui.setBounds(list.nativeId, { x: 17, y: 69, width: 446, height: 198 })
 
@@ -87,7 +85,7 @@ describe('native, headless', () => {
       // to the viewport's bottom (its top 166 px above the row: 198 - 32).
       await app.press('end')
       bunExpect(box.getAttribute('aria-activedescendant')).toBe('tracks-row-9999')
-      bunExpect(native().props['windowStart']).toBe(TRACK_COUNT - VirtualList.windowSize({ height: 200, rowHeight: 32 }))
+      bunExpect(native().props['windowStart']).toBe(TRACK_COUNT - (PAGE + 2 * VirtualList.OVERSCAN))
       bunExpect(app.document.getElementById('tracks-row-9999')).not.toBeNull()
       bunExpect(app.fake.gpui.itemScrolls.at(-1)).toEqual({ id: list.nativeId, index: 9999, offset: -166 })
       // Up a row: it's in view (by the list's anchor), so no scroll.
@@ -160,6 +158,8 @@ describe.skipIf(!METAL)('native, Metal', () => {
         await app.settle()
         bunExpect(box.getAttribute('aria-activedescendant')).toBe('tracks-row-9999')
         bunExpect(rows()).toContain('Track 10000')
+        // Retained native elements stay bounded even at the end of 10,000 rows.
+        bunExpect(app.renderer.getRetainedElementCount()).toBeLessThan(1000)
         // At the viewport's bottom: its row's bottom is the list's, inside
         // its border and padding (1 + 4 px).
         const last = app.document.getElementById('tracks-row-9999')!.getBoundingClientRect()
@@ -202,42 +202,5 @@ describe.skipIf(!METAL)('native, Metal', () => {
     } finally {
       app.close()
     }
-  })
-
-  test('against Big List: the same 10,000 rows at its size, GPUI\'s tree and the time per key', async () => {
-    type Opened = Awaited<ReturnType<typeof openMetal>>
-    const measure = async (app: Opened, focus: () => void) => {
-      focus()
-      await app.settle()
-      const times: Array<number> = []
-      for (let i = 0; i < 20; i++) {
-        const started = performance.now()
-        await app.press('down')
-        times.push(performance.now() - started)
-      }
-      const started = performance.now()
-      await app.press('end')
-      const end = performance.now() - started
-      times.sort((a, b) => a - b)
-      return { retained: app.renderer.getRetainedElementCount(), keyMedianMs: times[10]!, keyP90Ms: times[18]!, endMs: end }
-    }
-    const example = await loadExample('big-list')
-    const size = { width: example.meta.width, height: example.meta.height }
-    const big = await openMetal('compare-big-list', size, { css: example.css })
-    example.start(big.container)
-    await big.settle()
-    const bigList = await measure(big, () => big.document.getElementById('tracks')!.focus())
-    const bigEnd = big.painted()
-    big.close()
-
-    const tracks = await metal('compare-virtual-list', BigTracks, 'dusk', size)
-    const virtualList = await measure(tracks as never, () => tracks.document.getElementById('tracks')!.focus())
-    const tracksEnd = tracks.painted()
-    tracks.close()
-    console.log('ui virtual-list vs big list:', JSON.stringify({ bigList, virtualList }))
-    bunExpect(bigEnd.some(text => text.length > 0)).toBe(true)
-    bunExpect(tracksEnd).toContain('Track 10000')
-    // Both keep GPUI's tree to a window: well under 10,000 rows' worth.
-    bunExpect(virtualList.retained).toBeLessThan(1000)
   })
 })

@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { Option } from 'effect'
 import { Command, given, message, model, story } from 'foldkit/story'
 import { modifyFields } from 'foldkit/struct'
@@ -27,7 +29,14 @@ const scrolled = Message.CompletedScrollList()
 describe('library', () => {
   test('has 10,000 tracks, the same on every run', () => {
     expect(TRACKS).toHaveLength(TRACK_COUNT)
-    expect(TRACKS[0]).toEqual(matching('')[0])
+    expect(matching('')).toEqual(TRACKS)
+    // A fresh process evaluates initialization again, independent of the module cache.
+    const again = execFileSync(process.execPath, ['--eval', `
+      import { createHash } from 'node:crypto'
+      import { TRACKS } from ${JSON.stringify(new URL('./library.ts', import.meta.url).href)}
+      process.stdout.write(createHash('sha256').update(JSON.stringify(TRACKS)).digest('hex'))
+    `], { encoding: 'utf8', timeout: 5000 })
+    expect(again).toBe(createHash('sha256').update(JSON.stringify(TRACKS)).digest('hex'))
     expect(new Set(TRACKS.map(track => track.id)).size).toBe(TRACK_COUNT)
   })
 

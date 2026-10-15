@@ -130,7 +130,7 @@ export const QuickNotices = notices(300)
 // VIRTUAL LIST
 // Ten thousand tracks; the chosen one shows under the list.
 export const TRACK_COUNT = 10_000
-const tracks = (shape: { rowHeight: number; height: number }) => {
+export const Tracks = (() => {
   const Model = Schema.Struct({ list: VirtualList.Model, picked: Schema.Option(Schema.Number) })
   const Message = defineMessageUnion({ GotListMessage: { message: VirtualList.Message } })
   type Model = typeof Model.Type
@@ -149,7 +149,7 @@ const tracks = (shape: { rowHeight: number; height: number }) => {
   const view = (model: Model, h: HtmlBuilder<Message>) => root(h, [
     Button.view({ label: 'Before', id: 'before' }, h),
     VirtualList.view({
-      model: model.list, label: 'Tracks', count: TRACK_COUNT, ...shape,
+      model: model.list, label: 'Tracks', count: TRACK_COUNT, rowHeight: 32, height: 200,
       selected: Option.getOrUndefined(model.picked),
       row: index => [
         h.span([h.Style({ width: '48px', 'flex-shrink': '0' }), h.AriaHidden(true)], [String(index + 1)]),
@@ -161,7 +161,4 @@ const tracks = (shape: { rowHeight: number; height: number }) => {
     h.p([h.Id('picked')], [Option.match(model.picked, { onNone: () => 'Nothing picked', onSome: index => `Picked: Track ${index + 1}` })]),
   ])
   return { Model, Message, init, update, view }
-}
-export const Tracks = tracks({ rowHeight: 32, height: 200 })
-/** Big List's shape (44 px rows, its 538 px list), to compare the two. */
-export const BigTracks = tracks({ rowHeight: 44, height: 538 })
+})()

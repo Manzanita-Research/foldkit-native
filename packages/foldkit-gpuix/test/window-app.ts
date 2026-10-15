@@ -66,6 +66,8 @@ let gaps: Array<number> = []
 let lastFrameAt: number | undefined
 const native = mountGpuix({
   title, width, height, css: example.css, exitOnClose: false, createRenderer,
+  // As gpuix's own window has it (createRenderer turns the default off).
+  boundsInPlace: process.platform === 'darwin',
   onFrame: ms => {
     const now = performance.now()
     frames.push(ms)

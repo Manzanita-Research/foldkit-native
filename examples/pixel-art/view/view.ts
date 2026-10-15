@@ -1,4 +1,4 @@
-// From FoldKit's examples/pixel-art/src/view/view.ts, unchanged (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
+// From FoldKit's examples/pixel-art/src/view/view.ts, adapted (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
 // https://github.com/foldkit/foldkit/tree/main/examples/pixel-art
 
 import clsx from 'clsx'
@@ -18,7 +18,7 @@ import type { Model } from '../model'
 import { currentPaletteTheme } from '../palette'
 import { canvasView } from './canvas'
 import { errorDialogView, gridSizeConfirmDialogView } from './dialog'
-import { historyPanelView } from './history'
+import { createHistoryPanelView, historyPanelView } from './history'
 import { toolPanelView } from './toolbar'
 
 const downloadIcon = (className: string, h: HtmlBuilder<Message>): Html =>
@@ -52,13 +52,18 @@ const lazyHistoryPanel = createLazy()
 const lazyErrorDialog = createLazy()
 const lazyGridSizeConfirmDialog = createLazy()
 
-export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
+const documentView = (
+  model: Model,
+  h: HtmlBuilder<Message>,
+  historyView: typeof historyPanelView,
+  historyLazy: ReturnType<typeof createLazy>,
+): Document => ({
   title: 'Pixel Art',
   body: h.div(
     [h.Class('min-h-screen bg-gray-900 text-gray-100 flex flex-col')],
     [
       lazyHeader(headerView, [h]),
-      contentView(model, h),
+      contentView(model, h, historyView, historyLazy),
       lazyErrorDialog(errorDialogView, [
         model.errorDialog,
         model.maybeExportError,
@@ -143,7 +148,12 @@ const headerView = (h: HtmlBuilder<Message>): Html =>
     ],
   )
 
-const contentView = (model: Model, h: HtmlBuilder<Message>): Html => {
+const contentView = (
+  model: Model,
+  h: HtmlBuilder<Message>,
+  historyView: typeof historyPanelView,
+  historyLazy: ReturnType<typeof createLazy>,
+): Html => {
   const theme = currentPaletteTheme(model)
 
   return h.div(
@@ -168,7 +178,7 @@ const contentView = (model: Model, h: HtmlBuilder<Message>): Html => {
         h,
       ]),
       canvasView(model, theme, h),
-      lazyHistoryPanel(historyPanelView, [
+      historyLazy(historyView, [
         model.undoStack,
         model.redoStack,
         model.isDrawing
@@ -183,4 +193,22 @@ const contentView = (model: Model, h: HtmlBuilder<Message>): Html => {
       ]),
     ],
   )
+}
+
+// The unowned view remains literal for standalone Scene callers.
+export const view = (model: Model, h: HtmlBuilder<Message>): Document =>
+  documentView(model, h, historyPanelView, lazyHistoryPanel)
+
+/** App-owned history reuse is released with the running app's Effect scope. */
+export const createView = () => {
+  const history = createHistoryPanelView()
+  let historyLazy = createLazy()
+  return {
+    view: (model: Model, h: HtmlBuilder<Message>): Document =>
+      documentView(model, h, history.view, historyLazy),
+    dispose: () => {
+      history.dispose()
+      historyLazy = createLazy()
+    },
+  }
 }

@@ -13,6 +13,7 @@ import { join } from 'node:path'
 
 import { type FakeGpui, createFakeGpui } from '../../../test/support/fake-gpui.ts'
 import { readPng } from '../../../test/support/png.ts'
+import { pixelAt, visibleCentre } from '../../../test/support/native-geometry.ts'
 import { type AttachOptions, NativeElement, attachGpuix } from '../src/index.ts'
 
 export const createFocusableFake = (size = { width: 1024, height: 768 }) => {
@@ -75,7 +76,9 @@ export type Fake = FakeGpui & { tabOrder: () => Array<number>; scrolledIntoView:
 /** Mounts FoldKit on gpuix over the fake, for one test. */
 export const mountHeadless = (options: AttachOptions = {}) => {
   const fake = createFocusableFake(options.viewport)
-  const attached = attachGpuix(fake.renderer, options)
+  // The fake answers immediately: JSON work on a loaded runner is not GPUI
+  // query latency. Tests of query spacing/back-off supply their own clock.
+  const attached = attachGpuix(fake.renderer, { ...options, now: options.now ?? (() => 0) })
   const { document, host } = attached
   const settle = async () => {
     for (let i = 0; i < 4; i++) {
@@ -176,17 +179,21 @@ const evidenceDir = () => {
 export const openMetal = async (name: string, size: { width: number; height: number }, options: AttachOptions = {}) => {
   const { TestRenderer } = await import('@gpuix/native/testing')
   const renderer = new TestRenderer(size)
-  const attached = attachGpuix(renderer as unknown as NativeRenderer, { viewport: size, ...options })
+  console.log('native test window:', JSON.stringify({ name, requested: size, actual: renderer.getWindowSize() }))
+  const attached = attachGpuix(renderer as unknown as NativeRenderer, { viewport: renderer.getWindowSize(), ...options })
   const { document, host } = attached
+  /** One frame: animation frames, the changes, GPUI draws, and the input it
+   *  got reaches the app. */
+  const frame = async () => {
+    await new Promise(resolve => setTimeout(resolve, 0))
+    host.frame()
+    host.flush()
+    renderer.flush()
+    host.drawn()
+    renderer.dispatchNativeEvents()
+  }
   const settle = async () => {
-    for (let i = 0; i < 4; i++) {
-      await new Promise(resolve => setTimeout(resolve, 0))
-      host.frame()
-      host.flush()
-      renderer.flush()
-      host.drawn()
-      renderer.dispatchNativeEvents()
-    }
+    for (let i = 0; i < 4; i++) await frame()
   }
   const out = evidenceDir()
   const bounds = (element: { nativeId: number }) => {
@@ -197,13 +204,16 @@ export const openMetal = async (name: string, size: { width: number; height: num
   return {
     ...attached,
     renderer,
+    requestedSize: size,
     settle,
+    frame,
     bounds,
-    /** A click at the element's painted centre, through GPUI's hit test. */
+    /** A click inside the element/window intersection, through GPUI's hit test. */
     click: async (element: { nativeId: number }) => {
       await settle()
       const box = bounds(element)
-      renderer.nativeSimulateClick(box.x + box.width / 2, box.y + box.height / 2)
+      const point = visibleCentre(box, renderer.getWindowSize(), `native element ${element.nativeId}`)
+      renderer.nativeSimulateClick(point.x, point.y)
       await settle()
     },
     /** Keystrokes through GPUI's input pipeline, to whatever GPUI has focused.
@@ -244,8 +254,8 @@ export const openMetal = async (name: string, size: { width: number; height: num
       const path = join(out, `${name}-${step}.png`)
       renderer.captureScreenshot(path)
       const image = readPng(path)
-      const scale = image.width / size.width
-      return { path, at: (x: number, y: number) => image.pixel(Math.round(x * scale), Math.round(y * scale)) }
+      const logicalSize = renderer.getWindowSize()
+      return { path, at: (x: number, y: number) => pixelAt(image, logicalSize, { x, y }) }
     },
     close: () => attached.detach(),
     document,

@@ -1,4 +1,4 @@
-// From FoldKit's examples/pixel-art/src/update.ts, unchanged (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
+// Adapted from FoldKit's examples/pixel-art/src/update.ts (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
 // https://github.com/foldkit/foldkit/tree/main/examples/pixel-art
 
 import { Array, Match, Option } from 'effect'
@@ -476,7 +476,8 @@ const requestGridSizeChange = (model: Model, size: number): UpdateReturn => {
   }
 
   if (isGridEmpty(model.grid)) {
-    return applyGridSizeChange(model, size)
+    const { model: nextModel } = applyGridSizeChange(model, size)
+    return { model: nextModel, commands: [saveCanvas(nextModel)] }
   }
 
   return Update.combine(model, [

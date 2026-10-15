@@ -109,7 +109,6 @@ describe('the sheet\'s contract', () => {
     expect(style('surface')).toMatchObject({ backgroundColor: '#101010' })
     expect(textStyle('para')).toMatchObject({ color: '#eeeeee' })
     app!.setTokens({ 'color-surface': '#fafafa', 'color-text': '#111111' })
-    app!.host.restyleAll()
     await app!.settle()
     expect(style('surface')).toMatchObject({ backgroundColor: '#fafafa' })
     expect(textStyle('para')).toMatchObject({ color: '#111111' })

@@ -53,9 +53,10 @@ describe('native, headless', () => {
     try {
       await app.click('Delete…')
       bunExpect(app.model().open).toBe(true)
-      // The panel isn't inside the backdrop, so a click in it can't reach it.
+      app.document.getElementById('confirm-title')!.click()
+      await app.settle()
+      bunExpect(app.model().open).toBe(true)
       const backdrop = app.document.querySelector('[data-part="backdrop"]')!
-      bunExpect(backdrop.contains(app.document.getElementById('confirm'))).toBe(false)
       app.host.dispatch({ eventType: 'click', elementId: backdrop.nativeId, x: 1, y: 1, button: 0, clickCount: 1 } as never)
       await app.settle()
       bunExpect(app.model().open).toBe(false)

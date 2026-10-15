@@ -28,7 +28,11 @@ describe('scene', () => {
 
 describe('native, headless', () => {
   test('keyboard: Tab through every box (read-only and disabled too); Space toggles on its release; the label toggles', async () => {
-    const app = await headless(Checks)
+    let toggles = 0
+    const app = await headless({ ...Checks, update: (model, message: Parameters<typeof Checks.update>[1]) => {
+      toggles++
+      return Checks.update(model, message)
+    } })
     try {
       const active = () => app.document.activeElement?.getAttribute('id') ?? null
       const props = (id: string) => app.gpui.node(app.document.getElementById(id)!.nativeId).props
@@ -52,13 +56,15 @@ describe('native, headless', () => {
         stops.push(active())
       }
       bunExpect(stops).toEqual(['basil', 'olives', 'remember', 'terms', 'beta'])
-      // Disabled and read-only keep their state under Space.
+      // Controlled values alone cannot reveal an unwanted toggle callback.
+      const togglesBefore = toggles
       await app.press('space')
       await app.press('tab', { shift: true })
       bunExpect(active()).toBe('terms')
       await app.press('space')
       bunExpect(app.document.getElementById('beta')!.getAttribute('aria-checked')).toBe('false')
       bunExpect(app.document.getElementById('terms')!.getAttribute('aria-checked')).toBe('true')
+      bunExpect(toggles).toBe(togglesBefore)
       await app.click('Remember me')
       bunExpect(app.model().remember).toBe(true)
     } finally {

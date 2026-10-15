@@ -26,7 +26,9 @@ export const tokensToCss = (tokens: Tokens, selector = ':root'): string =>
 /** Installs (or replaces) the document's tokens. The native tree is restyled
  *  automatically because a stylesheet changed. */
 export const setTokens = (document: Document, tokens: Tokens, selector = ':root'): void => {
-  const id = `fn-tokens-${selector.replace(/[^a-zA-Z0-9]/g, '') || 'root'}`
+  // Keep every selector code unit: dropping punctuation aliases distinct scopes.
+  const id = selector === ':root' ? 'fn-tokens-root'
+    : `fn-tokens-${selector.split('').map(char => char.charCodeAt(0).toString(16)).join('-')}`
   let style = document.getElementById(id) as HTMLStyleElement | null
   if (style === null) {
     style = document.createElement('style')

@@ -1,4 +1,4 @@
-// From FoldKit's examples/pixel-art/src/story.test.ts, unchanged (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
+// Adapted from FoldKit's examples/pixel-art/src/story.test.ts (MIT, © 2025 Devin Jameson; see examples/FOLDKIT-LICENSE).
 // https://github.com/foldkit/foldkit/tree/main/examples/pixel-art
 
 import { Equal, Option } from 'effect'
@@ -278,14 +278,30 @@ describe('fill tool', () => {
 })
 
 describe('grid size', () => {
-  test('blank canvas resizes immediately without confirmation', () => {
+  test('blank canvas resizes and saves immediately without confirmation', () => {
     story(
       update,
-      given(emptyModel),
+      given(modifyFields(emptyModel, {
+        selectedColorIndex: () => 4,
+        paletteThemeIndex: () => 2,
+        undoStack: () => [createEmptyGrid(4)],
+        redoStack: () => [createEmptyGrid(4)],
+      })),
       message(Message.SelectedGridSize({ size: 8 })),
+      Command.expectExact(SaveCanvas({
+        grid: createEmptyGrid(8),
+        gridSize: 8,
+        selectedColorIndex: 4,
+        paletteThemeIndex: 2,
+      })),
+      Command.resolve(SaveCanvas, Message.CompletedSaveCanvas()),
       model(model => {
         expect(model.gridSize).toBe(8)
-        expect(model.grid).toHaveLength(8)
+        expect(model.grid).toEqual(createEmptyGrid(8))
+        expect(model.selectedColorIndex).toBe(4)
+        expect(model.paletteThemeIndex).toBe(2)
+        expect(model.undoStack).toHaveLength(0)
+        expect(model.redoStack).toHaveLength(0)
         expect(model.maybePendingGridSize).toEqual(Option.none())
         expect(model.gridSizeConfirmDialog.isOpen).toBe(false)
       }),
@@ -350,6 +366,7 @@ describe('grid size', () => {
       update,
       given(emptyModel),
       message(Message.SelectedGridSize({ size: 4 })),
+      Command.expectNone(),
       model(model => {
         expect(model).toBe(emptyModel)
       }),
